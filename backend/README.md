@@ -5,6 +5,10 @@ database-backed job dispatcher. Analysis resolves a GitHub revision through a
 configured GitHub App and runs deterministic, read-only repository scanners. It
 does not execute repository code, call a model, create a GitHub PR, or contact Kubernetes.
 
+Installation-token requests retry transient GitHub `422`, `429`, and `5xx` responses with bounded
+backoff. Permanent failures retain a short sanitized GitHub diagnostic in the failed event; tokens,
+private keys, and source contents are never returned.
+
 ## GitHub App configuration
 
 Set `DF_GITHUB_APP_ID`, `DF_GITHUB_INSTALLATION_ID`, and

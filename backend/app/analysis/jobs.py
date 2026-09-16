@@ -33,11 +33,11 @@ def finish(db, run, status, message, error_code=None):
     emit(db, run, f"analysis.{status}", message)
 
 
-def retry_or_fail(db, run, code):
+def retry_or_fail(db, run, code, message=None):
     run.lease_token = None
     run.lease_expires_at = None
     if run.attempts >= settings().max_attempts:
-        finish(db, run, "failed", "Analysis failed after bounded attempts.", code)
+        finish(db, run, "failed", message or "Analysis failed after bounded attempts.", code)
     else:
         run.status = "queued"
         run.progress = 0
@@ -125,9 +125,9 @@ def execute(run_id: str):
             run = db.scalar(select(AnalysisRun).where(AnalysisRun.id == identifier).with_for_update())
             if run and run.status not in TERMINAL and run.lease_token == token:
                 if exc.retryable:
-                    retry_or_fail(db, run, exc.code)
+                    retry_or_fail(db, run, exc.code, exc.user_message)
                 else:
-                    finish(db, run, "failed", "Repository analysis could not be completed.", exc.code)
+                    finish(db, run, "failed", exc.user_message, exc.code)
     except Exception:
         # Do not log source contents, exception messages, credentials or request bodies.
         log.error("analysis_attempt_failed run_id=%s", identifier)

@@ -94,7 +94,8 @@ def main():
         compose("up", "-d", "--no-deps", "worker")
 
     result = wait_for(run_id, {"completed"})
-    assert result["assessment"]["mode"] == "fake"
+    assert result["assessment"] is not None
+    assert result["analysis_mode"] in {"fake", "deterministic"}
     if args.recovery:
         assert result["attempts"] >= 2, result
         compose("restart", "redis")

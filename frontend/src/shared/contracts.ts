@@ -17,7 +17,7 @@ export type Analysis = {
   id: string; run_id: string; application_id: string
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
   progress: number; revision: string; commit_sha?: string | null; analysis_mode?: string; attempts: number; assessment_version: number
-  assessment: Assessment | null; error_code: string | null
+  assessment: Assessment | null; error_code: string | null; error_message?: string | null
 }
 export type ApplicationDetail = Application & { latest_analysis: Analysis | null }
 export type QueuedAnalysis = { run_id: string; events_url: string; status: 'queued' }

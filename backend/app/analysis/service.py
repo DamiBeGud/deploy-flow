@@ -2,7 +2,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import Assessment, Finding
-from app.persistence.models import AnalysisRun, AssessmentVersion, PendingJob
+from app.persistence.models import AnalysisRun, AssessmentVersion, Event, PendingJob
 from app.telemetry.events import emit
 
 
@@ -43,6 +43,12 @@ def fake_assessment() -> dict:
 
 def run_document(db: Session, run: AnalysisRun):
     assessment = db.get(AssessmentVersion, (run.id, run.assessment_version))
+    failure_event = db.scalar(
+        select(Event)
+        .where(Event.run_id == run.id, Event.kind == "analysis.failed")
+        .order_by(Event.event_id.desc())
+        .limit(1)
+    )
     return {
         "id": str(run.id),
         "run_id": str(run.id),
@@ -58,6 +64,7 @@ def run_document(db: Session, run: AnalysisRun):
         "assessment_version": run.assessment_version,
         "assessment": assessment.document if assessment else None,
         "error_code": run.error_code,
+        "error_message": failure_event.payload.get("message") if failure_event else None,
         "correlation_id": run.correlation_id,
         "created_at": run.created_at.isoformat(),
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,

@@ -47,8 +47,10 @@ the development proxy is not embedded in `npm run build` output.
 | `POST /analyses/{id}/reanalyze` | Create a new analysis without replacing the old run |
 | `POST /analyses/{id}/cancel` | Cancel queued or running work |
 
-Analysis remains **simulated** in Phase 1. The UI shows the backend's fixture
-result (including port 4587) rather than claiming actual repository findings.
+The backend can run deterministic GitHub repository analysis when
+`DF_ANALYSIS_PROVIDER=github`, or simulated fixture analysis when it is `fake`.
+The UI displays the backend's analysis mode and pinned commit when available.
+Installation-token failures are retried by the worker and expose a sanitized diagnostic if exhausted.
 The dashboard lists applications; it does not claim to show live cluster workloads.
 
 The connection button uses the backend's configured development identity; it is

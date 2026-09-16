@@ -15,6 +15,7 @@ def enqueue(db: Session, application, identity, correlation_id, revision):
         status="queued",
         progress=0,
         event_sequence=0,
+        analysis_mode="fake" if __import__("app.config", fromlist=["settings"]).settings().analysis_provider == "fake" else "deterministic",
     )
     db.add(run)
     db.flush()
@@ -49,8 +50,10 @@ def run_document(db: Session, run: AnalysisRun):
         "status": run.status,
         "progress": run.progress,
         "revision": run.revision,
-        "commit_sha": None,
-        "analysis_mode": "fake",
+        "commit_sha": run.commit_sha,
+        "analysis_mode": run.analysis_mode,
+        "completion": assessment.document.get("completion") if assessment else None,
+        "incomplete_reason": run.incomplete_reason,
         "attempts": run.attempts,
         "assessment_version": run.assessment_version,
         "assessment": assessment.document if assessment else None,

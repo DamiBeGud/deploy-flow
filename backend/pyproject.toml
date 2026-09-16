@@ -11,6 +11,11 @@ dependencies = [
   "alembic>=1.14,<2",
   "psycopg[binary]>=3.2,<4",
   "dramatiq[redis]>=1.18,<3",
+  "httpx>=0.28,<1",
+  "PyJWT[crypto]>=2.10,<3",
+  "mcp>=2,<3",
+  "tree-sitter>=0.25,<0.26",
+  "tree-sitter-javascript>=0.23,<0.24",
 ]
 
 [dependency-groups]
@@ -27,3 +32,4 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+ignore = ["E501"]

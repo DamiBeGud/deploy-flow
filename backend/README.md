@@ -1,9 +1,17 @@
-# DeployFlow backend — Phase 1
+# DeployFlow backend — Phase 2
 
 FastAPI API, PostgreSQL state and event history, Redis/Dramatiq workers, and a
-database-backed job dispatcher. Analysis currently returns a **simulated fixture
-assessment** for every accepted repository URL. It does not clone a repository,
-call a model, create a GitHub PR, or contact Kubernetes.
+database-backed job dispatcher. Analysis resolves a GitHub revision through a
+configured GitHub App and runs deterministic, read-only repository scanners. It
+does not execute repository code, call a model, create a GitHub PR, or contact Kubernetes.
+
+## GitHub App configuration
+
+Set `DF_GITHUB_APP_ID`, `DF_GITHUB_INSTALLATION_ID`, and
+`DF_GITHUB_PRIVATE_KEY_PATH` for an installed App with repository contents-read
+permission. Keep the PEM outside this repository. Without these values, analysis
+runs fail with `github_auth_unconfigured`; the test service deliberately uses
+the fake provider so durability tests remain independent of GitHub.
 
 ## Start locally
 

@@ -28,6 +28,10 @@ class AnalysisRun(Base):
     actor_id: Mapped[str] = mapped_column(String(128))
     correlation_id: Mapped[str] = mapped_column(String(128))
     revision: Mapped[str] = mapped_column(String(255))
+    commit_sha: Mapped[str | None] = mapped_column(String(64))
+    analysis_mode: Mapped[str] = mapped_column(String(32), default="fake")
+    incomplete_reason: Mapped[str | None] = mapped_column(String(64))
+    reproducibility_json: Mapped[dict | None] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     progress: Mapped[int] = mapped_column(default=0)
     event_sequence: Mapped[int] = mapped_column(default=0)
@@ -35,6 +39,7 @@ class AnalysisRun(Base):
     attempts: Mapped[int] = mapped_column(default=0)
     lease_token: Mapped[UUID | None]
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempt_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -60,6 +65,30 @@ class Event(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class EvidenceItem(Base):
+    __tablename__ = "evidence_items"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    file_path: Mapped[str] = mapped_column(String(1024))
+    line_start: Mapped[int | None] = mapped_column(Integer)
+    line_end: Mapped[int | None] = mapped_column(Integer)
+    excerpt_hash: Mapped[str] = mapped_column(String(64))
+    detector: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    organization_id: Mapped[str] = mapped_column(String(128), index=True)
+    actor_id: Mapped[str] = mapped_column(String(128))
+    action: Mapped[str] = mapped_column(String(128))
+    resource_type: Mapped[str] = mapped_column(String(64))
+    resource_id: Mapped[str] = mapped_column(String(128))
+    metadata_json: Mapped[dict] = mapped_column(JSONB)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PendingJob(Base):

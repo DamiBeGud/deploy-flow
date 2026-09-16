@@ -11,8 +11,9 @@ import { useAnalysis } from './useAnalysis'
 const steps = ['Source', 'Connectivity', 'Workflow', 'Review']
 
 function AssessmentEditor({ run, canWrite, onSaved }: { run: Analysis; canWrite: boolean; onSaved: () => void }) {
-  const [port, setPort] = useState(String(run.assessment?.port.value ?? ''))
-  const [health, setHealth] = useState(String(run.assessment?.health_path.value ?? ''))
+  const deterministic = run.assessment?.mode === 'deterministic' ? run.assessment : null
+  const [port, setPort] = useState(String(deterministic?.review.port ?? (run.assessment?.mode === 'fake' ? run.assessment.port.value : '')))
+  const [health, setHealth] = useState(String(deterministic?.review.health_path ?? (run.assessment?.mode === 'fake' ? run.assessment.health_path.value : '')))
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
@@ -26,14 +27,15 @@ function AssessmentEditor({ run, canWrite, onSaved }: { run: Analysis; canWrite:
     } catch (e) { setError(errorMessage(e)) } finally { lock.current = false; setBusy(false) }
   }
   return <form onSubmit={save}>
-    <div className="agent-panel"><div className="agent-panel-heading"><div><span className="bot-icon"><Sparkles size={18} /></span><div><b>Assessment version {run.assessment_version}</b><p>Simulated fixture results; the repository has not been inspected.</p></div></div><span className="confidence">Simulated</span></div>
-      <div className="findings-grid"><div className="ai-finding"><Bot size={18} /><div><small>Runtime</small><b>{run.assessment?.runtime.value}</b><p>{run.assessment?.runtime.source}</p></div></div><div className="ai-finding"><Network size={18} /><div><small>Service port</small><b>{run.assessment?.port.value}</b><p>{run.assessment?.port.source === 'user' ? 'User supplied' : 'Simulated default'}</p></div></div></div>
+    <div className="agent-panel"><div className="agent-panel-heading"><div><span className="bot-icon"><Sparkles size={18} /></span><div><b>Assessment version {run.assessment_version}</b><p>{deterministic ? `Pinned commit ${deterministic.repository.commit_sha.slice(0, 12)}; repository inspected read-only.` : 'Legacy simulated fixture result.'}</p></div></div><span className="confidence">{deterministic ? deterministic.completion : 'Simulated'}</span></div>
+      <div className="findings-grid"><div className="ai-finding"><Bot size={18} /><div><small>Runtime</small><b>{deterministic?.review.runtime ?? (run.assessment?.mode === 'fake' ? run.assessment.runtime.value : '')}</b><p>{deterministic ? deterministic.detected_stack.frameworks.join(', ') || 'Detected' : 'Simulated'}</p></div></div><div className="ai-finding"><Network size={18} /><div><small>Service port</small><b>{deterministic?.review.port ?? (run.assessment?.mode === 'fake' ? run.assessment.port.value : '')}</b><p>{deterministic ? 'Repository evidence' : 'Simulated default'}</p></div></div></div>
     </div>
     <div className="form-grid"><Field label="Service port"><input type="number" min="1" max="65535" step="1" required value={port} onChange={e => setPort(e.target.value)} disabled={!canWrite || busy} /></Field><Field label="Health check path"><input required pattern="/[^\s]*" maxLength={255} value={health} onChange={e => setHealth(e.target.value)} disabled={!canWrite || busy} /></Field></div>
     <ErrorNotice message={error} />
     <div className="inline-actions"><button className="button button-primary" disabled={!canWrite || busy} type="submit">{busy ? 'Saving…' : 'Save assessment'}</button><button className="button button-secondary" type="button" disabled={busy} onClick={onSaved}>Reload latest assessment</button><span>Version {run.assessment_version} · Changes are saved to PostgreSQL</span></div>
     <div className="section-divider"><span>Configuration requirements</span></div>
-    <p>Environment variable names: {run.assessment?.environment_variable_names.join(', ') || 'None reported'}</p>
+    <p>Environment variable names: {deterministic ? deterministic.configuration.optional_variables.join(', ') : (run.assessment?.mode === 'fake' ? run.assessment.environment_variable_names.join(', ') : '') || 'None reported'}</p>
+    {deterministic && <p>Evidence: {deterministic.evidence.map(e => `${e.file_path}${e.line_start ? `:${e.line_start}` : ''}`).join(', ') || 'No source locations retained'}</p>}
     <ul className="unknowns">{run.assessment?.unknowns.map(unknown => <li key={unknown}>{unknown}</li>)}</ul>
     <div className="section-divider"><span>Deployment configuration — upcoming</span></div>
     <p className="page-subtitle">Network exposure, resources and dependencies will be editable when the deployment-intent API is available.</p>
@@ -104,7 +106,7 @@ export function AnalysisPage({ canWrite }: { canWrite: boolean }) {
     {(error || runError) && <button className="button button-secondary" onClick={() => { setLoadAttempt(n => n + 1); reload() }}>Retry loading</button>}
     {notice && <p className="integration-notice" role="status">{notice}</p>}
     <section className="wizard-card"><div className="wizard-step">
-      {step === 0 ? <><div className="step-intro"><h2>Connect your source</h2><p>Phase 1 runs a simulated analysis through the backend worker. Repository inspection comes next.</p></div>
+      {step === 0 ? <><div className="step-intro"><h2>Connect your source</h2><p>DeployFlow pins a GitHub revision and performs deterministic, read-only repository analysis.</p></div>
         {loading && <p role="status">Loading application…</p>}
         <form onSubmit={analyze}><fieldset disabled={Boolean(appId) || busy || !canWrite} className="source-fields"><div className="form-grid"><Field label="GitHub repository URL"><input type="url" required maxLength={512} pattern="https://github.com/[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+/?" value={source.repository_url} onChange={e => setSource({ ...source, repository_url: e.target.value })} /></Field><Field label="Application name"><input required pattern="[a-z]([a-z0-9\-]*[a-z0-9])?" maxLength={63} value={source.name} onChange={e => setSource({ ...source, name: e.target.value })} /></Field><Field label="Repository revision"><input required maxLength={255} value={source.revision} onChange={e => setSource({ ...source, revision: e.target.value })} /></Field></div></fieldset>
           {!runId && <button className="button button-primary" type="submit" disabled={!canAnalyze}><Sparkles size={16} />{busy ? 'Starting analysis…' : 'Analyze repository'}</button>}

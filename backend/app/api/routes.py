@@ -177,6 +177,15 @@ def patch_assessment(run_id: UUID, body: AssessmentPatch, identity: Actor, key: 
             document = {**previous.document}
             for field, value in changes.items():
                 document[field] = {"value": value, "source": "user"}
+            if document.get("mode") == "deterministic":
+                review = {**document.get("review", {})}
+                if "port" in changes:
+                    review["port"] = changes["port"]
+                    document["network"] = {**document.get("network", {}), "ports": [changes["port"]]}
+                if "health_path" in changes:
+                    review["health_path"] = changes["health_path"]
+                    document["health_checks"] = [changes["health_path"]]
+                document["review"] = review
             run.assessment_version += 1
             db.add(
                 AssessmentVersion(

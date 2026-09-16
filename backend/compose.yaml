@@ -1,0 +1,115 @@
+name: deployflow
+
+# Activated only by `docker compose watch` / `docker compose up --watch`.
+# Python source edits restart the API and consumers; durable jobs survive restarts.
+x-source-watch: &source-watch
+  watch:
+    - action: sync+restart
+      path: ./app
+      target: /srv/backend/app
+      initial_sync: true
+      ignore:
+        - __pycache__/
+        - "**/__pycache__/"
+        - "**/*.pyc"
+    - action: rebuild
+      path: ./pyproject.toml
+    - action: rebuild
+      path: ./uv.lock
+    - action: rebuild
+      path: ./Dockerfile
+
+x-backend: &backend
+  build: .
+  image: deployflow-backend:local
+  environment: &environment
+    DF_DATABASE_URL: postgresql+psycopg://deployflow:local-only@postgres:5432/deployflow
+    DF_REDIS_URL: redis://redis:6379/0
+    DF_ENVIRONMENT: ${DF_ENVIRONMENT:-local}
+    DF_AUTH_MODE: ${DF_AUTH_MODE:-development}
+    DF_DEV_ACTOR_ID: ${DF_DEV_ACTOR_ID:-local-developer}
+    DF_DEV_ORGANIZATION_ID: ${DF_DEV_ORGANIZATION_ID:-local-organization}
+    DF_DEV_ROLES: ${DF_DEV_ROLES:-["developer"]}
+    DF_CORS_ORIGINS: ${DF_CORS_ORIGINS:-["http://localhost:5173","http://127.0.0.1:5173"]}
+    DF_FAKE_STEP_SECONDS: ${DF_FAKE_STEP_SECONDS:-1}
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: deployflow
+      POSTGRES_PASSWORD: local-only
+      POSTGRES_DB: deployflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deployflow -d deployflow"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    image: deployflow-backend:local
+    environment:
+      DF_DATABASE_URL: postgresql+psycopg://deployflow:local-only@postgres:5432/deployflow
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *backend
+    develop: *source-watch
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    <<: *backend
+    develop: *source-watch
+    command: ["dramatiq", "app.worker", "--processes", "1", "--threads", "4", "--queues", "analysis"]
+    stop_grace_period: 40s
+
+  dispatcher:
+    <<: *backend
+    develop: *source-watch
+    command: ["python", "-m", "app.dispatcher"]
+
+  tests:
+    <<: *backend
+    profiles: ["test"]
+    environment:
+      <<: *environment
+      DF_DATABASE_URL: postgresql+psycopg://deployflow:local-only@postgres:5432/deployflow_test
+      DF_FAKE_STEP_SECONDS: "0"
+    command: ["pytest", "-q"]
+    restart: "no"
+
+volumes:
+  postgres-data:
+  redis-data:

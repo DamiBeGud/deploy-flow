@@ -16,7 +16,9 @@ from app.persistence.database import Session
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-app = FastAPI(title="DeployFlow", version="0.2.0", description="Phase 2 — deterministic repository analysis")
+app = FastAPI(
+    title="DeployFlow", version="0.3.0", description="Phase 3 — bounded repository analysis agent"
+)
 app.state.identity_provider = DevelopmentIdentityProvider()
 app.add_middleware(
     CORSMiddleware,
@@ -93,7 +95,7 @@ def ready():
             db.execute(text("SELECT 1 FROM alembic_version"))
     except Exception:
         raise HTTPException(503, "Database or migrations unavailable") from None
-    return {"status": "ready", "analysis_mode": settings().analysis_provider}
+    return {"status": "ready", "analysis_mode": settings().resolved_analysis_mode}
 
 
 app.include_router(router)

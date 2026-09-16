@@ -32,7 +32,7 @@ x-backend: &backend
     DF_DEV_ROLES: ${DF_DEV_ROLES:-["developer"]}
     DF_CORS_ORIGINS: ${DF_CORS_ORIGINS:-["http://localhost:5173","http://127.0.0.1:5173"]}
     DF_FAKE_STEP_SECONDS: ${DF_FAKE_STEP_SECONDS:-1}
-    DF_ANALYSIS_PROVIDER: ${DF_ANALYSIS_PROVIDER:-github}
+    DF_ANALYSIS_MODE: ${DF_ANALYSIS_MODE:-deterministic}
     DF_GITHUB_APP_ID: ${DF_GITHUB_APP_ID:-}
     DF_GITHUB_INSTALLATION_ID: ${DF_GITHUB_INSTALLATION_ID:-}
     DF_GITHUB_PRIVATE_KEY_PATH: ${DF_GITHUB_PRIVATE_KEY_PATH:-}
@@ -102,6 +102,12 @@ services:
     # worker, so the PEM never enters the image or repository.
     volumes:
       - ${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:ro
+    environment:
+      <<: *environment
+      DF_DEEPSEEK_API_KEY: ${DF_DEEPSEEK_API_KEY:-}
+      DF_DEEPSEEK_BASE_URL: ${DF_DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DF_DEEPSEEK_MODEL: ${DF_DEEPSEEK_MODEL:-deepseek-flash}
+      DF_DEEPSEEK_REASONING_EFFORT: ${DF_DEEPSEEK_REASONING_EFFORT:-high}
 
   dispatcher:
     <<: *backend
@@ -116,6 +122,7 @@ services:
       DF_DATABASE_URL: postgresql+psycopg://deployflow:local-only@postgres:5432/deployflow_test
       DF_FAKE_STEP_SECONDS: "0"
       DF_ANALYSIS_PROVIDER: "fake"
+      DF_ANALYSIS_MODE: "fake"
     command: ["pytest", "-q"]
     restart: "no"
 

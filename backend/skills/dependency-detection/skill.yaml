@@ -1,0 +1,10 @@
+id: dependency-detection
+version: 1.0.0
+description: Identify infrastructure-relevant dependencies without inventing service endpoints.
+triggers:
+  any_files: [package.json, requirements.txt, pyproject.toml, pom.xml, go.mod]
+allowed_tools: [repo.read_file, repo.search_text, repo.read_manifest]
+risk_tier: read_only
+input_schema: analysis-facts-v1
+output_schema: infrastructure-assessment-v2
+max_context_chars: 12000

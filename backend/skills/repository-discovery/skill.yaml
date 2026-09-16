@@ -1,0 +1,10 @@
+id: repository-discovery
+version: 1.0.0
+description: Investigate the repository structure and only report evidence-backed facts.
+triggers:
+  always: true
+allowed_tools: [repo.list_tree, repo.read_file, repo.search_text, repo.read_manifest, repo.get_git_metadata]
+risk_tier: read_only
+input_schema: analysis-facts-v1
+output_schema: infrastructure-assessment-v2
+max_context_chars: 12000

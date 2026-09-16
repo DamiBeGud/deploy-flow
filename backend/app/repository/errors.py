@@ -29,7 +29,10 @@ class RepositoryAccessError(RepositoryError):
 
     @property
     def user_message(self) -> str:
-        return self.detail or "The GitHub App cannot access this repository. Check its installation and permissions."
+        return (
+            self.detail
+            or "The GitHub App cannot access this repository. Check its installation and permissions."
+        )
 
 
 class GitHubTokenRequestError(TransientRepositoryError):

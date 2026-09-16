@@ -44,10 +44,18 @@ class GitHubClient:
         except OSError as exc:
             raise RepositoryConfigurationError() from exc
         now = int(time.time())
-        return jwt.encode({"iat": now - 60, "exp": now + 540, "iss": self.config.github_app_id}, key, algorithm="RS256")
+        return jwt.encode(
+            {"iat": now - 60, "exp": now + 540, "iss": self.config.github_app_id},
+            key,
+            algorithm="RS256",
+        )
 
     def _headers(self, token: str) -> dict[str, str]:
-        return {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}", "X-GitHub-Api-Version": self.config.github_api_version}
+        return {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": self.config.github_api_version,
+        }
 
     @staticmethod
     def _response_detail(response: httpx.Response, fallback: str) -> str:
@@ -62,7 +70,9 @@ class GitHubClient:
         # GitHub's message is safe metadata, but keep it bounded and strip control chars.
         return " ".join(message.split())[:240] or fallback
 
-    def _installation_token(self, client: httpx.Client, jwt_token: str, owner: str, name: str) -> str:
+    def _installation_token(
+        self, client: httpx.Client, jwt_token: str, owner: str, name: str
+    ) -> str:
         url = f"{self.config.github_api_url.rstrip('/')}/app/installations/{self.config.github_installation_id}/access_tokens"
         payload = {"repositories": [name], "permissions": {"contents": "read"}}
         last_detail = "GitHub rejected the installation-token request."
@@ -72,7 +82,9 @@ class GitHubClient:
                 try:
                     return response.json()["token"]
                 except (KeyError, ValueError, TypeError) as exc:
-                    raise GitHubTokenRequestError("GitHub returned an invalid installation token response.") from exc
+                    raise GitHubTokenRequestError(
+                        "GitHub returned an invalid installation token response."
+                    ) from exc
             last_detail = self._response_detail(response, last_detail)
             log.warning(
                 "github_token_request_failed installation_id=%s owner=%s repository=%s status=%s detail=%s",
@@ -96,17 +108,36 @@ class GitHubClient:
         try:
             with httpx.Client(timeout=15, follow_redirects=False) as client:
                 token = self._installation_token(client, jwt_token, owner, name)
-                repo = client.get(f"{base}/repos/{quote(owner, safe='')}/{quote(name, safe='')}", headers=self._headers(token))
+                repo = client.get(
+                    f"{base}/repos/{quote(owner, safe='')}/{quote(name, safe='')}",
+                    headers=self._headers(token),
+                )
                 if repo.status_code in {401, 403, 404}:
-                    raise RepositoryAccessError(self._response_detail(repo, "The GitHub App cannot access this repository."))
+                    raise RepositoryAccessError(
+                        self._response_detail(repo, "The GitHub App cannot access this repository.")
+                    )
                 repo.raise_for_status()
-                commit = client.get(f"{base}/repos/{quote(owner, safe='')}/{quote(name, safe='')}/commits/{quote(revision, safe='')}", headers=self._headers(token))
+                commit = client.get(
+                    f"{base}/repos/{quote(owner, safe='')}/{quote(name, safe='')}/commits/{quote(revision, safe='')}",
+                    headers=self._headers(token),
+                )
                 if commit.status_code == 404:
-                    raise RepositoryRevisionError(self._response_detail(commit, "The requested repository revision was not found."))
+                    raise RepositoryRevisionError(
+                        self._response_detail(
+                            commit, "The requested repository revision was not found."
+                        )
+                    )
                 if commit.status_code in {401, 403}:
-                    raise RepositoryAccessError(self._response_detail(commit, "The GitHub App cannot access repository commits."))
+                    raise RepositoryAccessError(
+                        self._response_detail(
+                            commit, "The GitHub App cannot access repository commits."
+                        )
+                    )
                 commit.raise_for_status()
-                archive = client.get(f"{base}/repos/{quote(owner, safe='')}/{quote(name, safe='')}/tarball/{commit.json()['sha']}", headers=self._headers(token))
+                archive = client.get(
+                    f"{base}/repos/{quote(owner, safe='')}/{quote(name, safe='')}/tarball/{commit.json()['sha']}",
+                    headers=self._headers(token),
+                )
                 if archive.status_code not in {301, 302, 303, 307, 308}:
                     archive.raise_for_status()
                     raise RepositoryAccessError()
@@ -114,7 +145,16 @@ class GitHubClient:
                 if not archive_url or not archive_url.startswith("https://codeload.github.com/"):
                     raise RepositoryAccessError()
                 payload = repo.json()
-                return ResolvedRepository(owner, name, payload["html_url"], revision, commit.json()["sha"], payload["id"], archive_url, token)
+                return ResolvedRepository(
+                    owner,
+                    name,
+                    payload["html_url"],
+                    revision,
+                    commit.json()["sha"],
+                    payload["id"],
+                    archive_url,
+                    token,
+                )
         except (RepositoryAccessError, RepositoryRevisionError):
             raise
         except httpx.HTTPStatusError as exc:

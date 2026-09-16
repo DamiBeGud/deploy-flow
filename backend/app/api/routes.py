@@ -169,23 +169,27 @@ def patch_assessment(run_id: UUID, body: AssessmentPatch, identity: Actor, key: 
         run = run_for(db, run_id, identity, lock=True)
 
         def operation():
-            if run.status != "completed":
+            if run.status not in {"completed", "needs_input"}:
                 raise HTTPException(409, "Assessment is not ready for review")
             if run.assessment_version != body.expected_version:
                 raise HTTPException(409, "Assessment version changed; reload before editing")
             previous = db.get(AssessmentVersion, (run.id, run.assessment_version))
             document = {**previous.document}
-            for field, value in changes.items():
-                document[field] = {"value": value, "source": "user"}
-            if document.get("mode") == "deterministic":
+            if document.get("schema_version") == "infrastructure-assessment-v2":
                 review = {**document.get("review", {})}
                 if "port" in changes:
                     review["port"] = changes["port"]
-                    document["network"] = {**document.get("network", {}), "ports": [changes["port"]]}
+                    document["network"] = {
+                        **document.get("network", {}),
+                        "ports": [changes["port"]],
+                    }
                 if "health_path" in changes:
                     review["health_path"] = changes["health_path"]
                     document["health_checks"] = [changes["health_path"]]
                 document["review"] = review
+            else:
+                for field, value in changes.items():
+                    document[field] = {"value": value, "source": "user"}
             run.assessment_version += 1
             db.add(
                 AssessmentVersion(

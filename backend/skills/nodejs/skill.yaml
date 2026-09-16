@@ -1,0 +1,10 @@
+id: nodejs
+version: 1.0.0
+description: Review Node.js and npm build, runtime, and HTTP-service conventions.
+triggers:
+  any_files: [package.json, package-lock.json, pnpm-lock.yaml, yarn.lock]
+allowed_tools: [repo.read_file, repo.search_text, repo.read_manifest]
+risk_tier: read_only
+input_schema: analysis-facts-v1
+output_schema: infrastructure-assessment-v2
+max_context_chars: 12000

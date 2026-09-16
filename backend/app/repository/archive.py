@@ -6,7 +6,15 @@ from pathlib import Path, PurePosixPath
 from app.repository.errors import RepositoryArchiveError, RepositoryLimitError
 
 
-def extract_tarball(chunks, destination: Path, *, compressed_limit: int, extracted_limit: int, file_limit: int, path_limit: int) -> None:
+def extract_tarball(
+    chunks,
+    destination: Path,
+    *,
+    compressed_limit: int,
+    extracted_limit: int,
+    file_limit: int,
+    path_limit: int,
+) -> None:
     data = bytearray()
     for chunk in chunks:
         data.extend(chunk)
@@ -27,11 +35,19 @@ def extract_tarball(chunks, destination: Path, *, compressed_limit: int, extract
                     raise RepositoryArchiveError()
                 if prefix is None and raw.parts:
                     prefix = raw.parts[0]
-                parts = raw.parts[1:] if prefix and raw.parts and raw.parts[0] == prefix else raw.parts
+                parts = (
+                    raw.parts[1:] if prefix and raw.parts and raw.parts[0] == prefix else raw.parts
+                )
                 if not parts:
                     continue
                 relative = PurePosixPath(*parts)
-                if str(relative) in seen or member.issym() or member.islnk() or member.isdev() or member.isfifo():
+                if (
+                    str(relative) in seen
+                    or member.issym()
+                    or member.islnk()
+                    or member.isdev()
+                    or member.isfifo()
+                ):
                     raise RepositoryArchiveError()
                 seen.add(str(relative))
                 if member.isdir():

@@ -2,6 +2,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import Assessment, Finding
+from app.config import settings
 from app.persistence.models import AnalysisRun, AssessmentVersion, Event, PendingJob
 from app.telemetry.events import emit
 
@@ -15,12 +16,17 @@ def enqueue(db: Session, application, identity, correlation_id, revision):
         status="queued",
         progress=0,
         event_sequence=0,
-        analysis_mode="fake" if __import__("app.config", fromlist=["settings"]).settings().analysis_provider == "fake" else "deterministic",
+        analysis_mode=settings().resolved_analysis_mode,
     )
     db.add(run)
     db.flush()
     db.add(PendingJob(run_id=run.id, next_dispatch_at=db.scalar(select(func.now()))))
-    emit(db, run, "analysis.queued", "Fake analysis queued; no repository access will occur.")
+    mode_message = {
+        "fake": "Fake analysis queued; no repository access will occur.",
+        "deterministic": "Repository scan queued; application code will not execute.",
+        "agent": "Agent analysis queued; selected repository excerpts may be sent to DeepSeek.",
+    }[run.analysis_mode]
+    emit(db, run, "analysis.queued", mode_message)
     return {
         "run_id": str(run.id),
         "status": "queued",
@@ -60,6 +66,7 @@ def run_document(db: Session, run: AnalysisRun):
         "analysis_mode": run.analysis_mode,
         "completion": assessment.document.get("completion") if assessment else None,
         "incomplete_reason": run.incomplete_reason,
+        "reproducibility": run.reproducibility_json,
         "attempts": run.attempts,
         "assessment_version": run.assessment_version,
         "assessment": assessment.document if assessment else None,

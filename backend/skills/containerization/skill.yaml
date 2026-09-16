@@ -1,0 +1,10 @@
+id: containerization
+version: 1.0.0
+description: Identify existing delivery artifacts and prerequisites for deterministic generation.
+triggers:
+  any_files: [package.json, Dockerfile, compose.yaml, docker-compose.yml]
+allowed_tools: [repo.list_tree, repo.read_file, repo.search_text]
+risk_tier: read_only
+input_schema: analysis-facts-v1
+output_schema: infrastructure-assessment-v2
+max_context_chars: 12000

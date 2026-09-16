@@ -19,6 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--recovery", action="store_true")
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Verify an explicitly configured DeepSeek agent run (can consume API credit).",
+    )
     parser.add_argument("--url", default="http://127.0.0.1:8000")
     args = parser.parse_args()
 
@@ -93,9 +98,13 @@ def main():
         compose("kill", "--signal", "SIGKILL", "worker")
         compose("up", "-d", "--no-deps", "worker")
 
-    result = wait_for(run_id, {"completed"})
+    terminal_statuses = {"completed", "needs_input"} if args.agent else {"completed"}
+    result = wait_for(run_id, terminal_statuses)
     assert result["assessment"] is not None
-    assert result["analysis_mode"] in {"fake", "deterministic"}
+    if args.agent:
+        assert result["analysis_mode"] == "agent"
+    else:
+        assert result["analysis_mode"] in {"fake", "deterministic"}
     if args.recovery:
         assert result["attempts"] >= 2, result
         compose("restart", "redis")
@@ -103,7 +112,7 @@ def main():
         replay = response.read().decode()
     ids = [int(line[4:]) for line in replay.splitlines() if line.startswith("id: ")]
     assert ids and min(ids) > cursor and ids == sorted(set(ids))
-    assert "event: analysis.completed" in replay
+    assert f"event: analysis.{result['status']}" in replay
     print(f"Completed in {result['attempts']} attempt(s); replayed event IDs {ids}.", flush=True)
     print("PASS: real API, dispatcher, Redis, worker, PostgreSQL, and SSE reconnect.", flush=True)
 

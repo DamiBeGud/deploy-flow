@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.persistence.models import AnalysisRun, Event
 
-TERMINAL = {"completed", "failed", "cancelled"}
+TERMINAL = {"completed", "failed", "cancelled", "needs_input"}
 
 
 def emit(db: Session, run: AnalysisRun, kind: str, message: str):

@@ -1,0 +1,10 @@
+id: configuration-and-secrets
+version: 1.0.0
+description: Identify configuration variable names while protecting secret values.
+triggers:
+  any_languages: [javascript, typescript]
+allowed_tools: [repo.read_file, repo.search_text]
+risk_tier: read_only
+input_schema: analysis-facts-v1
+output_schema: infrastructure-assessment-v2
+max_context_chars: 12000

@@ -1,9 +1,11 @@
-# DeployFlow backend — Phase 2
+# DeployFlow backend — Phase 3
 
 FastAPI API, PostgreSQL state and event history, Redis/Dramatiq workers, and a
 database-backed job dispatcher. Analysis resolves a GitHub revision through a
-configured GitHub App and runs deterministic, read-only repository scanners. It
-does not execute repository code, call a model, create a GitHub PR, or contact Kubernetes.
+configured GitHub App and runs deterministic, read-only repository scanners.
+An explicitly enabled agent mode can use DeepSeek with reviewed skills and a
+bounded, read-only repository MCP server. It never executes repository code,
+creates a GitHub PR, or contacts Kubernetes.
 
 Installation-token requests retry transient GitHub `422`, `429`, and `5xx` responses with bounded
 backoff. Permanent failures retain a short sanitized GitHub diagnostic in the failed event; tokens,
@@ -16,6 +18,26 @@ Set `DF_GITHUB_APP_ID`, `DF_GITHUB_INSTALLATION_ID`, and
 permission. Keep the PEM outside this repository. Without these values, analysis
 runs fail with `github_auth_unconfigured`; the test service deliberately uses
 the fake provider so durability tests remain independent of GitHub.
+
+## Optional DeepSeek agent mode
+
+`DF_ANALYSIS_MODE=deterministic` is the default and does not call a model. To
+explicitly opt in to agent analysis, add the following to the ignored
+`backend/.env`, then recreate the worker:
+
+```bash
+DF_ANALYSIS_MODE=agent
+DF_DEEPSEEK_API_KEY=your-key
+DF_DEEPSEEK_MODEL=deepseek-flash
+DF_DEEPSEEK_REASONING_EFFORT=high
+docker compose up -d --build worker
+```
+
+The agent is stateless, uses only the project-owned read-only repository tools,
+and records selected skill versions, evidence hashes, tool metadata, model
+identity, and aggregate usage. It can finish as `needs_input` when a deployment
+decision cannot be derived from the repository. Do not put a real key in
+`.env.example`, source code, or Git.
 
 ## Start locally
 
@@ -35,7 +57,9 @@ The migration service runs before the API, dispatcher, and worker start.
 The existing `.env` can remain in place. It is ignored by Git and excluded from
 the image. `.env.example` documents optional local overrides; don't overwrite
 existing settings. Compose passes only its listed `DF_*` variables to the backend.
-GHCR, GitHub, Kubernetes and model credentials are unnecessary for this phase.
+GHCR and Kubernetes credentials are unnecessary for this phase. GitHub App
+credentials are required for deterministic/agent repository analysis; a DeepSeek
+key is required only for explicitly selected agent mode.
 
 ```bash
 docker compose logs -f api dispatcher worker
@@ -96,7 +120,7 @@ Available Phase 1 routes:
 | GET | `/me` | Configured development identity |
 | POST / GET | `/applications` | Create / list owned applications |
 | GET | `/applications/{id}` | Application and latest run |
-| POST | `/applications/{id}/analyses` | Queue simulated analysis |
+| POST | `/applications/{id}/analyses` | Queue repository analysis |
 | GET | `/analyses/{id}` | Durable status and current assessment |
 | GET | `/analyses/{id}/events` | SSE replay/live progress |
 | PATCH | `/analyses/{id}/assessment` | New assessment version; optimistic concurrency |
@@ -149,7 +173,7 @@ After creating an application, POST an empty object to its `/analyses` route,
 save `run_id`, and open the returned `events_url` with `EventSource`. Listen for
 named events (`analysis.queued`, `analysis.started`, `analysis.scanning`,
 `analysis.agent_running`, `analysis.validating`, `analysis.retrying`,
-`analysis.completed`, `analysis.failed`, `analysis.cancelled`). On a terminal
+`analysis.completed`, `analysis.needs_input`, `analysis.failed`, `analysis.cancelled`). On a terminal
 event call `EventSource.close()` and GET the run for its final result.
 
 Event IDs are positive integers **scoped to a run**, serialized under a run row
@@ -175,7 +199,7 @@ flowchart LR
   constraint serializes concurrent idempotency keys in PostgreSQL.
 - The dispatcher republishes unclaimed runs every 10 seconds. Publishing before
   committing can deliver duplicates; workers atomically claim the run by ID.
-- A worker owns a random lease token for up to 30 seconds. Every checkpoint and
+- A worker owns a random lease token for up to five minutes. Every checkpoint and
   completion checks that token, status, and deadline. An expired worker cannot
   write over a recovered run. Future external operations also need their own
   idempotency/fencing; this foundation currently performs database-only work.
@@ -212,6 +236,10 @@ docker compose run --rm tests
 # Real API -> dispatcher -> broker -> worker -> SSE journey:
 python3 scripts/smoke.py
 
+# Explicitly opt in first with DF_ANALYSIS_MODE=agent and a DeepSeek key, then
+# verify the model-backed path (this may consume API credit):
+python3 scripts/smoke.py --agent
+
 # Also SIGKILL this local Compose worker mid-run, restart it, wait for
 # lease recovery, restart this local Redis, and verify SSE replay:
 python3 scripts/smoke.py --recovery
@@ -229,13 +257,6 @@ The pytest suite refuses database cleanup unless the database is exactly
 `deployflow_test`. Tests cover duplicate requests/deliveries, rollback, lease
 fencing, bounded retries/timeouts, Redis delivery loss, cancellation, immutable
 assessment revisions, ownership/roles, and ordered SSE replay.
-
-## Where to extend next
-
-`app/analysis/service.py` provides the fake result. Phase 2 will introduce trusted
-repository acquisition and scanners; Phase 3 adds skills and the agent harness.
-Keep orchestration in `app/analysis/jobs.py` and persist outcomes through the same
-transaction/fencing boundary. Kubernetes and GitHub deployment code are later phases.
 
 Implementation references: [Dramatiq guide](https://dramatiq.io/guide.html) and
 [Dramatiq Redis broker reference](https://dramatiq.io/reference.html).

@@ -1,0 +1,5 @@
+repository-discovery: 1.0.0
+nodejs: 1.0.0
+dependency-detection: 1.0.0
+configuration-and-secrets: 1.0.0
+containerization: 1.0.0

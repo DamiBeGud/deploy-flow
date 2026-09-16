@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -32,6 +32,16 @@ class AnalysisRun(Base):
     analysis_mode: Mapped[str] = mapped_column(String(32), default="fake")
     incomplete_reason: Mapped[str | None] = mapped_column(String(64))
     reproducibility_json: Mapped[dict | None] = mapped_column(JSONB)
+    scanner_facts_json: Mapped[dict | None] = mapped_column(JSONB)
+    model_provider: Mapped[str | None] = mapped_column(String(32))
+    model_name: Mapped[str | None] = mapped_column(String(128))
+    prompt_version: Mapped[str | None] = mapped_column(String(64))
+    agent_turns: Mapped[int] = mapped_column(default=0)
+    agent_tool_calls: Mapped[int] = mapped_column(default=0)
+    agent_input_tokens: Mapped[int] = mapped_column(default=0)
+    agent_output_tokens: Mapped[int] = mapped_column(default=0)
+    agent_tool_output_bytes: Mapped[int] = mapped_column(default=0)
+    agent_latency_ms: Mapped[int] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     progress: Mapped[int] = mapped_column(default=0)
     event_sequence: Mapped[int] = mapped_column(default=0)
@@ -69,8 +79,10 @@ class Event(Base):
 
 class EvidenceItem(Base):
     __tablename__ = "evidence_items"
+    __table_args__ = (Index("ix_evidence_items_run_key", "run_id", "evidence_key", unique=True),)
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     run_id: Mapped[UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    evidence_key: Mapped[str | None] = mapped_column(String(128))
     file_path: Mapped[str] = mapped_column(String(1024))
     line_start: Mapped[int | None] = mapped_column(Integer)
     line_end: Mapped[int | None] = mapped_column(Integer)
@@ -88,7 +100,52 @@ class AuditEvent(Base):
     resource_type: Mapped[str] = mapped_column(String(64))
     resource_id: Mapped[str] = mapped_column(String(128))
     metadata_json: Mapped[dict] = mapped_column(JSONB)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class SkillVersion(Base):
+    __tablename__ = "skill_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "skill_id", "semantic_version", "content_hash", name="uq_skill_version_content"
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    skill_id: Mapped[str] = mapped_column(String(128), index=True)
+    semantic_version: Mapped[str] = mapped_column(String(64))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    metadata_json: Mapped[dict] = mapped_column(JSONB)
+    instructions: Mapped[str] = mapped_column(Text)
+    references_json: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AnalysisRunSkill(Base):
+    __tablename__ = "analysis_run_skills"
+    __table_args__ = (UniqueConstraint("run_id", "ordinal", name="uq_analysis_run_skill_ordinal"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    skill_version_id: Mapped[UUID] = mapped_column(ForeignKey("skill_versions.id"))
+    ordinal: Mapped[int] = mapped_column(Integer)
+
+
+class AgentToolEvent(Base):
+    __tablename__ = "agent_tool_events"
+    __table_args__ = (
+        UniqueConstraint("run_id", "turn", "call_id", name="uq_agent_tool_event_call"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    turn: Mapped[int] = mapped_column(Integer)
+    call_id: Mapped[str] = mapped_column(String(128))
+    tool_name: Mapped[str] = mapped_column(String(128))
+    arguments_json: Mapped[dict] = mapped_column(JSONB)
+    result_json: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(32))
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PendingJob(Base):

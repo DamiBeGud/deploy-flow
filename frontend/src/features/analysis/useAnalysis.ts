@@ -3,7 +3,7 @@ import { ApiError, errorMessage, request, storage } from '../../shared/api'
 import { isTerminal } from '../../shared/contracts'
 import type { Analysis } from '../../shared/contracts'
 
-const eventTypes = ['queued', 'started', 'scanning', 'agent_running', 'validating', 'retrying', 'completed', 'failed', 'cancelled', 'assessment_updated']
+const eventTypes = ['queued', 'started', 'checkout_started', 'scanning', 'skills_selected', 'agent_running', 'validating', 'retrying', 'completed', 'needs_input', 'failed', 'cancelled', 'assessment_updated']
 
 export function useAnalysis(runId: string | null) {
   const [run, setRun] = useState<Analysis | null>(null)
@@ -57,7 +57,7 @@ export function useAnalysis(runId: string | null) {
           ...current, progress: update.percent,
           status: type === 'retrying' || type === 'queued' ? 'queued' : 'running',
         } : current)
-        if (['completed', 'failed', 'cancelled'].includes(type)) { source?.close(); void load() }
+        if (['completed', 'needs_input', 'failed', 'cancelled'].includes(type)) { source?.close(); void load() }
       })
       timer = setTimeout(poll, 3000)
     }

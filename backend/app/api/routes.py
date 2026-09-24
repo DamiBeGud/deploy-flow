@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from typing import Annotated
 from uuid import UUID
@@ -6,21 +7,130 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from starlette.concurrency import run_in_threadpool
 
 from app.analysis.jobs import finish
 from app.analysis.service import enqueue, run_document
 from app.api.identity import Identity, get_identity
-from app.api.schemas import AssessmentPatch, CreateApplication, StartAnalysis
+from app.api.schemas import (
+    ApprovePlan,
+    AssessmentPatch,
+    CreateApplication,
+    CreateInfrastructurePlan,
+    DeploymentIntentWrite,
+    StartAnalysis,
+)
+from app.bootstrap.contracts import INFRASTRUCTURE_PLAN_SCHEMA_VERSION
+from app.bootstrap.generator import MANAGED_PATHS, PlanError, render
+from app.bootstrap.profiles import local_k3s_profile
+from app.bootstrap.recommendations import recommend, resolve_field_recommendations
 from app.persistence.commands import application_for, idempotent, run_for
 from app.persistence.database import Session
-from app.persistence.models import AnalysisRun, Application, AssessmentVersion, Event
+from app.persistence.models import (
+    AnalysisRun,
+    Application,
+    AssessmentVersion,
+    DeploymentIntentVersion,
+    Event,
+    InfrastructurePlan,
+    InfrastructurePlanFile,
+    PlanApproval,
+)
 from app.telemetry.events import TERMINAL, emit
 
 router = APIRouter(prefix="/api/v1")
 Actor = Annotated[Identity, Depends(get_identity)]
 Key = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)]
+
+
+def _intent_document(intent: DeploymentIntentVersion) -> dict:
+    return {
+        "id": str(intent.id),
+        "version": intent.version,
+        "analysis_run_id": str(intent.analysis_run_id),
+        "assessment_version": intent.assessment_version,
+        **intent.document,
+        "created_at": intent.created_at.isoformat(),
+    }
+
+
+def _plan_document(db, plan: InfrastructurePlan) -> dict:
+    files = db.scalars(
+        select(InfrastructurePlanFile)
+        .where(InfrastructurePlanFile.plan_id == plan.id)
+        .order_by(InfrastructurePlanFile.path)
+    ).all()
+    approval = db.scalar(
+        select(PlanApproval)
+        .where(PlanApproval.plan_id == plan.id, PlanApproval.invalidated_at.is_(None))
+        .order_by(PlanApproval.created_at.desc())
+    )
+    previous_files = []
+    if plan.previous_plan_id:
+        previous_files = db.scalars(
+            select(InfrastructurePlanFile).where(
+                InfrastructurePlanFile.plan_id == plan.previous_plan_id
+            )
+        ).all()
+    previous_by_path = {item.path: item.content_hash for item in previous_files}
+    current_by_path = {item.path: item.content_hash for item in files}
+    added = sorted(set(current_by_path) - set(previous_by_path))
+    removed = sorted(set(previous_by_path) - set(current_by_path))
+    changed = sorted(
+        path
+        for path in set(current_by_path).intersection(previous_by_path)
+        if current_by_path[path] != previous_by_path[path]
+    )
+    validation = dict(plan.validation_json)
+    validation.setdefault("schema_version", INFRASTRUCTURE_PLAN_SCHEMA_VERSION)
+    validation.setdefault(
+        "image_binding",
+        {
+            "name": "application-image",
+            "repository": validation.get("provisional_image", "").rsplit(":", 1)[0],
+            "preview_reference": validation.get("provisional_image", ""),
+            "status": "provisional",
+            "final_reference_kind": "digest",
+        },
+    )
+    return {
+        "schema_version": INFRASTRUCTURE_PLAN_SCHEMA_VERSION,
+        "id": str(plan.id),
+        "application_id": str(plan.application_id),
+        "analysis_run_id": str(plan.analysis_run_id),
+        "assessment_version": plan.assessment_version,
+        "environment_profile_id": plan.environment_profile_id,
+        "bundle_digest": plan.bundle_digest,
+        "status": plan.status,
+        "validation": validation,
+        "previous_plan_id": str(plan.previous_plan_id) if plan.previous_plan_id else None,
+        "files": [
+            {
+                "path": item.path,
+                "content": item.content,
+                "hash": item.content_hash,
+                "change": (
+                    "added"
+                    if item.path in added
+                    else "changed"
+                    if item.path in changed
+                    else "unchanged"
+                ),
+            }
+            for item in files
+        ],
+        "comparison": {
+            "previous_plan_id": str(plan.previous_plan_id) if plan.previous_plan_id else None,
+            "added": added,
+            "changed": changed,
+            "removed": removed,
+        },
+        "approval": {"actor_id": approval.actor_id, "created_at": approval.created_at.isoformat()}
+        if approval
+        else None,
+        "created_at": plan.created_at.isoformat(),
+    }
 
 
 @router.get("/me")
@@ -187,10 +297,62 @@ def patch_assessment(run_id: UUID, body: AssessmentPatch, identity: Actor, key: 
                     review["health_path"] = changes["health_path"]
                     document["health_checks"] = [changes["health_path"]]
                 document["review"] = review
+                answers = changes.get("question_answers", {})
+                known_questions = {question["id"] for question in document.get("questions", [])}
+                if set(answers).difference(known_questions):
+                    raise HTTPException(422, "Question answer does not belong to this assessment")
+                remaining = []
+                for question in document.get("questions", []):
+                    answer = answers.get(question["id"])
+                    if answer is None:
+                        remaining.append(question)
+                        continue
+                    if question["answer_type"] == "integer" and not isinstance(answer, int):
+                        raise HTTPException(422, "Question answer type is invalid")
+                    if question["answer_type"] == "boolean" and not isinstance(answer, bool):
+                        raise HTTPException(422, "Question answer type is invalid")
+                    if (
+                        question["answer_type"] == "single_choice"
+                        and answer not in question["choices"]
+                    ):
+                        raise HTTPException(422, "Question answer is not an allowed choice")
+                    document.setdefault("findings", []).append(
+                        {
+                            "id": f"finding-user-{run.assessment_version + 1}-{len(document['findings']) + 1}",
+                            "category": question["field_path"],
+                            "value": answer,
+                            "status": "user_supplied",
+                            "confidence": 1.0,
+                            "evidence_ids": [],
+                        }
+                    )
+                document["questions"] = remaining
+                if not any(question["required"] for question in remaining):
+                    document["completion"] = "complete"
+                    document["incomplete_reason"] = None
             else:
                 for field, value in changes.items():
                     document[field] = {"value": value, "source": "user"}
             run.assessment_version += 1
+            for plan in db.scalars(
+                select(InfrastructurePlan).where(
+                    InfrastructurePlan.analysis_run_id == run.id,
+                    InfrastructurePlan.status.in_({"proposed", "approved"}),
+                )
+            ):
+                plan.status = "stale"
+                for approval in db.scalars(
+                    select(PlanApproval).where(
+                        PlanApproval.plan_id == plan.id,
+                        PlanApproval.invalidated_at.is_(None),
+                    )
+                ):
+                    approval.invalidated_at = db.scalar(select(func.now()))
+                    approval.invalidated_reason = "assessment_changed"
+            if run.status == "needs_input" and not any(
+                question["required"] for question in document.get("questions", [])
+            ):
+                run.status = "completed"
             db.add(
                 AssessmentVersion(
                     run_id=run.id,
@@ -208,6 +370,301 @@ def patch_assessment(run_id: UUID, body: AssessmentPatch, identity: Actor, key: 
 
         response, code = idempotent(
             db, identity, f"analyses/{run_id}/assessment", key, body.model_dump(), operation
+        )
+    return JSONResponse(response, status_code=code)
+
+
+@router.get("/environment-profiles")
+def environment_profiles(identity: Actor):
+    try:
+        profile = local_k3s_profile()
+    except ValueError:
+        return []
+    return [
+        {
+            key: profile[key]
+            for key in (
+                "id",
+                "namespace",
+                "registry",
+                "default_image",
+                "ingress_class",
+                "hostname_suffix",
+                "max_replicas",
+                "hash",
+            )
+        }
+    ]
+
+
+@router.get("/connections")
+def connections(identity: Actor):
+    """Phase 4 ships the safe catalogue shape but no preconfigured backing services."""
+    return []
+
+
+@router.get("/applications/{app_id}/kubernetes-recommendation")
+def kubernetes_recommendation(app_id: UUID, analysis_run_id: UUID, identity: Actor):
+    """Return one complete, editable Kubernetes recommendation without asking the user."""
+    with Session() as db:
+        application_for(db, app_id, identity)
+        run = run_for(db, analysis_run_id, identity)
+        if run.application_id != app_id or run.status not in {"completed", "needs_input"}:
+            raise HTTPException(409, "Assessment is not ready for Kubernetes recommendations")
+        assessment = db.get(AssessmentVersion, (run.id, run.assessment_version))
+        if assessment is None:
+            raise HTTPException(409, "Assessment has no reviewable version")
+        try:
+            result = recommend(
+                assessment.document, local_k3s_profile(), run.revision, run.assessment_version
+            )
+            latest_version = db.scalar(
+                select(DeploymentIntentVersion.version)
+                .where(DeploymentIntentVersion.application_id == app_id)
+                .order_by(DeploymentIntentVersion.version.desc())
+            )
+            result["intent"]["version"] = latest_version or 0
+            return result
+        except ValueError as exc:
+            raise HTTPException(409, "Kubernetes profile is not configured") from exc
+
+
+@router.get("/applications/{app_id}/deployment-intent")
+def get_deployment_intent(app_id: UUID, analysis_run_id: UUID, identity: Actor):
+    with Session() as db:
+        application_for(db, app_id, identity)
+        intent = db.scalar(
+            select(DeploymentIntentVersion)
+            .where(
+                DeploymentIntentVersion.application_id == app_id,
+                DeploymentIntentVersion.analysis_run_id == analysis_run_id,
+            )
+            .order_by(DeploymentIntentVersion.version.desc())
+        )
+        return _intent_document(intent) if intent else None
+
+
+@router.put("/applications/{app_id}/deployment-intent")
+def put_deployment_intent(app_id: UUID, body: DeploymentIntentWrite, identity: Actor, key: Key):
+    identity.require_write()
+    run_id = UUID(body.analysis_run_id)
+    with Session.begin() as db:
+        application = application_for(db, app_id, identity)
+        run = run_for(db, run_id, identity, lock=True)
+        if run.application_id != application.id or run.status not in {"completed", "needs_input"}:
+            raise HTTPException(409, "Assessment is not ready for delivery settings")
+        if run.assessment_version != body.expected_assessment_version:
+            raise HTTPException(409, "Assessment version changed; reload before saving")
+        assessment = db.get(AssessmentVersion, (run.id, run.assessment_version))
+        if assessment is None:
+            raise HTTPException(409, "Assessment has no reviewable version")
+
+        def operation():
+            latest = db.scalar(
+                select(DeploymentIntentVersion)
+                .where(DeploymentIntentVersion.application_id == app_id)
+                .order_by(DeploymentIntentVersion.version.desc())
+            )
+            latest_version = latest.version if latest else 0
+            if latest_version != body.expected_version:
+                raise HTTPException(409, "Delivery settings changed; reload before saving")
+            document = body.model_dump(
+                exclude={"expected_version", "analysis_run_id", "expected_assessment_version"}
+            )
+            recommendation = recommend(
+                assessment.document, local_k3s_profile(), run.revision, run.assessment_version
+            )
+            document["field_recommendations"] = resolve_field_recommendations(
+                document, recommendation["intent"]["field_recommendations"]
+            )
+            intent = DeploymentIntentVersion(
+                application_id=app_id,
+                analysis_run_id=run.id,
+                assessment_version=run.assessment_version,
+                version=latest_version + 1,
+                document=document,
+                actor_id=identity.actor_id,
+            )
+            db.add(intent)
+            db.flush()
+            for plan in db.scalars(
+                select(InfrastructurePlan).where(
+                    InfrastructurePlan.application_id == app_id,
+                    InfrastructurePlan.status.in_({"proposed", "approved"}),
+                )
+            ):
+                plan.status = "stale"
+                for approval in db.scalars(
+                    select(PlanApproval).where(
+                        PlanApproval.plan_id == plan.id,
+                        PlanApproval.invalidated_at.is_(None),
+                    )
+                ):
+                    approval.invalidated_reason = "intent_changed"
+                    approval.invalidated_at = db.scalar(select(func.now()))
+            return _intent_document(intent), 201
+
+        response, code = idempotent(
+            db,
+            identity,
+            f"applications/{app_id}/deployment-intent",
+            key,
+            body.model_dump(),
+            operation,
+        )
+    return JSONResponse(response, status_code=code)
+
+
+@router.post("/applications/{app_id}/infrastructure-plans", status_code=201)
+def create_infrastructure_plan(
+    app_id: UUID, body: CreateInfrastructurePlan, identity: Actor, key: Key
+):
+    identity.require_write()
+    run_id = UUID(body.analysis_run_id)
+    with Session.begin() as db:
+        application = application_for(db, app_id, identity)
+        run = run_for(db, run_id, identity)
+        if (
+            run.application_id != application.id
+            or run.assessment_version != body.expected_assessment_version
+        ):
+            raise HTTPException(409, "Assessment version changed; reload before generating")
+        assessment = db.get(AssessmentVersion, (run.id, run.assessment_version))
+        intent = db.scalar(
+            select(DeploymentIntentVersion).where(
+                DeploymentIntentVersion.application_id == app_id,
+                DeploymentIntentVersion.analysis_run_id == run.id,
+                DeploymentIntentVersion.version == body.intent_version,
+            )
+        )
+        if intent is None or intent.assessment_version != run.assessment_version:
+            raise HTTPException(409, "Saved delivery settings are stale; save them again")
+
+        def operation():
+            paths = set((run.scanner_facts_json or {}).get("paths", []))
+            conflict = sorted(paths.intersection(MANAGED_PATHS))
+            if conflict:
+                raise HTTPException(409, f"Repository already contains managed file: {conflict[0]}")
+            try:
+                profile = local_k3s_profile()
+                bundle = render(assessment.document, intent.document, profile)
+            except (PlanError, ValueError) as exc:
+                raise HTTPException(
+                    422, f"Infrastructure plan cannot be generated: {exc}"
+                ) from None
+            previous = db.scalar(
+                select(InfrastructurePlan)
+                .where(
+                    InfrastructurePlan.application_id == app_id,
+                    InfrastructurePlan.environment_profile_id == profile["id"],
+                )
+                .order_by(InfrastructurePlan.created_at.desc())
+            )
+            if previous:
+                previous.status = "stale"
+                for approval in db.scalars(
+                    select(PlanApproval).where(
+                        PlanApproval.plan_id == previous.id, PlanApproval.invalidated_at.is_(None)
+                    )
+                ):
+                    approval.invalidated_reason = "superseded_by_new_plan"
+                    approval.invalidated_at = db.scalar(select(func.now()))
+            plan = InfrastructurePlan(
+                application_id=app_id,
+                analysis_run_id=run.id,
+                assessment_version=run.assessment_version,
+                intent_version_id=intent.id,
+                environment_profile_id=profile["id"],
+                environment_profile_hash=profile["hash"],
+                template_version="node-web-v1",
+                bundle_digest=bundle.digest,
+                validation_json=bundle.validation,
+                previous_plan_id=previous.id if previous else None,
+                created_by=identity.actor_id,
+            )
+            db.add(plan)
+            db.flush()
+            for path, content in bundle.files.items():
+                db.add(
+                    InfrastructurePlanFile(
+                        plan_id=plan.id,
+                        path=path,
+                        content=content,
+                        content_hash=hashlib.sha256(content.encode()).hexdigest(),
+                    )
+                )
+            emit(db, run, "plan.generated", "Infrastructure bundle generated for review.")
+            return _plan_document(db, plan), 201
+
+        response, code = idempotent(
+            db,
+            identity,
+            f"applications/{app_id}/infrastructure-plans",
+            key,
+            body.model_dump(),
+            operation,
+        )
+    return JSONResponse(response, status_code=code)
+
+
+@router.get("/applications/{app_id}/infrastructure-plans/latest")
+def get_latest_infrastructure_plan(app_id: UUID, analysis_run_id: UUID, identity: Actor):
+    with Session() as db:
+        application_for(db, app_id, identity)
+        run = run_for(db, analysis_run_id, identity)
+        if run.application_id != app_id:
+            raise HTTPException(404, "Infrastructure plan not found")
+        plan = db.scalar(
+            select(InfrastructurePlan)
+            .where(
+                InfrastructurePlan.application_id == app_id,
+                InfrastructurePlan.analysis_run_id == analysis_run_id,
+            )
+            .order_by(InfrastructurePlan.created_at.desc(), InfrastructurePlan.id.desc())
+        )
+        return _plan_document(db, plan) if plan else None
+
+
+@router.get("/infrastructure-plans/{plan_id}")
+def get_infrastructure_plan(plan_id: UUID, identity: Actor):
+    with Session() as db:
+        plan = db.get(InfrastructurePlan, plan_id)
+        if plan is None:
+            raise HTTPException(404, "Infrastructure plan not found")
+        application_for(db, plan.application_id, identity)
+        return _plan_document(db, plan)
+
+
+@router.post("/infrastructure-plans/{plan_id}/approve")
+def approve_infrastructure_plan(plan_id: UUID, body: ApprovePlan, identity: Actor, key: Key):
+    identity.require_write()
+    with Session.begin() as db:
+        plan = db.get(InfrastructurePlan, plan_id)
+        if plan is None:
+            raise HTTPException(404, "Infrastructure plan not found")
+        application_for(db, plan.application_id, identity)
+
+        def operation():
+            if plan.status != "proposed" or plan.bundle_digest != body.expected_digest:
+                raise HTTPException(409, "Plan is stale; generate and review a new bundle")
+            approval = PlanApproval(
+                plan_id=plan.id, bundle_digest=plan.bundle_digest, actor_id=identity.actor_id
+            )
+            db.add(approval)
+            plan.status = "approved"
+            return {
+                "plan_id": str(plan.id),
+                "bundle_digest": plan.bundle_digest,
+                "status": "approved",
+            }, 201
+
+        response, code = idempotent(
+            db,
+            identity,
+            f"infrastructure-plans/{plan_id}/approve",
+            key,
+            body.model_dump(),
+            operation,
         )
     return JSONResponse(response, status_code=code)
 

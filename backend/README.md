@@ -1,11 +1,18 @@
-# DeployFlow backend — Phase 3
+# DeployFlow backend — analysis and delivery-plan preview
 
 FastAPI API, PostgreSQL state and event history, Redis/Dramatiq workers, and a
 database-backed job dispatcher. Analysis resolves a GitHub revision through a
 configured GitHub App and runs deterministic, read-only repository scanners.
 An explicitly enabled agent mode can use DeepSeek with reviewed skills and a
-bounded, read-only repository MCP server. It never executes repository code,
-creates a GitHub PR, or contacts Kubernetes.
+bounded, read-only repository MCP server. Phase 4 stores versioned delivery
+intent, generates a reviewable Dockerfile/workflow/Kubernetes bundle, and records
+approval. It never executes repository code, creates a GitHub PR, pushes an image,
+or contacts Kubernetes.
+
+The Kubernetes recommendation endpoint combines repository evidence with the fixed
+local Kubernetes policy to return one complete editable intent. It does not ask the
+user deployment questions or query a live cluster; resource and exposure defaults
+are explicitly labelled as policy defaults.
 
 Installation-token requests retry transient GitHub `422`, `429`, and `5xx` responses with bounded
 backoff. Permanent failures retain a short sanitized GitHub diagnostic in the failed event; tokens,
@@ -57,9 +64,10 @@ The migration service runs before the API, dispatcher, and worker start.
 The existing `.env` can remain in place. It is ignored by Git and excluded from
 the image. `.env.example` documents optional local overrides; don't overwrite
 existing settings. Compose passes only its listed `DF_*` variables to the backend.
-GHCR and Kubernetes credentials are unnecessary for this phase. GitHub App
-credentials are required for deterministic/agent repository analysis; a DeepSeek
-key is required only for explicitly selected agent mode.
+GitHub App credentials are required for deterministic/agent repository analysis; a
+DeepSeek key is required only for explicitly selected agent mode. Phase 4's local
+preview profile also needs `GHCR_REGISTRY` and `GHCR_IMAGE`; these are image names,
+not registry credentials. The application does not authenticate to GHCR or Kubernetes.
 
 ```bash
 docker compose logs -f api dispatcher worker
@@ -113,7 +121,7 @@ curl -s -X PATCH http://127.0.0.1:8000/api/v1/analyses/RUN_ID/assessment \
   -d '{"expected_version":1,"port":8080}'
 ```
 
-Available Phase 1 routes:
+Available application, analysis, and delivery-plan routes:
 
 | Method | Path under `/api/v1` | Behavior |
 | --- | --- | --- |
@@ -126,6 +134,13 @@ Available Phase 1 routes:
 | PATCH | `/analyses/{id}/assessment` | New assessment version; optimistic concurrency |
 | POST | `/analyses/{id}/reanalyze` | New independent run |
 | POST | `/analyses/{id}/cancel` | Cancel queued/running work |
+| GET | `/environment-profiles` | Available safe target profiles (local-k3s when configured) |
+| GET | `/connections` | Approved connection catalogue (empty by default) |
+| GET | `/applications/{id}/kubernetes-recommendation` | Complete evidence-first Kubernetes recommendation |
+| GET / PUT | `/applications/{id}/deployment-intent` | Read / version saved connectivity and workflow settings |
+| POST | `/applications/{id}/infrastructure-plans` | Generate a review-only infrastructure bundle |
+| GET | `/infrastructure-plans/{id}` | Read a generated bundle and validation result |
+| POST | `/infrastructure-plans/{id}/approve` | Record approval for the exact bundle digest |
 
 All mutations require `Idempotency-Key`. Keys are scoped to organization, actor,
 and action (including target ID), with a canonical hash of validated request data.
@@ -138,7 +153,7 @@ The frontend in `../frontend` now consumes all Phase 1 application/analysis rout
 Run `npm run dev` there and open `http://127.0.0.1:5174`. Vite proxies `/api` to this
 backend on port 8000, including SSE. The browser uses the same origin, so CORS
 changes are unnecessary. For clients that call the backend directly, CORS permits
-`http://localhost:5173` and `http://127.0.0.1:5173` by default; override
+`http://localhost:5174` and `http://127.0.0.1:5174` by default; override
 `DF_CORS_ORIGINS` with a JSON array if required.
 
 ## Editor changes and Docker hot reload

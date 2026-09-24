@@ -46,6 +46,11 @@ the development proxy is not embedded in `npm run build` output.
 | `PATCH /analyses/{id}/assessment` | Save port/health-path corrections with expected version |
 | `POST /analyses/{id}/reanalyze` | Create a new analysis without replacing the old run |
 | `POST /analyses/{id}/cancel` | Cancel queued or running work |
+| `GET /environment-profiles` | Load the available local-k3s preview profile |
+| `GET /applications/{id}/kubernetes-recommendation` | Load the prefilled AI/policy Kubernetes recommendation |
+| `GET` / `PUT /applications/{id}/deployment-intent` | Load and version connectivity and workflow settings |
+| `POST /applications/{id}/infrastructure-plans` | Generate a review-only bundle |
+| `POST /infrastructure-plans/{id}/approve` | Record approval of the generated bundle |
 
 The backend can run deterministic GitHub repository analysis when
 `DF_ANALYSIS_PROVIDER=github`, or simulated fixture analysis when it is `fake`.
@@ -61,8 +66,9 @@ exposing this system remotely.
 Application and run IDs are in the URL. Refreshing resumes the run. Event IDs are
 saved per run in session storage, and EventSource reconnects automatically.
 Periodic status reads provide a fallback during SSE interruptions. Terminal runs
-close their stream. Review changes are saved only when **Save assessment** is
-clicked; the review step displays saved backend values.
+close their stream. Connectivity and workflow changes are saved only through their
+explicit save actions; moving forward also saves first. The review step shows the
+saved delivery settings and any bundle generated during the current session.
 
 Mutations use idempotency keys scoped by actor, action, target, and request body.
 An uncertain failed request keeps its key across retries/reloads until a successful
@@ -70,9 +76,13 @@ response arrives. Duplicate clicks are blocked while a command is in flight.
 Concurrent assessment edits report `409` and preserve your unsaved inputs; use
 **Reload latest assessment** to explicitly discard them and load the newer version.
 
-Ingress/resources/dependencies and workflow settings are disabled until their
-backend contracts exist. PR creation is disabled. No fake PR, deployment, replica
-count, database dependency, or connected cluster is shown.
+The delivery flow starts with a complete Kubernetes recommendation, derived from
+repository evidence and Kubernetes policy defaults. Users only edit values they
+wish to override. It supports service port, health path, replicas, resource requests
+and limits, external exposure, detected non-secret environment values, and build
+commands. The local profile currently has no approved connection or secret catalogue,
+so those controls are accurately unavailable. Bundle generation and approval are
+review-only: no GitHub pull request, CI execution, image push, or deployment occurs.
 
 ## Verification
 

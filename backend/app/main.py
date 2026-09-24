@@ -23,7 +23,7 @@ app.state.identity_provider = DevelopmentIdentityProvider()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings().cors_origins,
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH", "PUT"],
     allow_headers=[
         "Content-Type",
         "Idempotency-Key",
@@ -78,6 +78,20 @@ async def http_error(request, exc):
 @app.exception_handler(RequestValidationError)
 async def invalid_request(request, exc):
     # Pydantic's default details may echo sensitive request values.
+    fields = sorted(
+        {
+            ".".join(str(part) for part in error.get("loc", ()))
+            for error in exc.errors()
+            if error.get("loc")
+        }
+    )
+    log.warning(
+        "request_validation_failed method=%s path=%s fields=%s correlation_id=%s",
+        request.method,
+        request.url.path,
+        fields,
+        getattr(request.state, "correlation_id", None),
+    )
     return problem(
         request, 422, "Request validation failed; check the documented field constraints"
     )

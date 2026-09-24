@@ -34,9 +34,13 @@ and automatically restart the API, worker, and dispatcher. PostgreSQL and Redis
 remain running. Dependency/lockfile changes trigger image rebuilds. Keep the
 watch command running; stopping it leaves services running but stops code sync.
 
-The frontend now consumes all Phase 1 application/analysis endpoints, including
-progress streaming, cancellation, review edits, and reanalysis. Analysis is still
-simulated, and authentication uses a local development identity. Cluster access,
-GitHub PR creation, and deployment remain unavailable until their backend phases.
+The frontend supports repository registration, durable GitHub repository analysis,
+optional DeepSeek-assisted review, and Phase 4 delivery planning. After analysis,
+DeployFlow produces a complete Kubernetes recommendation from repository evidence
+and Kubernetes policy defaults. You may override a recommendation when needed, then
+generate and approve a reviewable infrastructure bundle.
+Approval is an audit record only. This project does not create GitHub pull requests,
+run CI, push images, or access a Kubernetes cluster. Authentication uses a local
+development identity.
 
 See the [frontend guide](frontend/README.md) and [backend guide](backend/README.md).

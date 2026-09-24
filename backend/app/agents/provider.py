@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Protocol
@@ -10,9 +11,10 @@ import httpx
 
 
 class ModelProviderError(Exception):
-    def __init__(self, code: str, *, retryable: bool = False):
+    def __init__(self, code: str, *, retryable: bool = False, diagnostic: str | None = None):
         self.code = code
         self.retryable = retryable
+        self.diagnostic = diagnostic
         super().__init__(code)
 
 
@@ -57,6 +59,30 @@ def _history_items(output: list[dict]) -> list[dict]:
         elif kind == "message":
             items.append({"role": "assistant", "content": item.get("content", [])})
     return items
+
+
+def _provider_diagnostic(response: httpx.Response) -> str:
+    """Return a short, secret-redacted provider diagnostic suitable for worker logs."""
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        code = str(error.get("code") or "unknown")
+        message = str(error.get("message") or error.get("detail") or "")
+    elif isinstance(body, dict):
+        code = str(body.get("code") or "unknown")
+        message = str(body.get("message") or body.get("detail") or "")
+    else:
+        code, message = "unknown", ""
+    message = re.sub(
+        r"(?i)(bearer\s+|(?:api[_-]?key|token|secret|password)\s*[:=]\s*)([^\s,;]+)",
+        r"\1[REDACTED]",
+        message,
+    )
+    message = " ".join(message.split())[:500]
+    return f"http_status={response.status_code} provider_code={code} message={message or '[none]'}"
 
 
 class DeepSeekResponsesProvider:
@@ -124,7 +150,9 @@ class DeepSeekResponsesProvider:
         if response.status_code == 429 or response.status_code >= 500:
             raise ModelProviderError("model_unavailable", retryable=True)
         if response.status_code >= 400:
-            raise ModelProviderError("model_request_failed")
+            raise ModelProviderError(
+                "model_request_failed", diagnostic=_provider_diagnostic(response)
+            )
         body = response.json()
         if body.get("status") in {"failed", "incomplete"}:
             raise ModelProviderError("model_incomplete")

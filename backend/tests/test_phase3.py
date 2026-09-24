@@ -10,6 +10,7 @@ from app.agents.provider import (
     ModelProviderError,
     ModelUsage,
     ScriptedProvider,
+    _provider_diagnostic,
 )
 from app.agents.repository_mcp import GatewayResult
 from app.config import settings
@@ -102,6 +103,25 @@ def test_deepseek_provider_refuses_unconfigured_credentials():
                 output_schema={},
             )
         )
+
+
+def test_provider_diagnostic_is_short_and_redacts_credentials():
+    import httpx
+
+    response = httpx.Response(
+        400,
+        json={
+            "error": {
+                "code": "invalid_parameter",
+                "message": "text.format is invalid; token=not-for-logs",
+            }
+        },
+    )
+    diagnostic = _provider_diagnostic(response)
+    assert "http_status=400" in diagnostic
+    assert "invalid_parameter" in diagnostic
+    assert "[REDACTED]" in diagnostic
+    assert "not-for-logs" not in diagnostic
 
 
 class FakeGateway:

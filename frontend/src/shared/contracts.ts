@@ -1,6 +1,6 @@
 export type Identity = { actor_id: string; organization_id: string; roles: string[]; authentication: string }
 export type Application = { id: string; name: string; repository_url: string; revision: string }
-export type Finding = { value: string | number | null; source: 'mock' | 'unknown' | 'user' | 'explicit' | 'inferred' }
+export type Finding = { value: string | number | null; source: 'mock' | 'unknown' | 'user' | 'explicit' | 'inferred'; command?: string | null }
 export type FakeAssessment = {
   mode: 'fake'; runtime: Finding; port: Finding; health_path: Finding
   environment_variable_names: string[]; unknowns: string[]
@@ -9,6 +9,8 @@ export type DeterministicAssessment = {
   mode: 'deterministic' | 'agent'; schema_version?: 'infrastructure-assessment-v1' | 'infrastructure-assessment-v2'; completion: 'complete' | 'partial'; incomplete_reason: string | null
   runtime: Finding | { name: string | null; command: string | null; version: string | null }; port?: Finding; health_path?: Finding; environment_variable_names?: string[]
   repository: { url: string; commit_sha: string }; review: { runtime: string; port: number | null; health_path: string | null }
+  build?: { install_command: string | null; artifact: string | null }
+  workflow?: { test_command: string | null; build_command: string | null }
   detected_stack: { languages: string[]; frameworks: string[] }; configuration: { required_variables: string[]; optional_variables: string[] }
   evidence: { id: string; file_path: string; line_start: number | null; line_end: number | null; detector: string }[]; unknowns: string[]
   findings?: { id: string; category: string; value: string | number | boolean | null; status: string; confidence: number; evidence_ids: string[] }[]

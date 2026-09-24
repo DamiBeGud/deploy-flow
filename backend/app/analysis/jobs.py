@@ -147,6 +147,15 @@ def execute(run_id: str):
                 else:
                     finish(db, run, "failed", exc.user_message, exc.code)
     except AgentError as exc:
+        if exc.diagnostic:
+            log.warning(
+                "analysis_agent_failed run_id=%s code=%s provider_diagnostic=%s",
+                identifier,
+                exc.code,
+                exc.diagnostic,
+            )
+        else:
+            log.warning("analysis_agent_failed run_id=%s code=%s", identifier, exc.code)
         with Session.begin() as db:
             run = db.scalar(
                 select(AnalysisRun).where(AnalysisRun.id == identifier).with_for_update()
@@ -156,9 +165,15 @@ def execute(run_id: str):
                     retry_or_fail(db, run, exc.code)
                 else:
                     finish(db, run, "failed", "Agent analysis could not be completed.", exc.code)
-    except Exception:
-        # Do not log source contents, exception messages, credentials or request bodies.
-        log.error("analysis_attempt_failed run_id=%s", identifier)
+    except Exception as exc:
+        # The traceback identifies our failing code path without logging exception
+        # text, request payloads, repository contents, or credentials.
+        log.error(
+            "analysis_attempt_failed run_id=%s exception_type=%s",
+            identifier,
+            type(exc).__name__,
+            exc_info=True,
+        )
         with Session.begin() as db:
             run = db.scalar(
                 select(AnalysisRun).where(AnalysisRun.id == identifier).with_for_update()
@@ -260,18 +275,31 @@ async def _run_agent(
         timeout_seconds=config.agent_provider_timeout_seconds,
         max_output_tokens=config.agent_response_max_tokens,
     )
-    async with repository_gateway(
-        root,
-        metadata,
-        allowed_tools=allowed,
-        read_limit=config.repository_read_bytes,
-        result_limit=config.repository_result_budget,
-        output_budget=config.agent_tool_output_bytes,
-        tool_timeout_seconds=config.agent_tool_timeout_seconds,
-    ) as gateway:
-        return await run_agent(
-            provider=provider, gateway=gateway, facts=facts, skills=skills, budget=budget
-        )
+    try:
+        async with repository_gateway(
+            root,
+            metadata,
+            allowed_tools=allowed,
+            read_limit=config.repository_read_bytes,
+            result_limit=config.repository_result_budget,
+            output_budget=config.agent_tool_output_bytes,
+            tool_timeout_seconds=config.agent_tool_timeout_seconds,
+        ) as gateway:
+            return await run_agent(
+                provider=provider, gateway=gateway, facts=facts, skills=skills, budget=budget
+            )
+    except BaseExceptionGroup as exc:
+        # anyio wraps an error raised inside the MCP context manager in an
+        # ExceptionGroup during cleanup. Preserve the typed agent error so the
+        # worker can retain its diagnostic rather than treating it as unknown.
+        pending = list(exc.exceptions)
+        while pending:
+            candidate = pending.pop()
+            if isinstance(candidate, AgentError):
+                raise candidate from exc
+            if isinstance(candidate, BaseExceptionGroup):
+                pending.extend(candidate.exceptions)
+        raise
 
 
 def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: HarnessOutcome):

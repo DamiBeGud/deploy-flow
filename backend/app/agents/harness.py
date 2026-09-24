@@ -27,9 +27,10 @@ PROMPT_VERSION = "phase3-agent-v1"
 
 
 class AgentError(Exception):
-    def __init__(self, code: str, *, retryable: bool = False):
+    def __init__(self, code: str, *, retryable: bool = False, diagnostic: str | None = None):
         self.code = code
         self.retryable = retryable
+        self.diagnostic = diagnostic
         super().__init__(code)
 
 
@@ -171,7 +172,10 @@ async def run_agent(
     while True:
         if monotonic() - started > budget.wall_seconds:
             raise AgentError("agent_budget_exhausted")
-        choice = "required" if not content_read else "auto"
+        # DeepSeek thinking mode rejects forced tool calls. The host still
+        # rejects a final assessment until a content-bearing repository tool
+        # has supplied evidence, then prompts the model to use one.
+        choice = "auto"
         try:
             action: ModelAction = await provider.respond(
                 instructions=_instructions(skills),
@@ -181,7 +185,7 @@ async def run_agent(
                 output_schema=assessment_v2_schema(),
             )
         except ModelProviderError as exc:
-            raise AgentError(exc.code, retryable=exc.retryable) from exc
+            raise AgentError(exc.code, retryable=exc.retryable, diagnostic=exc.diagnostic) from exc
         budget.add_usage(action.usage)
         returned_model = action.usage.returned_model or returned_model
         history.extend(action.history_items)

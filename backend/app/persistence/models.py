@@ -148,6 +148,59 @@ class AgentToolEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class DeploymentIntentVersion(Base):
+    __tablename__ = "deployment_intent_versions"
+    __table_args__ = (UniqueConstraint("application_id", "version", name="uq_intent_version"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    application_id: Mapped[UUID] = mapped_column(ForeignKey("applications.id"), index=True)
+    analysis_run_id: Mapped[UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    assessment_version: Mapped[int] = mapped_column(Integer)
+    version: Mapped[int] = mapped_column(Integer)
+    document: Mapped[dict] = mapped_column(JSONB)
+    actor_id: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InfrastructurePlan(Base):
+    __tablename__ = "infrastructure_plans"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    application_id: Mapped[UUID] = mapped_column(ForeignKey("applications.id"), index=True)
+    analysis_run_id: Mapped[UUID] = mapped_column(ForeignKey("analysis_runs.id"), index=True)
+    assessment_version: Mapped[int] = mapped_column(Integer)
+    intent_version_id: Mapped[UUID] = mapped_column(ForeignKey("deployment_intent_versions.id"))
+    environment_profile_id: Mapped[str] = mapped_column(String(128))
+    environment_profile_hash: Mapped[str] = mapped_column(String(64))
+    template_version: Mapped[str] = mapped_column(String(64))
+    bundle_digest: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="proposed", index=True)
+    validation_json: Mapped[dict] = mapped_column(JSONB)
+    previous_plan_id: Mapped[UUID | None] = mapped_column(ForeignKey("infrastructure_plans.id"))
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InfrastructurePlanFile(Base):
+    __tablename__ = "infrastructure_plan_files"
+    __table_args__ = (UniqueConstraint("plan_id", "path", name="uq_plan_file_path"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("infrastructure_plans.id"), index=True)
+    path: Mapped[str] = mapped_column(String(512))
+    content: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PlanApproval(Base):
+    __tablename__ = "plan_approvals"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("infrastructure_plans.id"), index=True)
+    bundle_digest: Mapped[str] = mapped_column(String(64))
+    actor_id: Mapped[str] = mapped_column(String(128))
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invalidated_reason: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PendingJob(Base):
     __tablename__ = "pending_jobs"
     run_id: Mapped[UUID] = mapped_column(ForeignKey("analysis_runs.id"), primary_key=True)

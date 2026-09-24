@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
     deepseek_reasoning_effort: Literal["none", "low", "high", "max"] = "high"
+    ghcr_registry: str | None = None
+    ghcr_image: str | None = None
+    node_base_image: str = "node:20-bookworm-slim"
     agent_max_turns: int = Field(default=8, ge=1, le=32)
     agent_max_tool_calls: int = Field(default=12, ge=1, le=64)
     agent_max_input_tokens: int = Field(default=120_000, ge=1_000)
@@ -64,6 +67,8 @@ class Settings(BaseSettings):
         "deepseek_api_key",
         "analysis_provider",
         "analysis_mode",
+        "ghcr_registry",
+        "ghcr_image",
         mode="before",
     )
     @classmethod

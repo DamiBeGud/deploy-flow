@@ -105,7 +105,7 @@ def profile():
         "namespace": "deployflow-test",
         "registry": "ghcr.io",
         "hostname_suffix": ".deployflow.local",
-        "ingress_class": "traefik",
+        "ingress_class": "nginx",
         "max_replicas": 3,
         "allowed_secret_names": [],
         "node_base_image": "node:20-bookworm-slim",

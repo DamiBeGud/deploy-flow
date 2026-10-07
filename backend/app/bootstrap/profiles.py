@@ -19,7 +19,7 @@ def local_k3s_profile() -> dict:
         "namespace": "deployflow-test",
         "registry": registry,
         "default_image": image,
-        "ingress_class": "traefik",
+        "ingress_class": "nginx",
         "hostname_suffix": ".deployflow.local",
         "max_replicas": 3,
         "allowed_secret_names": [],

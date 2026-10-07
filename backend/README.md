@@ -14,6 +14,26 @@ local Kubernetes policy to return one complete editable intent. It does not ask 
 user deployment questions or query a live cluster; resource and exposure defaults
 are explicitly labelled as policy defaults.
 
+## k3s readiness (pre-Phase 5)
+
+The local profile now matches the existing cluster's `nginx` IngressClass and
+`deployflow-test` namespace. See the [sanitized P0-01 readiness record](ops/k3s/P0-01-readiness.md)
+for verified access boundaries and outstanding work. To repeat its read-only
+checks from the repository root:
+
+```bash
+DF_K3S_SSH_TARGET=user@host bash backend/scripts/check_k3s_readiness.sh
+```
+
+For local development, `backend/scripts/k3s_tunnel.sh` can forward the API to
+`https://127.0.0.1:16443` over SSH. Set `DF_K3S_SSH_TARGET`; optionally set
+`DF_K3S_SSH_KEY` and `DF_K3S_LOCAL_PORT`. The tunnel alone is not an authenticated
+Kubernetes client: a separately provisioned, namespace-scoped kubeconfig and
+trusted CA are still required, and must stay outside Git. No Kubernetes client,
+MCP server, or dry-run endpoint is wired into the backend yet. Phase 4 remains
+review-only. Regenerate old plans after the ingress-class policy change; do not
+use bundles generated with the previous `traefik` profile.
+
 Installation-token requests retry transient GitHub `422`, `429`, and `5xx` responses with bounded
 backoff. Permanent failures retain a short sanitized GitHub diagnostic in the failed event; tokens,
 private keys, and source contents are never returned.

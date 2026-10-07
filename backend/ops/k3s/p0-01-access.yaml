@@ -1,0 +1,87 @@
+# Administrator-provisioned Phase 5 target. Never include this file in an
+# application-generated bundle. The reader and validator have no Secret access.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: deployflow-test
+  labels:
+    app.kubernetes.io/part-of: deployflow
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.36
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployflow-reader
+  namespace: deployflow-test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployflow-reader
+  namespace: deployflow-test
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployflow-reader
+  namespace: deployflow-test
+subjects:
+  - kind: ServiceAccount
+    name: deployflow-reader
+    namespace: deployflow-test
+roleRef:
+  kind: Role
+  name: deployflow-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployflow-validator
+  namespace: deployflow-test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployflow-validator
+  namespace: deployflow-test
+rules:
+  - apiGroups: [""]
+    resources: [services, configmaps]
+    verbs: [get, create, patch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, create, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployflow-validator
+  namespace: deployflow-test
+subjects:
+  - kind: ServiceAccount
+    name: deployflow-validator
+    namespace: deployflow-test
+roleRef:
+  kind: Role
+  name: deployflow-validator
+  apiGroup: rbac.authorization.k8s.io

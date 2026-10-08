@@ -6,11 +6,12 @@ import type { Identity } from './shared/contracts'
 import { Brand, ErrorNotice } from './shared/ui'
 import { ApplicationsPage } from './features/applications/ApplicationsPage'
 import { AnalysisPage } from './features/analysis/AnalysisPage'
+import { ServicesPage } from './features/services/ServicesPage'
 import './App.css'
 
 function Workspace({ identity, onLogout }: { identity: Identity; onLogout: () => void }) {
   const canWrite = identity.roles.some(role => ['developer', 'deployer', 'administrator'].includes(role))
-  return <div className="app-shell"><aside className="sidebar"><Brand dark /><nav><NavLink to="/services"><Layers3 size={18} />Applications</NavLink>{canWrite && <NavLink to="/deploy"><Plus size={18} />Add application</NavLink>}</nav><div className="sidebar-footer"><div className="cluster-mini"><span><ServerCog size={15} /></span><div><b>Local backend</b><small>{identity.actor_id}</small></div></div><button onClick={onLogout} className="logout"><LogOut size={16} />Leave workspace</button></div></aside><main className="workspace"><Routes><Route path="/services" element={<ApplicationsPage canWrite={canWrite} />} /><Route path="/deploy" element={<AnalysisPage canWrite={canWrite} />} /><Route path="*" element={<Navigate to="/services" replace />} /></Routes></main></div>
+  return <div className="app-shell"><aside className="sidebar"><Brand dark /><nav><NavLink to="/services"><Layers3 size={18} />Applications</NavLink>{canWrite && <NavLink to="/deploy"><Plus size={18} />Add application</NavLink>}</nav><div className="sidebar-footer"><div className="cluster-mini"><span><ServerCog size={15} /></span><div><b>Local backend</b><small>{identity.actor_id}</small></div></div><button onClick={onLogout} className="logout"><LogOut size={16} />Leave workspace</button></div></aside><main className="workspace"><Routes><Route path="/services" element={<ServicesPage><ApplicationsPage canWrite={canWrite} /></ServicesPage>} /><Route path="/deploy" element={<AnalysisPage canWrite={canWrite} />} /><Route path="*" element={<Navigate to="/services" replace />} /></Routes></main></div>
 }
 
 function App() {

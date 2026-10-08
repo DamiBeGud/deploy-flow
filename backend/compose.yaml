@@ -35,6 +35,8 @@ x-backend: &backend
     DF_ANALYSIS_MODE: ${DF_ANALYSIS_MODE:-deterministic}
     DF_GHCR_REGISTRY: ${GHCR_REGISTRY:-}
     DF_GHCR_IMAGE: ${GHCR_IMAGE:-}
+    DF_KUBE_READER_MCP_URL: ${DF_KUBE_READER_MCP_URL:-}
+    DF_KUBE_VALIDATOR_MCP_URL: ${DF_KUBE_VALIDATOR_MCP_URL:-}
     DF_NODE_BASE_IMAGE: ${DF_NODE_BASE_IMAGE:-node:20-bookworm-slim}
     DF_GITHUB_APP_ID: ${DF_GITHUB_APP_ID:-}
     DF_GITHUB_INSTALLATION_ID: ${DF_GITHUB_INSTALLATION_ID:-}
@@ -88,6 +90,7 @@ services:
   api:
     <<: *backend
     develop: *source-watch
+    networks: [default, kube-reader, kube-validator]
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     healthcheck:
@@ -117,6 +120,74 @@ services:
     develop: *source-watch
     command: ["python", "-m", "app.dispatcher"]
 
+  kube-reader-tunnel:
+    profiles: ["phase5"]
+    build:
+      context: .
+      dockerfile: ops/k3s/Dockerfile.tunnel
+    environment:
+      DF_K3S_SSH_TARGET: ${DF_K3S_SSH_TARGET:-}
+    volumes:
+      - ${DF_K3S_SSH_KEY_PATH:-/dev/null}:/run/deployflow/ssh_key:ro
+      - ${DF_K3S_KNOWN_HOSTS_PATH:-/dev/null}:/run/deployflow/known_hosts:ro
+    tmpfs: [/run/deployflow-runtime:mode=0700]
+    networks: [kube-reader]
+    restart: unless-stopped
+
+  kube-validator-tunnel:
+    profiles: ["phase5"]
+    build:
+      context: .
+      dockerfile: ops/k3s/Dockerfile.tunnel
+    environment:
+      DF_K3S_SSH_TARGET: ${DF_K3S_SSH_TARGET:-}
+    volumes:
+      - ${DF_K3S_SSH_KEY_PATH:-/dev/null}:/run/deployflow/ssh_key:ro
+      - ${DF_K3S_KNOWN_HOSTS_PATH:-/dev/null}:/run/deployflow/known_hosts:ro
+    tmpfs: [/run/deployflow-runtime:mode=0700]
+    networks: [kube-validator]
+    restart: unless-stopped
+
+  kube-reader:
+    <<: *backend
+    profiles: ["phase5"]
+    network_mode: service:kube-reader-tunnel
+    user: "0:0"
+    depends_on:
+      kube-reader-tunnel:
+        condition: service_started
+    environment:
+      DF_KUBE_MCP_ROLE: reader
+      DF_KUBE_API_SERVER: https://127.0.0.1:16443
+      DF_KUBE_CA_PATH: /run/deployflow/ca.crt
+      DF_KUBE_TOKEN_PATH: /run/deployflow/token
+    volumes:
+      - ${DF_KUBE_CA_PATH:-/dev/null}:/run/deployflow/ca.crt:ro
+      - ${DF_KUBE_READER_TOKEN_PATH:-/dev/null}:/run/deployflow/token:ro
+    tmpfs: [/run/deployflow-runtime:mode=0700]
+    command: ["python", "-m", "mcp_servers.credential_bootstrap"]
+    restart: unless-stopped
+
+  kube-validator:
+    <<: *backend
+    profiles: ["phase5"]
+    network_mode: service:kube-validator-tunnel
+    user: "0:0"
+    depends_on:
+      kube-validator-tunnel:
+        condition: service_started
+    environment:
+      DF_KUBE_MCP_ROLE: validator
+      DF_KUBE_API_SERVER: https://127.0.0.1:16443
+      DF_KUBE_CA_PATH: /run/deployflow/ca.crt
+      DF_KUBE_TOKEN_PATH: /run/deployflow/token
+    volumes:
+      - ${DF_KUBE_CA_PATH:-/dev/null}:/run/deployflow/ca.crt:ro
+      - ${DF_KUBE_VALIDATOR_TOKEN_PATH:-/dev/null}:/run/deployflow/token:ro
+    tmpfs: [/run/deployflow-runtime:mode=0700]
+    command: ["python", "-m", "mcp_servers.credential_bootstrap"]
+    restart: unless-stopped
+
   tests:
     <<: *backend
     profiles: ["test"]
@@ -132,3 +203,7 @@ services:
 volumes:
   postgres-data:
   redis-data:
+
+networks:
+  kube-reader:
+  kube-validator:

@@ -18,17 +18,19 @@ the shared cluster: one namespace, two ServiceAccounts, two Roles, and two
 RoleBindings. No application workload was deployed. The manifest is a record of
 those resources, **not** part of an application-generated bundle.
 
-P0-01 remains **partially closed**. A distinct deployment identity is still
-needed for Phase 7; the validator is not a deployer. Scoped client credentials
+Phase 5 cluster integration remains **pending**. A distinct deployment identity
+is deferred to Phase 7; the validator is not a deployer. Scoped client credentials
 and a kubeconfig outside Git have not yet been provisioned/tested for the
-backend. GHCR publish and cluster pull authorization have not been demonstrated.
+backend. GHCR publishing is deferred to Phase 6. The intended images are
+public; an anonymous pull can be tested once the actual image exists.
 The tunnel proves transport only and does not grant API access. No further
 server changes should be made without the operator's explicit confirmation.
 
 Run `DF_K3S_SSH_TARGET=user@host bash backend/scripts/check_k3s_readiness.sh`
 from the repository root for repeatable read-only checks. An optional
-`DF_K3S_SSH_KEY` can select an SSH key outside the repository. This check does
-not verify registry authorization or scoped Kubernetes credentials.
+`DF_K3S_SSH_KEY` can select an SSH key outside the repository. The check now
+asserts the restricted Pod Security enforcement label and pinned version. It
+does not verify image availability or scoped Kubernetes credentials.
 
 The validator's Kubernetes RBAC grants write-equivalent verbs because the API
 authorizes dry-run as it would a real write. The future validation service must

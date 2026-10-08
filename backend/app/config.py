@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     deepseek_reasoning_effort: Literal["none", "low", "high", "max"] = "high"
     ghcr_registry: str | None = None
     ghcr_image: str | None = None
+    kube_reader_mcp_url: str | None = None
+    kube_validator_mcp_url: str | None = None
     node_base_image: str = "node:20-bookworm-slim"
     agent_max_turns: int = Field(default=8, ge=1, le=32)
     agent_max_tool_calls: int = Field(default=12, ge=1, le=64)
@@ -69,6 +71,8 @@ class Settings(BaseSettings):
         "analysis_mode",
         "ghcr_registry",
         "ghcr_image",
+        "kube_reader_mcp_url",
+        "kube_validator_mcp_url",
         mode="before",
     )
     @classmethod

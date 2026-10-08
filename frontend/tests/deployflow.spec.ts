@@ -72,7 +72,11 @@ test('persists application, streams analysis across reload, saves delivery setti
   await expect(page.getByRole('tabpanel')).toContainText('kind: Service')
   await page.getByRole('button', { name: 'Save and review' }).click()
   await expect(page.getByRole('heading', { name: 'Review delivery plan', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Bundle proposed' })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Generated file review' })).toBeVisible()
+  const retryValidation = page.waitForResponse(response => response.request().method() === 'POST' && /\/infrastructure-plans\/[^/]+\/validations$/.test(response.url()))
+  await page.getByRole('button', { name: 'Retry validation' }).click()
+  expect((await retryValidation).status()).toBe(201)
   await page.getByRole('button', { name: 'Source', exact: true }).click()
   await page.getByRole('button', { name: 'Reanalyze repository' }).click()
   await expect(page).not.toHaveURL(new RegExp('run=' + runId))
@@ -158,4 +162,40 @@ test('reuses the application command key after a response is lost', async ({ pag
   expect(keys[0]).toBe(keys[1])
   const apps = await (await page.request.get('/api/v1/applications?limit=100')).json()
   expect(apps.filter((application: { name: string }) => application.name === name)).toHaveLength(1)
+})
+
+test('shows observed Kubernetes workloads and preserves applications when cluster access fails', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.route('**/api/v1/me', route => route.fulfill({ json: {
+    actor_id: 'e2e-user', organization_id: 'e2e-org', roles: ['developer'], authentication: 'development', clusters: [],
+  } }))
+  await page.route('**/api/v1/applications?**', route => route.fulfill({ json: [] }))
+  let failCluster = false
+  await page.route(/\/api\/v1\/services\?/, route => {
+    if (failCluster) return route.fulfill({ status: 503, contentType: 'application/problem+json', body: JSON.stringify({ detail: 'cluster_unavailable' }) })
+    return route.fulfill({ json: {
+      cluster_id: 'local-k3s', namespace: 'deployflow-test', observed_at: '2026-10-07T10:00:00Z',
+      workloads: [{
+        id: 'deployflow-test:Deployment:fixture', kind: 'Deployment', name: 'fixture',
+        desired_replicas: 2, ready_replicas: 1, desired_completions: null, succeeded: null,
+        image: 'ghcr.io/example/fixture:abc', services: ['fixture'], managed: false,
+        conditions: [{ type: 'Available', status: 'False', reason: 'MinimumReplicasUnavailable' }],
+      }], services: [{ name: 'fixture', address: '10.0.0.1' }],
+    } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Connect to local backend' }).click()
+  const observations = page.getByRole('region', { name: 'Kubernetes observations' })
+  await expect(observations.getByRole('row').filter({ hasText: 'fixture' })).toContainText('1/2 ready')
+  await expect(observations.getByText('10.0.0.1')).toBeVisible()
+  await expect(observations.getByText(/Available: False/)).toBeVisible()
+  await expect(observations.getByText('Observed / unmanaged')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Registered applications' })).toBeVisible()
+  if (process.env.DF_E2E_SCREENSHOT) await page.screenshot({ path: process.env.DF_E2E_SCREENSHOT })
+  failCluster = true
+  await observations.getByRole('button', { name: 'Refresh' }).click()
+  await expect(observations.getByText(/Cluster observations unavailable: cluster_unavailable/)).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Registered applications' })).toBeVisible()
+  expect(errors).toEqual([])
 })

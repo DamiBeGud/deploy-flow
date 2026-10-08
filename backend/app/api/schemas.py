@@ -167,3 +167,7 @@ class CreateInfrastructurePlan(StrictModel):
 
 class ApprovePlan(StrictModel):
     expected_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ValidatePlan(StrictModel):
+    expected_digest: str = Field(pattern=r"^[0-9a-f]{64}$")

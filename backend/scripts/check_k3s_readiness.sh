@@ -29,6 +29,8 @@ expect() {
 echo "Host: $(remote hostname)"
 echo "Cluster: $(kctl 'version -o json' | sed -n 's/.*"gitVersion": "\([^"]*\)".*/\1/p' | tail -1)"
 expect namespace namespace/deployflow-test "$(kctl 'get namespace deployflow-test -o name')"
+expect pod_security_enforce restricted "$(kctl "get namespace deployflow-test -o jsonpath='{.metadata.labels.pod-security\\.kubernetes\\.io/enforce}'")"
+expect pod_security_version v1.36 "$(kctl "get namespace deployflow-test -o jsonpath='{.metadata.labels.pod-security\\.kubernetes\\.io/enforce-version}'")"
 expect ingress_class k8s.io/ingress-nginx "$(kctl 'get ingressclass nginx -o jsonpath={.spec.controller}')"
 
 for identity in reader validator; do

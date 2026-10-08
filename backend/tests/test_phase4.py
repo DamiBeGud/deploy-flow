@@ -7,7 +7,13 @@ from app.bootstrap.generator import PlanError, render
 from app.bootstrap.recommendations import recommend
 from app.config import settings
 from app.persistence.database import Session
-from app.persistence.models import AnalysisRun, AssessmentVersion, InfrastructurePlan, PlanApproval
+from app.persistence.models import (
+    AnalysisRun,
+    AssessmentVersion,
+    DeploymentIntentVersion,
+    InfrastructurePlan,
+    PlanApproval,
+)
 
 
 def application(client):
@@ -49,19 +55,30 @@ def completed_v2_run(client, app_id, key="phase4-analysis"):
     return run_id
 
 
-def save_intent(client, app_id, run_id, *, version=0, assessment_version=1):
+def save_intent(
+    client,
+    app_id,
+    run_id,
+    *,
+    version=0,
+    assessment_version=1,
+    greeting="Hello",
+    expected_status=201,
+):
+    document = intent()
+    document["connectivity"]["environment"]["APP_GREETING"] = greeting
     response = client.put(
         f"/api/v1/applications/{app_id}/deployment-intent",
-        headers={"Idempotency-Key": f"intent-{version}"},
+        headers={"Idempotency-Key": f"intent-{version}-{greeting}"},
         json={
             "expected_version": version,
             "analysis_run_id": run_id,
             "expected_assessment_version": assessment_version,
             "environment_profile_id": "local-k3s",
-            **intent(),
+            **document,
         },
     )
-    assert response.status_code == 201, response.text
+    assert response.status_code == expected_status, response.text
     return response.json()
 
 
@@ -195,7 +212,10 @@ def test_delivery_api_generates_repeatable_immutable_plans(client, monkeypatch):
     first = generate(first_intent["version"], "plan-1")
     assert first.status_code == 201, first.text
     assert first.json()["validation"]["provisional_image"].endswith("a" * 40)
-    second_intent = save_intent(client, app_id, run_id, version=first_intent["version"])
+    second_intent = save_intent(
+        client, app_id, run_id, version=first_intent["version"], expected_status=200
+    )
+    assert second_intent["version"] == first_intent["version"]
     second = generate(second_intent["version"], "plan-2")
     assert second.status_code == 201, second.text
     assert second.json()["bundle_digest"] == first.json()["bundle_digest"]
@@ -245,7 +265,13 @@ def test_latest_plan_is_restored_and_intent_change_invalidates_approval(client, 
     )
     assert client.get(latest_url).json()["status"] == "approved"
 
-    save_intent(client, app_id, run_id, version=saved["version"])
+    unchanged = save_intent(client, app_id, run_id, version=saved["version"], expected_status=200)
+    assert unchanged["version"] == saved["version"]
+    assert client.get(latest_url).json()["status"] == "approved"
+    with Session() as db:
+        assert db.scalar(select(func.count()).select_from(DeploymentIntentVersion)) == 1
+
+    save_intent(client, app_id, run_id, version=saved["version"], greeting="Hi")
     latest = client.get(latest_url)
     assert latest.status_code == 200, latest.text
     assert latest.json()["status"] == "stale"

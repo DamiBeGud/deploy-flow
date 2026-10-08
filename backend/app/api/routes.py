@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
@@ -20,11 +21,14 @@ from app.api.schemas import (
     CreateInfrastructurePlan,
     DeploymentIntentWrite,
     StartAnalysis,
+    ValidatePlan,
 )
 from app.bootstrap.contracts import INFRASTRUCTURE_PLAN_SCHEMA_VERSION
-from app.bootstrap.generator import MANAGED_PATHS, PlanError, render
+from app.bootstrap.generator import MANAGED_PATHS, TEMPLATE_VERSION, PlanError, render
 from app.bootstrap.profiles import local_k3s_profile
 from app.bootstrap.recommendations import recommend, resolve_field_recommendations
+from app.kubernetes.gateway import GatewayError, call_kubernetes
+from app.kubernetes.policy import ManifestPolicyError, checked_manifests, file_hashes_match
 from app.persistence.commands import application_for, idempotent, run_for
 from app.persistence.database import Session
 from app.persistence.models import (
@@ -35,6 +39,7 @@ from app.persistence.models import (
     Event,
     InfrastructurePlan,
     InfrastructurePlanFile,
+    InfrastructurePlanValidation,
     PlanApproval,
 )
 from app.telemetry.events import TERMINAL, emit
@@ -56,6 +61,7 @@ def _intent_document(intent: DeploymentIntentVersion) -> dict:
 
 
 def _plan_document(db, plan: InfrastructurePlan) -> dict:
+    current = _plan_is_current(plan)
     files = db.scalars(
         select(InfrastructurePlanFile)
         .where(InfrastructurePlanFile.plan_id == plan.id)
@@ -94,6 +100,19 @@ def _plan_document(db, plan: InfrastructurePlan) -> dict:
             "final_reference_kind": "digest",
         },
     )
+    latest_cluster_validation = db.scalar(
+        select(InfrastructurePlanValidation)
+        .where(InfrastructurePlanValidation.plan_id == plan.id)
+        .order_by(InfrastructurePlanValidation.created_at.desc(), InfrastructurePlanValidation.id.desc())
+    )
+    cluster_validation = (
+        latest_cluster_validation.result_json
+        if latest_cluster_validation
+        and latest_cluster_validation.bundle_digest == plan.bundle_digest
+        and latest_cluster_validation.environment_profile_hash == plan.environment_profile_hash
+        and current
+        else None
+    )
     return {
         "schema_version": INFRASTRUCTURE_PLAN_SCHEMA_VERSION,
         "id": str(plan.id),
@@ -102,8 +121,9 @@ def _plan_document(db, plan: InfrastructurePlan) -> dict:
         "assessment_version": plan.assessment_version,
         "environment_profile_id": plan.environment_profile_id,
         "bundle_digest": plan.bundle_digest,
-        "status": plan.status,
+        "status": plan.status if current else "stale",
         "validation": validation,
+        "cluster_validation": cluster_validation,
         "previous_plan_id": str(plan.previous_plan_id) if plan.previous_plan_id else None,
         "files": [
             {
@@ -127,10 +147,89 @@ def _plan_document(db, plan: InfrastructurePlan) -> dict:
             "removed": removed,
         },
         "approval": {"actor_id": approval.actor_id, "created_at": approval.created_at.isoformat()}
-        if approval
+        if approval and current
         else None,
         "created_at": plan.created_at.isoformat(),
     }
+
+
+def _plan_is_current(plan: InfrastructurePlan) -> bool:
+    try:
+        profile = local_k3s_profile()
+    except ValueError:
+        return False
+    return (
+        plan.environment_profile_id == profile["id"]
+        and plan.environment_profile_hash == profile["hash"]
+        and plan.template_version == TEMPLATE_VERSION
+    )
+
+
+def _safe_cluster_validation(value: dict) -> dict:
+    status = value.get("status")
+    if status not in {"passed", "failed", "unavailable"}:
+        status = "unavailable"
+    raw_checks = value.get("checks")
+    checks = []
+    for item in raw_checks[:12] if isinstance(raw_checks, list) else []:
+        if not isinstance(item, dict):
+            continue
+        raw_details = item.get("details")
+        checks.append(
+            {
+                "kind": str(item.get("kind") or "")[:40],
+                "name": str(item.get("name") or "")[:63],
+                "code": str(item.get("code") or "cluster_check_failed")[:80],
+                "details": [
+                    {"field": str(detail.get("field") or "")[:160], "reason": str(detail.get("reason") or "")[:80]}
+                    for detail in (raw_details[:12] if isinstance(raw_details, list) else [])
+                    if isinstance(detail, dict)
+                ],
+            }
+        )
+    return {
+        "status": status,
+        "checks": checks,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/services")
+async def list_services(
+    identity: Actor,
+    cluster_id: str = "local-k3s",
+    namespace: str = "deployflow-test",
+):
+    if cluster_id != "local-k3s" or namespace != "deployflow-test":
+        raise HTTPException(404, "Cluster scope not found")
+    try:
+        return await call_kubernetes("reader", "kube.list_workloads", {})
+    except GatewayError as exc:
+        raise HTTPException(503, str(exc)) from None
+
+
+@router.get("/services/{workload_id}")
+async def get_service(workload_id: str, identity: Actor):
+    parts = workload_id.split(":")
+    if len(parts) != 3 or parts[0] != "deployflow-test" or parts[1] not in {"Deployment", "StatefulSet", "Job"}:
+        raise HTTPException(404, "Workload not found")
+    try:
+        result = await call_kubernetes("reader", "kube.get_rollout_status", {"workload_id": workload_id})
+    except GatewayError as exc:
+        raise HTTPException(503, str(exc)) from None
+    if result.get("error"):
+        raise HTTPException(404, "Workload not found")
+    return result
+
+
+@router.get("/clusters/{cluster_id}/capabilities")
+async def cluster_capabilities(cluster_id: str, identity: Actor):
+    if cluster_id != "local-k3s":
+        raise HTTPException(404, "Cluster not found")
+    try:
+        return await call_kubernetes("reader", "kube.get_capabilities", {})
+    except GatewayError as exc:
+        raise HTTPException(503, str(exc)) from None
 
 
 @router.get("/me")
@@ -477,6 +576,13 @@ def put_deployment_intent(app_id: UUID, body: DeploymentIntentWrite, identity: A
             document["field_recommendations"] = resolve_field_recommendations(
                 document, recommendation["intent"]["field_recommendations"]
             )
+            if (
+                latest is not None
+                and latest.analysis_run_id == run.id
+                and latest.assessment_version == run.assessment_version
+                and latest.document == document
+            ):
+                return _intent_document(latest), 200
             intent = DeploymentIntentVersion(
                 application_id=app_id,
                 analysis_run_id=run.id,
@@ -547,6 +653,7 @@ def create_infrastructure_plan(
                 raise HTTPException(409, f"Repository already contains managed file: {conflict[0]}")
             try:
                 profile = local_k3s_profile()
+                profile["application_id"] = str(app_id)
                 bundle = render(assessment.document, intent.document, profile)
             except (PlanError, ValueError) as exc:
                 raise HTTPException(
@@ -576,7 +683,7 @@ def create_infrastructure_plan(
                 intent_version_id=intent.id,
                 environment_profile_id=profile["id"],
                 environment_profile_hash=profile["hash"],
-                template_version="node-web-v1",
+                template_version=TEMPLATE_VERSION,
                 bundle_digest=bundle.digest,
                 validation_json=bundle.validation,
                 previous_plan_id=previous.id if previous else None,
@@ -635,6 +742,83 @@ def get_infrastructure_plan(plan_id: UUID, identity: Actor):
         return _plan_document(db, plan)
 
 
+@router.post("/infrastructure-plans/{plan_id}/validations", status_code=201)
+async def validate_infrastructure_plan(
+    plan_id: UUID, body: ValidatePlan, identity: Actor, key: Key
+):
+    identity.require_write()
+    with Session() as db:
+        plan = db.get(InfrastructurePlan, plan_id)
+        if plan is None:
+            raise HTTPException(404, "Infrastructure plan not found")
+        application_for(db, plan.application_id, identity)
+        if not _plan_is_current(plan) or plan.bundle_digest != body.expected_digest or plan.status == "stale":
+            raise HTTPException(409, "Plan is stale; generate a new bundle")
+        file_rows = db.scalars(
+            select(InfrastructurePlanFile).where(InfrastructurePlanFile.plan_id == plan.id)
+        ).all()
+        files = {row.path: row.content for row in file_rows}
+        stored_hashes = [dict(content=row.content, hash=row.content_hash) for row in file_rows]
+        digest = plan.bundle_digest
+        profile_hash = plan.environment_profile_hash
+        application_id = str(plan.application_id)
+        profile = local_k3s_profile()
+
+    if not file_hashes_match(stored_hashes):
+        result = {"status": "failed", "checks": [{"code": "file_hash_mismatch"}]}
+    else:
+        try:
+            checked_manifests(
+                files,
+                digest=digest,
+                namespace=profile["namespace"],
+                application_id=application_id,
+                registry=profile["registry"],
+            )
+            result = await call_kubernetes(
+                "validator",
+                "kube.validate_manifests",
+                {
+                    "files": files,
+                    "digest": digest,
+                    "application_id": application_id,
+                    "registry": profile["registry"],
+                },
+            )
+        except ManifestPolicyError as exc:
+            result = {"status": "failed", "checks": [{"code": str(exc)}]}
+        except GatewayError as exc:
+            result = {"status": "unavailable", "checks": [{"code": str(exc)}]}
+    result = _safe_cluster_validation(result)
+
+    with Session.begin() as db:
+        plan = db.get(InfrastructurePlan, plan_id)
+        if plan is None or not _plan_is_current(plan) or plan.bundle_digest != digest or plan.status == "stale":
+            raise HTTPException(409, "Plan changed during validation; retry")
+
+        def operation():
+            validation = InfrastructurePlanValidation(
+                plan_id=plan.id,
+                bundle_digest=digest,
+                environment_profile_hash=profile_hash,
+                result_json=result,
+                actor_id=identity.actor_id,
+            )
+            db.add(validation)
+            db.flush()
+            return {"id": str(validation.id), **result}, 201
+
+        response, code = idempotent(
+            db,
+            identity,
+            f"infrastructure-plans/{plan_id}/validations",
+            key,
+            body.model_dump(),
+            operation,
+        )
+    return JSONResponse(response, status_code=code)
+
+
 @router.post("/infrastructure-plans/{plan_id}/approve")
 def approve_infrastructure_plan(plan_id: UUID, body: ApprovePlan, identity: Actor, key: Key):
     identity.require_write()
@@ -645,7 +829,11 @@ def approve_infrastructure_plan(plan_id: UUID, body: ApprovePlan, identity: Acto
         application_for(db, plan.application_id, identity)
 
         def operation():
-            if plan.status != "proposed" or plan.bundle_digest != body.expected_digest:
+            if (
+                plan.status != "proposed"
+                or plan.bundle_digest != body.expected_digest
+                or not _plan_is_current(plan)
+            ):
                 raise HTTPException(409, "Plan is stale; generate and review a new bundle")
             approval = PlanApproval(
                 plan_id=plan.id, bundle_digest=plan.bundle_digest, actor_id=identity.actor_id

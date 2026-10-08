@@ -190,6 +190,17 @@ class InfrastructurePlanFile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class InfrastructurePlanValidation(Base):
+    __tablename__ = "infrastructure_plan_validations"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("infrastructure_plans.id"), index=True)
+    bundle_digest: Mapped[str] = mapped_column(String(64))
+    environment_profile_hash: Mapped[str] = mapped_column(String(64))
+    result_json: Mapped[dict] = mapped_column(JSONB)
+    actor_id: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PlanApproval(Base):
     __tablename__ = "plan_approvals"
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)

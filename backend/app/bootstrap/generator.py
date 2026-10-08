@@ -25,7 +25,7 @@ MANAGED_PATHS = {
     "deploy/kubernetes/configmap.yaml",
     "deploy/kubernetes/ingress.yaml",
 }
-TEMPLATE_VERSION = "node-web-v1"
+TEMPLATE_VERSION = "node-web-v2"
 _NAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
@@ -195,6 +195,8 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         "jobs": {"build": {"runs-on": "ubuntu-latest", "steps": workflow_steps}},
     }
     labels = {"app.kubernetes.io/name": name, "app.kubernetes.io/managed-by": "deployflow"}
+    if profile.get("application_id"):
+        labels["app.kubernetes.io/instance"] = str(profile["application_id"])
     config = {
         "apiVersion": "v1",
         "kind": "ConfigMap",
@@ -211,6 +213,7 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
             "template": {
                 "metadata": {"labels": labels},
                 "spec": {
+                    "automountServiceAccountToken": False,
                     "securityContext": {
                         "runAsNonRoot": True,
                         "seccompProfile": {"type": "RuntimeDefault"},

@@ -72,6 +72,11 @@ export type InfrastructurePlan = {
       final_reference_kind: 'digest'
     }
   }
+  cluster_validation: {
+    status: 'passed' | 'failed' | 'unavailable'
+    observed_at?: string
+    checks: { kind?: string; name?: string; code: string; details?: { field: string; reason: string }[] }[]
+  } | null
   files: PlanFile[]
   comparison: {
     previous_plan_id: string | null

@@ -28,11 +28,28 @@ DF_K3S_SSH_TARGET=user@host bash backend/scripts/check_k3s_readiness.sh
 For local development, `backend/scripts/k3s_tunnel.sh` can forward the API to
 `https://127.0.0.1:16443` over SSH. Set `DF_K3S_SSH_TARGET`; optionally set
 `DF_K3S_SSH_KEY` and `DF_K3S_LOCAL_PORT`. The tunnel alone is not an authenticated
-Kubernetes client: a separately provisioned, namespace-scoped kubeconfig and
-trusted CA are still required, and must stay outside Git. No Kubernetes client,
-MCP server, or dry-run endpoint is wired into the backend yet. Phase 4 remains
-review-only. Regenerate old plans after the ingress-class policy change; do not
-use bundles generated with the previous `traefik` profile.
+Kubernetes client: separate short-lived reader and validator tokens and a
+trusted CA are required, and must stay outside Git. Phase 5 adds opt-in reader
+and validator MCP processes; the analysis worker receives neither credential.
+The dashboard is limited to `deployflow-test`. Manifest validation accepts
+only a stored bundle and uses server-side dry-run; it cannot deploy resources.
+Phase 4 generation remains review-only. Regenerate old plans after the
+template/profile change; older plans are stale and cannot be approved.
+
+The `phase5` Compose profile is off by default. After separately approving the
+exact server actions, provide absolute paths outside this repository for a
+dedicated SSH key, pinned `known_hosts`, Kubernetes CA, and separate short-lived
+ServiceAccount token files. Set `DF_K3S_SSH_TARGET`, `DF_K3S_SSH_KEY_PATH`,
+`DF_K3S_KNOWN_HOSTS_PATH`, `DF_KUBE_CA_PATH`, `DF_KUBE_READER_TOKEN_PATH`, and
+`DF_KUBE_VALIDATOR_TOKEN_PATH`. Set
+`DF_KUBE_READER_MCP_URL=http://kube-reader-tunnel:8001/mcp` and
+`DF_KUBE_VALIDATOR_MCP_URL=http://kube-validator-tunnel:8001/mcp`, then start
+with `docker compose --profile phase5 up -d --build`. No Kubernetes credential
+is mounted into the API, dispatcher, or analysis worker. Expired tokens must
+be replaced and the respective MCP process restarted; there is no admin-token
+fallback. The tunnel and MCP entrypoints copy `0600` host credentials into
+private container tmpfs and drop to UID 10001 before serving requests. Do not
+start this profile with `/dev/null` placeholder paths.
 
 Installation-token requests retry transient GitHub `422`, `429`, and `5xx` responses with bounded
 backoff. Permanent failures retain a short sanitized GitHub diagnostic in the failed event; tokens,
@@ -87,7 +104,8 @@ existing settings. Compose passes only its listed `DF_*` variables to the backen
 GitHub App credentials are required for deterministic/agent repository analysis; a
 DeepSeek key is required only for explicitly selected agent mode. Phase 4's local
 preview profile also needs `GHCR_REGISTRY` and `GHCR_IMAGE`; these are image names,
-not registry credentials. The application does not authenticate to GHCR or Kubernetes.
+not registry credentials. The opt-in Phase 5 MCP processes use scoped Kubernetes
+credentials; public GHCR images require no image-pull secret.
 
 ```bash
 docker compose logs -f api dispatcher worker
@@ -161,6 +179,9 @@ Available application, analysis, and delivery-plan routes:
 | POST | `/applications/{id}/infrastructure-plans` | Generate a review-only infrastructure bundle |
 | GET | `/infrastructure-plans/{id}` | Read a generated bundle and validation result |
 | POST | `/infrastructure-plans/{id}/approve` | Record approval for the exact bundle digest |
+| POST | `/infrastructure-plans/{id}/validations` | Policy and Kubernetes dry-run for the stored bundle |
+| GET | `/services`, `/services/{id}` | Observed workloads in `deployflow-test` |
+| GET | `/clusters/local-k3s/capabilities` | Configured target capabilities |
 
 All mutations require `Idempotency-Key`. Keys are scoped to organization, actor,
 and action (including target ID), with a canonical hash of validated request data.

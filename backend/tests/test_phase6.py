@@ -3,6 +3,7 @@ import hmac
 import io
 import json
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -138,7 +139,8 @@ def test_github_worker_records_one_pr_after_external_success(client, monkeypatch
         assert len(db.scalars(select(GitHubJob).where(GitHubJob.kind == "reconcile")).all()) == 1
 
 
-def test_merged_pr_and_exact_ci_artifact_record_verified_image_without_deployment(client, monkeypatch):
+@pytest.mark.parametrize("missing_pr_merge_sha", [False, True])
+def test_merged_pr_and_exact_ci_artifact_record_verified_image_without_deployment(client, monkeypatch, missing_pr_merge_sha):
     plan = prepared(client, monkeypatch)
 
     async def passed(*_):
@@ -167,7 +169,11 @@ def test_merged_pr_and_exact_ci_artifact_record_verified_image_without_deploymen
             return {"repository_id": 123, "head_sha": "b" * 40, "number": 8, "url": "https://github.com/DamiBeGud/deployflow-node-express-fixture/pull/8"}
 
         def pull_request(self, *_):
-            return {"base": {"ref": "main", "repo": {"id": 123}}, "head": {"ref": f"deployflow/plan-{plan['id']}", "sha": "b" * 40}, "merged": True, "merge_commit_sha": "c" * 40}
+            return {"base": {"ref": "main", "repo": {"id": 123}}, "head": {"ref": f"deployflow/plan-{plan['id']}", "sha": "b" * 40}, "merged": True, "merge_commit_sha": None if missing_pr_merge_sha else "c" * 40}
+
+        def merged_event_sha(self, *_):
+            assert missing_pr_merge_sha
+            return "c" * 40
 
         def repository_info(self):
             return {"id": 123}
@@ -210,6 +216,54 @@ def test_merged_pr_and_exact_ci_artifact_record_verified_image_without_deploymen
         assert len(db.scalars(select(VerifiedBuild)).all()) == 1
 
 
+def test_missing_merge_event_does_not_falsely_block_merged_pr(client, monkeypatch):
+    plan = prepared(client, monkeypatch)
+
+    async def passed(*_):
+        return {"status": "passed", "checks": [{"code": "admission_passed"}]}
+
+    monkeypatch.setattr("app.api.routes.call_kubernetes", passed)
+    body = {"expected_digest": plan["bundle_digest"]}
+    client.post(f"/api/v1/infrastructure-plans/{plan['id']}/validations", headers={"Idempotency-Key": "missing-sha-admission"}, json=body)
+    created = client.post(f"/api/v1/infrastructure-plans/{plan['id']}/pull-requests", headers={"Idempotency-Key": "missing-sha-pr"}, json=body)
+    assert created.status_code == 202
+
+    class FakeGitHub:
+        def __init__(self, *_):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def create_bundle_pull_request(self, **_):
+            return {"repository_id": 123, "head_sha": "b" * 40, "number": 8, "url": "https://github.com/example/fixture/pull/8"}
+
+        def pull_request(self, *_):
+            return {"base": {"ref": "main", "repo": {"id": 123}}, "head": {"ref": f"deployflow/plan-{plan['id']}", "sha": "b" * 40}, "merged": True, "merge_commit_sha": None}
+
+        def repository_info(self):
+            return {"id": 123}
+
+        def merged_event_sha(self, *_):
+            raise GitHubPhase6Error("merge_commit_sha_unavailable", transient=True)
+
+    monkeypatch.setattr("app.integrations.github.jobs.GitHubAPI", FakeGitHub)
+    with Session() as db:
+        create_job_id = str(db.scalar(select(GitHubJob).where(GitHubJob.kind == "create")).id)
+    execute_github(create_job_id)
+    with Session() as db:
+        reconcile_job_id = str(db.scalar(select(GitHubJob).where(GitHubJob.kind == "reconcile")).id)
+    for _ in range(5):
+        execute_github(reconcile_job_id)
+    result = client.get(f"/api/v1/pull-requests/{created.json()['id']}").json()
+    assert result["status"] == "merged"
+    assert result["error_code"] == "merge_commit_sha_unavailable"
+    assert result["verified_build"] is None
+
+
 def test_build_artifact_is_bound_to_exact_run_and_image():
     payload = {
         "repository_id": 123, "commit_sha": "a" * 40, "run_id": 77, "run_attempt": 2,
@@ -249,6 +303,9 @@ def test_merged_files_must_match_approval_and_contain_no_source_changes():
             return files[path].encode()
 
     checked_merged_files(FakeAPI(), base_sha="a" * 40, merged_sha="b" * 40, files=files)
+    with pytest.raises(GitHubPhase6Error, match="merge_commit_sha_unavailable") as missing:
+        checked_merged_files(FakeAPI(), base_sha="a" * 40, merged_sha=None, files=files)
+    assert missing.value.transient
 
     class ChangedSource(FakeAPI):
         def compare_paths(self, *_):
@@ -256,6 +313,38 @@ def test_merged_files_must_match_approval_and_contain_no_source_changes():
 
     with pytest.raises(GitHubPhase6Error, match="merged_files_changed"):
         checked_merged_files(ChangedSource(), base_sha="a" * 40, merged_sha="b" * 40, files=files)
+
+
+def test_merge_event_recovers_sha_from_later_page(monkeypatch):
+    api = GitHubAPI(settings(), "example", "fixture")
+    calls = []
+
+    def request(_, path, *, params):
+        calls.append((path, params))
+        events = [{"event": "commented"}] * 100 if params["page"] == 1 else [{"event": "merged", "commit_id": "c" * 40}]
+        return SimpleNamespace(json=lambda: events)
+
+    monkeypatch.setattr(api, "request", request)
+    assert api.merged_event_sha(8) == "c" * 40
+    assert [params["page"] for _, params in calls] == [1, 2]
+    assert all(path == "/repos/example/fixture/issues/8/events" for path, _ in calls)
+
+
+@pytest.mark.parametrize(
+    ("events", "code", "transient"),
+    [
+        ([], "merge_commit_sha_unavailable", True),
+        ([{"event": "merged", "commit_id": None}], "merge_commit_sha_unavailable", True),
+        ([{"event": "merged", "commit_id": "bad"}], "github_merge_event_invalid", False),
+        ([{"event": "merged", "commit_id": "a" * 40}, {"event": "merged", "commit_id": "b" * 40}], "github_merge_event_ambiguous", False),
+    ],
+)
+def test_merge_event_rejects_missing_or_untrusted_sha(monkeypatch, events, code, transient):
+    api = GitHubAPI(settings(), "example", "fixture")
+    monkeypatch.setattr(api, "request", lambda *_, **__: SimpleNamespace(json=lambda: events))
+    with pytest.raises(GitHubPhase6Error, match=code) as error:
+        api.merged_event_sha(8)
+    assert error.value.transient is transient
 
 
 def test_github_pr_retry_reuses_existing_reviewed_branch(monkeypatch):

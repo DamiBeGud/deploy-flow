@@ -36,6 +36,9 @@ from app.persistence.models import (
 )
 
 log = logging.getLogger(__name__)
+NONBLOCKING_VERIFICATION_ERRORS = {
+    "build_artifact_missing", "registry_digest_unverified", "merge_commit_sha_unavailable",
+}
 
 
 def _one_line(value: object, limit: int = 160) -> str:
@@ -162,7 +165,13 @@ def _reconcile_one(pr_id: UUID) -> None:
                 row = db.get(InfrastructurePullRequest, pr_id, with_for_update=True)
                 row.status = status
             return
+        with Session.begin() as db:
+            row = db.get(InfrastructurePullRequest, pr_id, with_for_update=True)
+            row.status = "merged"
+            row.error_code = None
         merged_sha = pull.get("merge_commit_sha")
+        if merged_sha is None:
+            merged_sha = api.merged_event_sha(number)
         checked_merged_files(api, base_sha=base_sha, merged_sha=merged_sha, files=files)
         with Session.begin() as db:
             row = db.get(InfrastructurePullRequest, pr_id, with_for_update=True)
@@ -218,7 +227,7 @@ def _reconcile(job: GitHubJob) -> None:
                 with Session.begin() as db:
                     pr = db.get(InfrastructurePullRequest, pr_id, with_for_update=True)
                     pr.error_code = exc.code
-                    if exc.code not in {"build_artifact_missing", "registry_digest_unverified"}:
+                    if exc.code not in NONBLOCKING_VERIFICATION_ERRORS:
                         pr.status = "blocked"
             raise
 
@@ -259,7 +268,7 @@ def execute(job_id: str) -> None:
                     pr.error_code = exc.code
                     if kind == "create":
                         pr.status = "failed"
-                    elif exc.code not in {"build_artifact_missing", "registry_digest_unverified"}:
+                    elif exc.code not in NONBLOCKING_VERIFICATION_ERRORS:
                         pr.status = "blocked"
         return
     except Exception:

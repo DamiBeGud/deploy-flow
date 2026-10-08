@@ -52,8 +52,12 @@ def checked_workflow_run(run: dict, *, repository_id: int, merged_sha: str, base
     )
 
 
-def checked_merged_files(api: GitHubAPI, *, base_sha: str, merged_sha: str, files: dict[str, str]) -> None:
-    if not isinstance(merged_sha, str) or not _SHA.fullmatch(merged_sha) or api.compare_paths(base_sha, merged_sha) != set(files):
+def checked_merged_files(api: GitHubAPI, *, base_sha: str, merged_sha: str | None, files: dict[str, str]) -> None:
+    if merged_sha is None:
+        raise GitHubPhase6Error("merge_commit_sha_unavailable", transient=True)
+    if not isinstance(merged_sha, str) or not _SHA.fullmatch(merged_sha):
+        raise GitHubPhase6Error("merge_commit_sha_invalid")
+    if api.compare_paths(base_sha, merged_sha) != set(files):
         raise GitHubPhase6Error("merged_files_changed")
     for path, expected in files.items():
         if api.file_at(path, merged_sha) != expected.encode():

@@ -112,6 +112,36 @@ class GitHubAPI:
     def pull_request(self, number: int) -> dict:
         return self.request("GET", f"{self.repo_path}/pulls/{number}").json()
 
+    def merged_event_sha(self, number: int) -> str:
+        """Recover the base-branch commit when the PR response omits it."""
+        merged_commits: list[str] = []
+        for page in range(1, 11):
+            response = self.request(
+                "GET", f"{self.repo_path}/issues/{number}/events",
+                params={"per_page": 100, "page": page},
+            )
+            events = response.json()
+            if not isinstance(events, list):
+                raise GitHubPhase6Error("github_merge_events_invalid")
+            for event in events:
+                if not isinstance(event, dict) or event.get("event") != "merged":
+                    continue
+                commit_id = event.get("commit_id")
+                if commit_id is None:
+                    raise GitHubPhase6Error("merge_commit_sha_unavailable", transient=True)
+                if not isinstance(commit_id, str) or not re.fullmatch(r"[0-9a-f]{40}", commit_id):
+                    raise GitHubPhase6Error("github_merge_event_invalid")
+                merged_commits.append(commit_id)
+            if len(events) < 100:
+                break
+        else:
+            raise GitHubPhase6Error("github_merge_events_too_large")
+        if not merged_commits:
+            raise GitHubPhase6Error("merge_commit_sha_unavailable", transient=True)
+        if len(merged_commits) != 1:
+            raise GitHubPhase6Error("github_merge_event_ambiguous")
+        return merged_commits[0]
+
     def create_bundle_pull_request(self, *, branch: str, base_branch: str, base_sha: str, files: dict[str, str], title: str, body: str) -> dict:
         if not re.fullmatch(r"[0-9a-f]{40}", base_sha):
             raise GitHubPhase6Error("source_revision_invalid")

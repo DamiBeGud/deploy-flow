@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
@@ -19,6 +20,7 @@ from app.api.schemas import (
     AssessmentPatch,
     CreateApplication,
     CreateInfrastructurePlan,
+    CreatePullRequest,
     DeploymentIntentWrite,
     StartAnalysis,
     ValidatePlan,
@@ -27,6 +29,7 @@ from app.bootstrap.contracts import INFRASTRUCTURE_PLAN_SCHEMA_VERSION
 from app.bootstrap.generator import MANAGED_PATHS, TEMPLATE_VERSION, PlanError, render
 from app.bootstrap.profiles import local_k3s_profile
 from app.bootstrap.recommendations import recommend, resolve_field_recommendations
+from app.config import settings
 from app.kubernetes.gateway import GatewayError, call_kubernetes
 from app.kubernetes.policy import ManifestPolicyError, checked_manifests, file_hashes_match
 from app.persistence.commands import application_for, idempotent, run_for
@@ -37,10 +40,13 @@ from app.persistence.models import (
     AssessmentVersion,
     DeploymentIntentVersion,
     Event,
+    GitHubJob,
     InfrastructurePlan,
     InfrastructurePlanFile,
     InfrastructurePlanValidation,
+    InfrastructurePullRequest,
     PlanApproval,
+    VerifiedBuild,
 )
 from app.telemetry.events import TERMINAL, emit
 
@@ -72,6 +78,7 @@ def _plan_document(db, plan: InfrastructurePlan) -> dict:
         .where(PlanApproval.plan_id == plan.id, PlanApproval.invalidated_at.is_(None))
         .order_by(PlanApproval.created_at.desc())
     )
+    pull_request = db.scalar(select(InfrastructurePullRequest).where(InfrastructurePullRequest.plan_id == plan.id))
     previous_files = []
     if plan.previous_plan_id:
         previous_files = db.scalars(
@@ -149,7 +156,28 @@ def _plan_document(db, plan: InfrastructurePlan) -> dict:
         "approval": {"actor_id": approval.actor_id, "created_at": approval.created_at.isoformat()}
         if approval and current
         else None,
+        "pull_request": _pull_request_document(db, pull_request) if pull_request else None,
         "created_at": plan.created_at.isoformat(),
+    }
+
+
+def _pull_request_document(db, pull_request: InfrastructurePullRequest) -> dict:
+    build = db.scalar(select(VerifiedBuild).where(VerifiedBuild.pull_request_id == pull_request.id).order_by(VerifiedBuild.verified_at.desc()))
+    return {
+        "id": str(pull_request.id),
+        "plan_id": str(pull_request.plan_id),
+        "status": pull_request.status,
+        "url": pull_request.url,
+        "number": pull_request.number,
+        "head_sha": pull_request.head_sha,
+        "merged_sha": pull_request.merged_sha,
+        "error_code": pull_request.error_code,
+        "verified_build": {
+            "run_id": build.run_id,
+            "run_attempt": build.run_attempt,
+            "image_repository": build.image_repository,
+            "image_digest": build.image_digest,
+        } if build else None,
     }
 
 
@@ -854,6 +882,113 @@ def approve_infrastructure_plan(plan_id: UUID, body: ApprovePlan, identity: Acto
             body.model_dump(),
             operation,
         )
+    return JSONResponse(response, status_code=code)
+
+
+@router.post("/infrastructure-plans/{plan_id}/pull-requests", status_code=202)
+def create_infrastructure_pull_request(plan_id: UUID, body: CreatePullRequest, identity: Actor, key: Key):
+    identity.require_write()
+    config = settings()
+    if not (config.github_app_id and config.github_installation_id and config.github_private_key_path):
+        raise HTTPException(503, "GitHub App write access is not configured")
+    with Session.begin() as db:
+        plan = db.get(InfrastructurePlan, plan_id, with_for_update=True)
+        if plan is None:
+            raise HTTPException(404, "Infrastructure plan not found")
+        application = application_for(db, plan.application_id, identity)
+
+        def operation():
+            if plan.status not in {"proposed", "approved"} or plan.bundle_digest != body.expected_digest or not _plan_is_current(plan):
+                raise HTTPException(409, "Plan is stale; generate and review a new bundle")
+            existing = db.scalar(select(InfrastructurePullRequest).where(InfrastructurePullRequest.plan_id == plan.id))
+            if existing:
+                return _pull_request_document(db, existing), 202
+            validation = db.scalar(select(InfrastructurePlanValidation).where(InfrastructurePlanValidation.plan_id == plan.id).order_by(InfrastructurePlanValidation.created_at.desc(), InfrastructurePlanValidation.id.desc()))
+            if not validation or validation.bundle_digest != plan.bundle_digest or validation.environment_profile_hash != plan.environment_profile_hash or validation.result_json.get("status") != "passed":
+                raise HTTPException(409, "A passing cluster admission check is required before creating the PR")
+            run = db.get(AnalysisRun, plan.analysis_run_id)
+            intent = db.get(DeploymentIntentVersion, plan.intent_version_id)
+            if not run or not re.fullmatch(r"[0-9a-f]{40}", run.commit_sha or ""):
+                raise HTTPException(409, "Repository analysis has no pinned Git commit")
+            assessment = db.get(AssessmentVersion, (run.id, plan.assessment_version))
+            if not assessment or (assessment.document.get("repository") or {}).get("commit_sha") != run.commit_sha:
+                raise HTTPException(409, "Assessment does not match the pinned Git commit")
+            if not intent or not intent.document.get("build", {}).get("test_command"):
+                raise HTTPException(409, "A reviewed test command is required before creating the PR")
+            files = db.scalars(select(InfrastructurePlanFile).where(InfrastructurePlanFile.plan_id == plan.id)).all()
+            if not files or not file_hashes_match([{"content": row.content, "hash": row.content_hash} for row in files]):
+                raise HTTPException(409, "Stored bundle file hashes do not match")
+            match = re.fullmatch(r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", application.repository_url)
+            if not match:
+                raise HTTPException(409, "Repository URL is not a supported GitHub URL")
+            approval = db.scalar(select(PlanApproval).where(PlanApproval.plan_id == plan.id, PlanApproval.invalidated_at.is_(None)))
+            if approval and approval.bundle_digest != plan.bundle_digest:
+                raise HTTPException(409, "Approval does not match the current bundle")
+            if not approval:
+                db.add(PlanApproval(plan_id=plan.id, bundle_digest=plan.bundle_digest, actor_id=identity.actor_id))
+            plan.status = "approved"
+            pull_request = InfrastructurePullRequest(
+                plan_id=plan.id, owner=match.group(1), repository=match.group(2),
+                base_branch=intent.document["build"]["branch"], base_sha=run.commit_sha,
+                head_branch=f"deployflow/plan-{plan.id}", status="queued",
+            )
+            db.add(pull_request)
+            db.flush()
+            db.add(GitHubJob(kind="create", pull_request_id=pull_request.id, status="queued", attempts=0))
+            return _pull_request_document(db, pull_request), 202
+
+        response, code = idempotent(db, identity, f"infrastructure-plans/{plan_id}/pull-requests", key, body.model_dump(), operation)
+    return JSONResponse(response, status_code=code)
+
+
+@router.get("/pull-requests/{pull_request_id}")
+def get_infrastructure_pull_request(pull_request_id: UUID, identity: Actor):
+    with Session() as db:
+        pull_request = db.get(InfrastructurePullRequest, pull_request_id)
+        if pull_request is None:
+            raise HTTPException(404, "Pull request not found")
+        plan = db.get(InfrastructurePlan, pull_request.plan_id)
+        application_for(db, plan.application_id, identity)
+        return _pull_request_document(db, pull_request)
+
+
+@router.post("/pull-requests/{pull_request_id}/refresh", status_code=202)
+def refresh_infrastructure_pull_request(pull_request_id: UUID, identity: Actor, key: Key):
+    identity.require_write()
+    with Session.begin() as db:
+        pull_request = db.get(InfrastructurePullRequest, pull_request_id)
+        if pull_request is None:
+            raise HTTPException(404, "Pull request not found")
+        plan = db.get(InfrastructurePlan, pull_request.plan_id)
+        application_for(db, plan.application_id, identity)
+
+        def operation():
+            db.add(GitHubJob(kind="reconcile", pull_request_id=pull_request.id, status="queued", attempts=0))
+            return _pull_request_document(db, pull_request), 202
+
+        response, code = idempotent(db, identity, f"pull-requests/{pull_request_id}/refresh", key, {}, operation)
+    return JSONResponse(response, status_code=code)
+
+
+@router.post("/pull-requests/{pull_request_id}/retry", status_code=202)
+def retry_infrastructure_pull_request(pull_request_id: UUID, identity: Actor, key: Key):
+    identity.require_write()
+    with Session.begin() as db:
+        pull_request = db.get(InfrastructurePullRequest, pull_request_id, with_for_update=True)
+        if pull_request is None:
+            raise HTTPException(404, "Pull request not found")
+        plan = db.get(InfrastructurePlan, pull_request.plan_id)
+        application_for(db, plan.application_id, identity)
+
+        def operation():
+            if pull_request.status != "failed" or pull_request.number is not None or plan.status != "approved" or not _plan_is_current(plan):
+                raise HTTPException(409, "This PR request cannot be retried")
+            pull_request.status = "queued"
+            pull_request.error_code = None
+            db.add(GitHubJob(kind="create", pull_request_id=pull_request.id, status="queued", attempts=0))
+            return _pull_request_document(db, pull_request), 202
+
+        response, code = idempotent(db, identity, f"pull-requests/{pull_request_id}/retry", key, {}, operation)
     return JSONResponse(response, status_code=code)
 
 

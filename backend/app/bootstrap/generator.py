@@ -25,7 +25,7 @@ MANAGED_PATHS = {
     "deploy/kubernetes/configmap.yaml",
     "deploy/kubernetes/ingress.yaml",
 }
-TEMPLATE_VERSION = "node-web-v2"
+TEMPLATE_VERSION = "node-web-v3"
 _NAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
@@ -153,13 +153,17 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
                 }
             )
 
-    dockerfile = "\n".join(
-        [
+    docker_lines = [
             f"FROM {profile['node_base_image']}",
             "WORKDIR /app",
             "COPY package.json package-lock.json ./",
             f"RUN {json.dumps(install)}",
             "COPY . .",
+    ]
+    if build_command:
+        docker_lines.append(f"RUN {json.dumps(build_command)}")
+    dockerfile = "\n".join(
+        docker_lines + [
             "USER node",
             f"EXPOSE {port}",
             f"CMD {json.dumps(start)}",
@@ -173,26 +177,77 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     ]
     if test:
         workflow_steps.append({"run": " ".join(test)})
+    else:
+        workflow_steps.append({"run": "echo 'No test command was confirmed for this repository'; exit 1"})
     if build_command:
         workflow_steps.append({"run": " ".join(build_command)})
-    workflow_steps.extend(
-        [
-            {"run": "docker build --file Dockerfile --tag ${{ env.IMAGE }}:${{ env.IMAGE_TAG }} ."},
-            {
-                "if": "github.event_name == 'push'",
-                "run": "docker push ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}",
-            },
-        ]
-    )
+    workflow_steps.append({"run": "docker build --file Dockerfile ."})
+    artifact_script = """python3 - <<'PY'
+import json
+import os
+with open('deployflow-build.json', 'w', encoding='utf-8') as output:
+    json.dump({
+        'repository_id': int(os.environ['REPOSITORY_ID']),
+        'commit_sha': os.environ['GITHUB_SHA'],
+        'run_id': int(os.environ['GITHUB_RUN_ID']),
+        'run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+        'image_repository': os.environ['IMAGE'],
+        'image_digest': os.environ['IMAGE_DIGEST'],
+    }, output, sort_keys=True)
+PY"""
     workflow = {
         "name": "DeployFlow build",
         "on": {
             "push": {"branches": [build["branch"]]},
             "pull_request": {"branches": [build["branch"]]},
         },
-        "permissions": {"contents": "read", "packages": "write"},
-        "env": {"IMAGE": image, "IMAGE_TAG": image_tag},
-        "jobs": {"build": {"runs-on": "ubuntu-latest", "steps": workflow_steps}},
+        "env": {"IMAGE": image},
+        "jobs": {
+            "test": {
+                "runs-on": "ubuntu-latest",
+                "permissions": {"contents": "read"},
+                "steps": workflow_steps,
+            },
+            "publish": {
+                "if": "github.event_name == 'push'",
+                "needs": ["test"],
+                "runs-on": "ubuntu-latest",
+                "permissions": {"contents": "read", "packages": "write"},
+                "steps": [
+                    {"uses": profile["checkout_action"]},
+                    {
+                        "uses": "docker/login-action@v3",
+                        "with": {
+                            "registry": "ghcr.io",
+                            "username": "${{ github.actor }}",
+                            "password": "${{ secrets.GITHUB_TOKEN }}",
+                        },
+                    },
+                    {
+                        "id": "image",
+                        "uses": "docker/build-push-action@v6",
+                        "with": {
+                            "context": ".",
+                            "file": "./Dockerfile",
+                            "push": True,
+                            "tags": "${{ env.IMAGE }}:${{ github.sha }}",
+                        },
+                    },
+                    {
+                        "name": "Write verified-build candidate",
+                        "env": {
+                            "REPOSITORY_ID": "${{ github.event.repository.id }}",
+                            "IMAGE_DIGEST": "${{ steps.image.outputs.digest }}",
+                        },
+                        "run": artifact_script,
+                    },
+                    {
+                        "uses": "actions/upload-artifact@v4",
+                        "with": {"name": "deployflow-build", "path": "deployflow-build.json"},
+                    },
+                ],
+            },
+        },
     }
     labels = {"app.kubernetes.io/name": name, "app.kubernetes.io/managed-by": "deployflow"}
     if profile.get("application_id"):

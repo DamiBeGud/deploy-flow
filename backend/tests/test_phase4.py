@@ -1,6 +1,7 @@
 import copy
 
 import pytest
+import yaml
 from sqlalchemy import func, select
 
 from app.bootstrap.generator import PlanError, render
@@ -138,7 +139,14 @@ def test_node_bundle_is_deterministic_and_internal():
     assert "deploy/kubernetes/ingress.yaml" not in first.files
     assert "containerPort: 4587" in first.files["deploy/kubernetes/deployment.yaml"]
     assert "ghcr.io/example/fixture:" + "a" * 40 in first.files["deploy/kubernetes/deployment.yaml"]
-    assert "IMAGE_TAG: " + "a" * 40 in first.files[".github/workflows/deployflow.yml"]
+    workflow = first.files[".github/workflows/deployflow.yml"]
+    assert "docker/login-action@v3" in workflow
+    assert "docker/build-push-action@v6" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+    assert "${{ github.sha }}" in workflow
+    jobs = yaml.safe_load(workflow)["jobs"]
+    assert jobs["test"]["permissions"] == {"contents": "read"}
+    assert jobs["publish"]["permissions"] == {"contents": "read", "packages": "write"}
     assert first.validation["schema_version"] == "infrastructure-plan-v1"
     assert first.validation["image_binding"] == {
         "name": "application-image",

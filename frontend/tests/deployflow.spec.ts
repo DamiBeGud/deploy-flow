@@ -88,6 +88,55 @@ test('persists application, streams analysis across reload, saves delivery setti
   expect(errors).toEqual([])
 })
 
+test('review approval queues a PR and displays its GitHub status without deploying', async ({ page }) => {
+  const errors: string[] = []
+  const consoleErrors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()) })
+  await page.route(/\/api\/v1\/infrastructure-plans\/[^/]+\/validations$/, route => route.fulfill({ status: 201, json: {
+    id: 'mock-admission', status: 'passed', observed_at: '2026-10-08T09:00:00Z',
+    checks: [{ kind: 'Deployment', name: 'fixture', code: 'admission_passed' }],
+  } }))
+  const pr = {
+    id: 'mock-pr', plan_id: '', status: 'queued', url: null, number: null,
+    head_sha: null, merged_sha: null, error_code: null, verified_build: null,
+  }
+  await page.route(/\/api\/v1\/infrastructure-plans\/[^/]+\/pull-requests$/, route => {
+    pr.plan_id = route.request().url().split('/').at(-2) || ''
+    return route.fulfill({ status: 202, json: pr })
+  })
+  await page.route(/\/api\/v1\/infrastructure-plans\/[^/]+$/, async route => {
+    if (route.request().method() !== 'GET') return route.continue()
+    const response = await route.fetch()
+    const plan = await response.json()
+    return route.fulfill({ response, json: { ...plan, status: 'approved', pull_request: pr, cluster_validation: {
+      status: 'passed', observed_at: '2026-10-08T09:00:00Z',
+      checks: [{ kind: 'Deployment', name: 'fixture', code: 'admission_passed' }],
+    } } })
+  })
+  await page.route('**/api/v1/pull-requests/mock-pr/refresh', route => route.fulfill({ status: 202, json: pr }))
+  await page.route('**/api/v1/pull-requests/mock-pr', route => route.fulfill({ json: {
+    ...pr, status: 'open', number: 7, url: 'https://github.com/example/fixture/pull/7',
+  } }))
+  await start(page)
+  await expect(page).toHaveTitle(/DeployFlow/)
+  await expect(readyAnalysis(page)).toBeVisible({ timeout: 60000 })
+  await page.getByRole('button', { name: 'Continue to connectivity' }).click()
+  await page.getByRole('button', { name: 'Save and continue' }).click()
+  await page.getByRole('button', { name: 'Generate bundle' }).click()
+  await page.getByRole('button', { name: 'Save and review' }).click()
+  await expect(page.getByRole('heading', { name: 'Review delivery plan' })).toBeVisible()
+  await expect(page.getByText('Result: passed')).toBeVisible()
+  await page.getByRole('button', { name: 'Approve and create infrastructure PR' }).click()
+  await expect(page.getByText('Status: queued')).toBeVisible()
+  await page.getByRole('button', { name: 'Refresh PR and CI status' }).click()
+  await expect(page.getByRole('link', { name: 'Open PR #7 on GitHub' })).toHaveAttribute('href', 'https://github.com/example/fixture/pull/7')
+  await expect(page.getByText('Creating a PR does not deploy anything.')).toBeVisible()
+  await page.screenshot({ path: '/tmp/deployflow-phase6-review.png', fullPage: false })
+  expect(errors).toEqual([])
+  expect(consoleErrors).toEqual([])
+})
+
 test('cancels a running backend analysis', async ({ page }) => {
   const { runId } = await start(page)
   await page.getByRole('button', { name: 'Cancel analysis' }).click()

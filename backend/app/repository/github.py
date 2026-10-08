@@ -71,10 +71,11 @@ class GitHubClient:
         return " ".join(message.split())[:240] or fallback
 
     def _installation_token(
-        self, client: httpx.Client, jwt_token: str, owner: str, name: str
+        self, client: httpx.Client, jwt_token: str, owner: str, name: str,
+        permissions: dict[str, str] | None = None,
     ) -> str:
         url = f"{self.config.github_api_url.rstrip('/')}/app/installations/{self.config.github_installation_id}/access_tokens"
-        payload = {"repositories": [name], "permissions": {"contents": "read"}}
+        payload = {"repositories": [name], "permissions": permissions or {"contents": "read"}}
         last_detail = "GitHub rejected the installation-token request."
         for attempt in range(3):
             response = client.post(url, headers=self._headers(jwt_token), json=payload)

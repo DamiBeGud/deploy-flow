@@ -81,8 +81,10 @@ repository evidence and Kubernetes policy defaults. Users only edit values they
 wish to override. It supports service port, health path, replicas, resource requests
 and limits, external exposure, detected non-secret environment values, and build
 commands. The local profile currently has no approved connection or secret catalogue,
-so those controls are accurately unavailable. Bundle generation and approval are
-review-only: no GitHub pull request, CI execution, image push, or deployment occurs.
+so those controls are accurately unavailable. Bundle generation and Kubernetes
+admission checking are review-only. The final Review action explicitly approves
+the bundle and queues one GitHub infrastructure PR. The page shows PR and verified
+CI image status; it does not merge the PR or deploy to Kubernetes.
 
 ## Verification
 

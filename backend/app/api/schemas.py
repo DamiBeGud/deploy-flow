@@ -171,3 +171,7 @@ class ApprovePlan(StrictModel):
 
 class ValidatePlan(StrictModel):
     expected_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CreatePullRequest(StrictModel):
+    expected_digest: str = Field(pattern=r"^[0-9a-f]{64}$")

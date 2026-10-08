@@ -1,7 +1,17 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -210,6 +220,62 @@ class PlanApproval(Base):
     invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     invalidated_reason: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InfrastructurePullRequest(Base):
+    __tablename__ = "infrastructure_pull_requests"
+    __table_args__ = (UniqueConstraint("plan_id", name="uq_infrastructure_pr_plan"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("infrastructure_plans.id"), index=True)
+    repository_id: Mapped[int | None] = mapped_column(BigInteger)
+    owner: Mapped[str] = mapped_column(String(128))
+    repository: Mapped[str] = mapped_column(String(128))
+    base_branch: Mapped[str] = mapped_column(String(255))
+    base_sha: Mapped[str] = mapped_column(String(40))
+    head_branch: Mapped[str] = mapped_column(String(255))
+    head_sha: Mapped[str | None] = mapped_column(String(40))
+    number: Mapped[int | None] = mapped_column(Integer)
+    url: Mapped[str | None] = mapped_column(String(1024))
+    merged_sha: Mapped[str | None] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class GitHubWebhookDelivery(Base):
+    __tablename__ = "github_webhook_deliveries"
+    delivery_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    event: Mapped[str] = mapped_column(String(64))
+    repository_id: Mapped[int] = mapped_column(BigInteger)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class GitHubJob(Base):
+    __tablename__ = "github_jobs"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(32))
+    pull_request_id: Mapped[UUID | None] = mapped_column(ForeignKey("infrastructure_pull_requests.id"), index=True)
+    delivery_id: Mapped[str | None] = mapped_column(ForeignKey("github_webhook_deliveries.delivery_id"))
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    next_dispatch_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class VerifiedBuild(Base):
+    __tablename__ = "verified_builds"
+    __table_args__ = (UniqueConstraint("pull_request_id", "run_id", "run_attempt", name="uq_verified_build_run"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    pull_request_id: Mapped[UUID] = mapped_column(ForeignKey("infrastructure_pull_requests.id"), index=True)
+    run_id: Mapped[int] = mapped_column(BigInteger)
+    run_attempt: Mapped[int] = mapped_column(Integer)
+    merged_sha: Mapped[str] = mapped_column(String(40))
+    image_repository: Mapped[str] = mapped_column(String(255))
+    image_digest: Mapped[str] = mapped_column(String(71))
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PendingJob(Base):

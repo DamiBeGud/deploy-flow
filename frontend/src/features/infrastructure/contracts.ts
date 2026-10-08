@@ -85,4 +85,17 @@ export type InfrastructurePlan = {
     removed: string[]
   }
   approval: { actor_id: string } | null
+  pull_request?: InfrastructurePullRequest | null
+}
+
+export type InfrastructurePullRequest = {
+  id: string
+  plan_id: string
+  status: 'queued' | 'open' | 'merged' | 'verified' | 'closed' | 'blocked' | 'failed' | 'ci_failed'
+  url: string | null
+  number: number | null
+  head_sha: string | null
+  merged_sha: string | null
+  error_code: string | null
+  verified_build: { run_id: number; run_attempt: number; image_repository: string; image_digest: string } | null
 }

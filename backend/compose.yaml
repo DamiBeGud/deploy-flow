@@ -91,6 +91,9 @@ services:
     <<: *backend
     develop: *source-watch
     networks: [default, kube-reader, kube-validator]
+    environment:
+      <<: *environment
+      DF_GITHUB_WEBHOOK_SECRET: ${DF_GITHUB_WEBHOOK_SECRET:-}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     healthcheck:
@@ -114,6 +117,23 @@ services:
       DF_DEEPSEEK_BASE_URL: ${DF_DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DF_DEEPSEEK_MODEL: ${DF_DEEPSEEK_MODEL:-deepseek-flash}
       DF_DEEPSEEK_REASONING_EFFORT: ${DF_DEEPSEEK_REASONING_EFFORT:-high}
+
+  github-worker:
+    <<: *backend
+    develop: *source-watch
+    command: ["dramatiq", "app.worker", "--processes", "1", "--threads", "2", "--queues", "github"]
+    volumes:
+      - ${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:ro
+
+  webhook:
+    <<: *backend
+    develop: *source-watch
+    command: ["uvicorn", "app.webhook_main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *environment
+      DF_GITHUB_WEBHOOK_SECRET: ${DF_GITHUB_WEBHOOK_SECRET:-}
+    ports:
+      - "127.0.0.1:${WEBHOOK_PORT:-8002}:8000"
 
   dispatcher:
     <<: *backend

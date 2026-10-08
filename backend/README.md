@@ -1,13 +1,14 @@
-# DeployFlow backend — analysis and delivery-plan preview
+# DeployFlow backend — analysis, reviewed PRs, and CI verification
 
 FastAPI API, PostgreSQL state and event history, Redis/Dramatiq workers, and a
 database-backed job dispatcher. Analysis resolves a GitHub revision through a
 configured GitHub App and runs deterministic, read-only repository scanners.
 An explicitly enabled agent mode can use DeepSeek with reviewed skills and a
 bounded, read-only repository MCP server. Phase 4 stores versioned delivery
-intent, generates a reviewable Dockerfile/workflow/Kubernetes bundle, and records
-approval. It never executes repository code, creates a GitHub PR, pushes an image,
-or contacts Kubernetes.
+intent and generates a reviewable Dockerfile/workflow/Kubernetes bundle. Phase 5
+checks Kubernetes admission with server-side dry-run. Phase 6 queues one GitHub
+infrastructure PR after review and verifies the merged CI image digest. None of
+these phases applies resources to Kubernetes; deployment is Phase 7.
 
 The Kubernetes recommendation endpoint combines repository evidence with the fixed
 local Kubernetes policy to return one complete editable intent. It does not ask the
@@ -33,8 +34,8 @@ trusted CA are required, and must stay outside Git. Phase 5 adds opt-in reader
 and validator MCP processes; the analysis worker receives neither credential.
 The dashboard is limited to `deployflow-test`. Manifest validation accepts
 only a stored bundle and uses server-side dry-run; it cannot deploy resources.
-Phase 4 generation remains review-only. Regenerate old plans after the
-template/profile change; older plans are stale and cannot be approved.
+Regenerate old plans after the template/profile change; older plans are stale
+and cannot be approved or sent to GitHub.
 
 The `phase5` Compose profile is off by default. After separately approving the
 exact server actions, provide absolute paths outside this repository for a
@@ -58,10 +59,32 @@ private keys, and source contents are never returned.
 ## GitHub App configuration
 
 Set `DF_GITHUB_APP_ID`, `DF_GITHUB_INSTALLATION_ID`, and
-`DF_GITHUB_PRIVATE_KEY_PATH` for an installed App with repository contents-read
-permission. Keep the PEM outside this repository. Without these values, analysis
-runs fail with `github_auth_unconfigured`; the test service deliberately uses
-the fake provider so durability tests remain independent of GitHub.
+`DF_GITHUB_PRIVATE_KEY_PATH` for an installed App. Keep the PEM outside this
+repository. Analysis requests only a repository-scoped contents-read token;
+the separate `github-worker` requests contents-write, pull-requests-write,
+workflows-write, and actions-read for its repository. Update the App's
+permissions and approve the installation update before trying the Phase 6 PR
+action. Configure signed `pull_request` and `workflow_run` webhook events and
+set the same high-entropy secret as `DF_GITHUB_WEBHOOK_SECRET` in the ignored
+`.env` and GitHub App settings. Missing permissions or credentials block PR
+creation; they do not fall back to a personal token.
+
+The `webhook` Compose service serves **only** `/webhooks/github` on local port
+`8002` (override with `WEBHOOK_PORT`). GitHub needs an HTTPS-reachable endpoint
+that forwards only to this service. Never expose port `8000` or the development-
+identity API through a public tunnel. The receiver verifies HMAC-SHA256 over
+the raw request body and stores delivery IDs before queuing reconciliation.
+Its process has no GitHub App private key, model key, or Kubernetes credential.
+
+The generated workflow tests pull requests with read-only repository access.
+After merge, its push run logs into GHCR using the repository's `GITHUB_TOKEN`,
+publishes the image, and uploads `deployflow-build.json`. The backend accepts a
+digest only when GitHub reports the expected merged PR, expected workflow and
+successful run, exact approved merged files, matching artifact identifiers, and
+an existing GHCR manifest at that digest. GHCR packages may initially be
+private; make the fixture package public for anonymous verification and later
+cluster pulls. No CI job has a Kubernetes credential. Phase 6 stops at a
+verified build record and never deploys.
 
 ## Optional DeepSeek agent mode
 
@@ -178,10 +201,18 @@ Available application, analysis, and delivery-plan routes:
 | GET / PUT | `/applications/{id}/deployment-intent` | Read / version saved connectivity and workflow settings |
 | POST | `/applications/{id}/infrastructure-plans` | Generate a review-only infrastructure bundle |
 | GET | `/infrastructure-plans/{id}` | Read a generated bundle and validation result |
-| POST | `/infrastructure-plans/{id}/approve` | Record approval for the exact bundle digest |
+| POST | `/infrastructure-plans/{id}/approve` | Record approval for the exact bundle digest without a GitHub write |
 | POST | `/infrastructure-plans/{id}/validations` | Policy and Kubernetes dry-run for the stored bundle |
+| POST | `/infrastructure-plans/{id}/pull-requests` | Approve a validated bundle and queue one GitHub PR |
+| GET | `/pull-requests/{id}` | PR, CI, and verified image status |
+| POST | `/pull-requests/{id}/refresh` | Queue GitHub reconciliation after a missed webhook |
+| POST | `/pull-requests/{id}/retry` | Retry a failed PR creation after configuration is fixed |
 | GET | `/services`, `/services/{id}` | Observed workloads in `deployflow-test` |
 | GET | `/clusters/local-k3s/capabilities` | Configured target capabilities |
+
+The dedicated webhook service exposes `POST /webhooks/github` (without the
+`/api/v1` prefix or frontend identity). It requires GitHub's signature and
+delivery ID, not the frontend `Idempotency-Key` header.
 
 All mutations require `Idempotency-Key`. Keys are scoped to organization, actor,
 and action (including target ID), with a canonical hash of validated request data.

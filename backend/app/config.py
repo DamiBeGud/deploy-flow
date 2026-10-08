@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     github_app_id: str | None = None
     github_installation_id: int | None = None
     github_private_key_path: Path | None = None
+    github_webhook_secret: str | None = None
     repository_archive_bytes: int = Field(default=25 * 1024 * 1024, ge=1024)
     repository_extracted_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
     repository_file_count: int = Field(default=10_000, ge=1)
@@ -66,6 +67,7 @@ class Settings(BaseSettings):
         "github_app_id",
         "github_installation_id",
         "github_private_key_path",
+        "github_webhook_secret",
         "deepseek_api_key",
         "analysis_provider",
         "analysis_mode",

@@ -10,7 +10,7 @@ from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.delivery_routes import router as delivery_router
-from app.api.identity import DevelopmentIdentityProvider
+from app.api.identity import DevelopmentIdentityProvider, OIDCIdentityProvider
 from app.api.routes import router
 from app.config import settings
 from app.persistence.database import Session
@@ -20,7 +20,9 @@ log = logging.getLogger(__name__)
 app = FastAPI(
     title="DeployFlow", version="0.3.0", description="Phase 3 — bounded repository analysis agent"
 )
-app.state.identity_provider = DevelopmentIdentityProvider()
+app.state.identity_provider = (
+    OIDCIdentityProvider() if settings().auth_mode == "oidc" else DevelopmentIdentityProvider()
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings().cors_origins,

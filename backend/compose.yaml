@@ -37,6 +37,13 @@ x-backend: &backend
     DF_GHCR_IMAGE: ${GHCR_IMAGE:-}
     DF_KUBE_READER_MCP_URL: ${DF_KUBE_READER_MCP_URL:-}
     DF_KUBE_VALIDATOR_MCP_URL: ${DF_KUBE_VALIDATOR_MCP_URL:-}
+    DF_DEPLOYMENT_EXECUTION_ENABLED: ${DF_DEPLOYMENT_EXECUTION_ENABLED:-false}
+    DF_OIDC_ISSUER: ${DF_OIDC_ISSUER:-}
+    DF_OIDC_AUDIENCE: ${DF_OIDC_AUDIENCE:-}
+    DF_OIDC_JWKS_URL: ${DF_OIDC_JWKS_URL:-}
+    DF_OIDC_AUTHORIZATION_ENDPOINT: ${DF_OIDC_AUTHORIZATION_ENDPOINT:-}
+    DF_OIDC_TOKEN_ENDPOINT: ${DF_OIDC_TOKEN_ENDPOINT:-}
+    DF_OIDC_CLIENT_ID: ${DF_OIDC_CLIENT_ID:-}
     DF_NODE_BASE_IMAGE: ${DF_NODE_BASE_IMAGE:-node:20-bookworm-slim}
     DF_GITHUB_APP_ID: ${DF_GITHUB_APP_ID:-}
     DF_GITHUB_INSTALLATION_ID: ${DF_GITHUB_INSTALLATION_ID:-}
@@ -133,6 +140,46 @@ services:
     command: ["dramatiq", "app.worker", "--processes", "1", "--threads", "2", "--queues", "delivery"]
     volumes:
       - ${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:ro
+
+  kube-deployer-tunnel:
+    profiles: ["phase7-executor"]
+    build:
+      context: .
+      dockerfile: ops/k3s/Dockerfile.tunnel
+    environment:
+      DF_K3S_SSH_TARGET: ${DF_K3S_SSH_TARGET:-}
+    volumes:
+      - ${DF_K3S_SSH_KEY_PATH:-/dev/null}:/run/deployflow/ssh_key:ro
+      - ${DF_K3S_KNOWN_HOSTS_PATH:-/dev/null}:/run/deployflow/known_hosts:ro
+    tmpfs: [/run/deployflow-runtime:mode=0700]
+    networks: [default, kube-validator]
+    restart: unless-stopped
+
+  kube-deployer:
+    <<: *backend
+    profiles: ["phase7-executor"]
+    network_mode: service:kube-deployer-tunnel
+    user: "0:0"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      kube-deployer-tunnel:
+        condition: service_started
+    environment:
+      <<: *environment
+      DF_KUBE_MCP_ROLE: deployer
+      DF_KUBE_API_SERVER: https://127.0.0.1:16443
+      DF_KUBE_CA_PATH: /run/deployflow/ca.crt
+      DF_KUBE_TOKEN_PATH: /run/deployflow/token
+    volumes:
+      - ${DF_KUBE_CA_PATH:-/dev/null}:/run/deployflow/ca.crt:ro
+      - ${DF_KUBE_DEPLOYER_TOKEN_PATH:-/dev/null}:/run/deployflow/token:ro
+      - ${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:ro
+    tmpfs: [/run/deployflow-runtime:mode=0700]
+    command: ["python", "-m", "mcp_servers.credential_bootstrap"]
+    restart: unless-stopped
 
   webhook:
     <<: *backend

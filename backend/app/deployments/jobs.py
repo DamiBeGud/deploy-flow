@@ -19,6 +19,7 @@ from app.deployments.preparation import (
     _source,
     prepare_release_candidate,
 )
+from app.deployments.queue import queue_execution
 from app.deployments.release import ReleaseError, bind_verified_image
 from app.deployments.state import transition
 from app.integrations.github.api import GitHubPhase6Error
@@ -136,6 +137,7 @@ async def _preflight(job_id: UUID, token: UUID, build_id: UUID, run_id: UUID) ->
             raise DeliveryError("deployment_state_changed")
         run.preflight_validation_json = validation
         transition(db, run, "waiting_for_executor")
+        queue_execution(db, run)
 
 
 def _error(exc: Exception) -> DeliveryError:

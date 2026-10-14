@@ -12,7 +12,14 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://deployflow:local-only@localhost:5432/deployflow"
     redis_url: str = "redis://localhost:6379/0"
     environment: Literal["local", "test", "production"] = "local"
-    auth_mode: Literal["development"] = "development"
+    auth_mode: Literal["development", "oidc"] = "development"
+    oidc_issuer: str | None = None
+    oidc_audience: str | None = None
+    oidc_jwks_url: str | None = None
+    oidc_authorization_endpoint: str | None = None
+    oidc_token_endpoint: str | None = None
+    oidc_client_id: str | None = None
+    deployment_execution_enabled: bool = False
     dev_actor_id: str = "local-developer"
     dev_organization_id: str = "local-organization"
     dev_roles: list[str] = ["developer"]
@@ -65,6 +72,10 @@ class Settings(BaseSettings):
     delivery_max_attempts: int = Field(default=5, ge=1, le=10)
     delivery_lease_seconds: int = Field(default=300, ge=30, le=1800)
     delivery_retry_seconds: int = Field(default=30, ge=1, le=3600)
+    execution_lease_seconds: int = Field(default=300, ge=30, le=1800)
+    execution_deadline_seconds: int = Field(default=600, ge=60, le=3600)
+    execution_retry_seconds: int = Field(default=15, ge=1, le=300)
+    execution_max_attempts: int = Field(default=5, ge=1, le=20)
 
     @field_validator(
         "github_app_id",
@@ -78,6 +89,12 @@ class Settings(BaseSettings):
         "ghcr_image",
         "kube_reader_mcp_url",
         "kube_validator_mcp_url",
+        "oidc_issuer",
+        "oidc_audience",
+        "oidc_jwks_url",
+        "oidc_authorization_endpoint",
+        "oidc_token_endpoint",
+        "oidc_client_id",
         mode="before",
     )
     @classmethod
@@ -94,8 +111,20 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def local_auth_only(self):
-        if self.environment == "production":
-            raise ValueError("Real authentication must be implemented before production use")
+        if self.auth_mode == "oidc" and not (
+            self.oidc_issuer and self.oidc_issuer.startswith("https://")
+            and self.oidc_audience and self.oidc_jwks_url
+            and self.oidc_jwks_url.startswith("https://")
+            and self.oidc_authorization_endpoint
+            and self.oidc_authorization_endpoint.startswith("https://")
+            and self.oidc_token_endpoint and self.oidc_token_endpoint.startswith("https://")
+            and self.oidc_client_id
+        ):
+            raise ValueError("OIDC issuer, audience and HTTPS JWKS URL are required")
+        if self.environment == "production" and self.auth_mode != "oidc":
+            raise ValueError("OIDC authentication is required in production")
+        if self.deployment_execution_enabled and self.auth_mode != "oidc":
+            raise ValueError("Deployment execution requires OIDC authentication")
         return self
 
 

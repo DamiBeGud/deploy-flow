@@ -141,9 +141,67 @@ verified before the delivery worker existed can be scheduled with an
 idempotent `POST /api/v1/pull-requests/{id}/release-preparation`; blocked jobs
 can use that route again after correction. Preflight failures can be retried
 with `POST /api/v1/deployments/{id}/retry-preflight`. These commands require
-`Idempotency-Key` and normal application authorization. The worker has no
-deployer identity and cannot apply resources. Rollout, rollback, and full UI
-controls remain later Phase 7 work.
+`Idempotency-Key` and normal application authorization. The delivery worker
+has no deployer identity and cannot apply resources.
+
+## Phase 7 guarded execution (opt-in; not provisioned by default)
+
+The executor can apply the stored, verified release to `deployflow-test` only
+after OIDC authorization, an application-specific deployment policy, fresh
+GitHub/CI checks, and another server-side admission dry-run. The default
+`DF_DEPLOYMENT_EXECUTION_ENABLED=false` prevents queuing; the
+`phase7-executor` Compose profile is also off. Existing
+`waiting_for_executor` runs are **not** deployed merely by enabling the flag.
+A deployer must enable that application's policy and explicitly select
+**Deploy this prepared release**. Future verified releases for an enabled
+application queue automatically after preflight. The same UI can disable
+future automatic deployments.
+
+Execution uses a separate short-lived `deployflow-deployer` ServiceAccount,
+SSH tunnel, and one-thread worker. The proposed additive namespace RBAC is
+[phase7-deployer-access.yaml](ops/k3s/phase7-deployer-access.yaml). It grants
+only `get/create/patch` on ConfigMaps, Services, Deployments, and Ingresses;
+`list` on Pods; and `get` on the Service proxy. It grants no Secret or delete
+access and changes no existing Role or workload. **This manifest is for
+operator review only and is not applied by Compose or migrations.** Do not
+apply it or create a token until the k3s operator approves those exact changes.
+The existing reader and validator identities remain separate.
+
+Before activation, configure a real HTTPS OIDC provider for a browser public
+client using authorization-code + PKCE. Register the frontend callback
+`<frontend-origin>/auth/callback`, allow token-endpoint CORS for that origin,
+and issue signed access tokens with this API's audience, `organization_id`,
+and a `roles` array. The user needs `deployer` or `administrator` to enable or
+execute deployment; application ownership rules still apply. Set
+`DF_AUTH_MODE=oidc`, `DF_OIDC_ISSUER`, `DF_OIDC_AUDIENCE`, `DF_OIDC_JWKS_URL`,
+`DF_OIDC_AUTHORIZATION_ENDPOINT`, `DF_OIDC_TOKEN_ENDPOINT`, and
+`DF_OIDC_CLIENT_ID` in the ignored local `.env`. Production mode refuses
+development identity. The current development identity cannot deploy, even
+if assigned a deployer role.
+
+After separate approval of k3s changes, supply the reviewed ServiceAccount
+token in a `0600` host file outside Git and point
+`DF_KUBE_DEPLOYER_TOKEN_PATH` to its absolute path. The executor also needs the
+existing SSH key, pinned host key, trusted CA, GitHub App key, validator URL,
+and database/Redis access. Apply the local database migration, then explicitly
+enable `DF_DEPLOYMENT_EXECUTION_ENABLED=true` and start only the executor
+profile with `docker compose --profile phase7-executor up -d --build
+kube-deployer-tunnel kube-deployer`; recreate the API, delivery worker, and
+dispatcher with the same new settings. This is a deployment-enabling action,
+so first confirm the OIDC claims and target namespace. Never use the reader or
+validator token as the deployer token.
+
+The executor journals each resource before the bounded Kubernetes request,
+checks ownership/UIDs on retries, and never forces apply conflicts. It waits
+for the Deployment's observed generation and ready/available replicas, then
+performs an internal HTTP GET through the Service proxy. The UI displays
+deployment ID, resource journal, rollout counts, health, and ordered events.
+Partial or ambiguous failures enter `reconciling` without deleting or rolling
+back existing resources. An authorized deployer can use **Retry
+reconciliation** after investigating and fixing the cause. ConfigMap changes
+without a Pod-template change are rejected rather than falsely reported as a
+successful rollout. Automated rollback and multi-environment support remain
+later work.
 
 ## Optional DeepSeek agent mode
 

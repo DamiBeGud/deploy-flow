@@ -294,8 +294,20 @@ def me(identity: Actor):
         "actor_id": identity.actor_id,
         "organization_id": identity.organization_id,
         "roles": sorted(identity.roles),
-        "authentication": "development",
+        "authentication": settings().auth_mode,
         "clusters": [],
+    }
+
+
+@router.get("/auth/config")
+def auth_config():
+    config = settings()
+    return {
+        "mode": config.auth_mode,
+        "issuer": config.oidc_issuer if config.auth_mode == "oidc" else None,
+        "authorization_endpoint": config.oidc_authorization_endpoint if config.auth_mode == "oidc" else None,
+        "token_endpoint": config.oidc_token_endpoint if config.auth_mode == "oidc" else None,
+        "client_id": config.oidc_client_id if config.auth_mode == "oidc" else None,
     }
 
 

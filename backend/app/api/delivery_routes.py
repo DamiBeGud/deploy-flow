@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.api.identity import Identity, get_identity
 from app.bootstrap.profiles import local_k3s_profile
+from app.config import settings
 from app.deployments.preparation import ReleasePreparationError, _source
+from app.deployments.queue import queue_execution
 from app.deployments.state import ACTIVE_STATES, transition
 from app.persistence.commands import application_for, idempotent
 from app.persistence.database import Session
@@ -19,7 +23,10 @@ from app.persistence.models import (
     Application,
     DeliveryJob,
     DeploymentEvent,
+    DeploymentPolicy,
+    DeploymentResource,
     DeploymentRun,
+    ExecutionJob,
     InfrastructurePlan,
     InfrastructurePullRequest,
     ReleaseSpecificationRecord,
@@ -29,6 +36,10 @@ from app.persistence.models import (
 router = APIRouter(prefix="/api/v1")
 Actor = Annotated[Identity, Depends(get_identity)]
 Key = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=128)]
+
+
+class DeploymentPolicyWrite(BaseModel):
+    enabled: bool
 
 
 def _job_document(job: DeliveryJob) -> dict:
@@ -43,6 +54,10 @@ def _job_document(job: DeliveryJob) -> dict:
 
 def _run_document(db, run: DeploymentRun) -> dict:
     release = db.get(ReleaseSpecificationRecord, run.release_id)
+    job = db.scalar(select(ExecutionJob).where(ExecutionJob.deployment_run_id == run.id))
+    resources = db.scalars(select(DeploymentResource).where(
+        DeploymentResource.deployment_run_id == run.id,
+    ).order_by(DeploymentResource.kind, DeploymentResource.name)).all()
     return {
         "id": str(run.id), "application_id": str(run.application_id),
         "environment_profile_id": run.environment_profile_id,
@@ -50,6 +65,12 @@ def _run_document(db, run: DeploymentRun) -> dict:
         "image_reference": release.image_reference, "status": run.status,
         "error_code": run.error_code, "event_sequence": run.event_sequence,
         "preflight_validation": run.preflight_validation_json,
+        "rollout": run.rollout_json, "health": run.health_json,
+        "previous_release_id": str(run.previous_release_id) if run.previous_release_id else None,
+        "execution_job": {"id": str(job.id), "status": job.status, "error_code": job.error_code} if job else None,
+        "resources": [{"kind": row.kind, "name": row.name, "status": row.status,
+                       "uid": row.uid, "generation": row.generation,
+                       "error_code": row.error_code} for row in resources],
         "created_at": run.created_at.isoformat(),
     }
 
@@ -109,7 +130,120 @@ def deployment_events(deployment_id: UUID, identity: Actor, after: int = Query(d
         return {"events": [{
             "sequence": event.sequence, "type": event.kind,
             "occurred_at": event.occurred_at.isoformat(), **event.payload_json,
-        } for event in events], "last_sequence": run.event_sequence}
+        } for event in events], "last_sequence": events[-1].sequence if events else after}
+
+
+@router.get("/applications/{application_id}/deployment-policy")
+def get_deployment_policy(application_id: UUID, identity: Actor):
+    with Session() as db:
+        application_for(db, application_id, identity)
+        policy = db.scalar(select(DeploymentPolicy).where(
+            DeploymentPolicy.application_id == application_id,
+            DeploymentPolicy.environment_profile_id == "local-k3s",
+        ))
+        return {"enabled": bool(policy and policy.enabled),
+                "execution_available": settings().deployment_execution_enabled,
+                "actor_id": policy.actor_id if policy else None}
+
+
+@router.put("/applications/{application_id}/deployment-policy")
+def set_deployment_policy(application_id: UUID, body: DeploymentPolicyWrite, identity: Actor, key: Key):
+    identity.require_deploy()
+    if settings().auth_mode != "oidc" or not settings().deployment_execution_enabled:
+        raise HTTPException(409, "Authenticated deployment execution is not configured")
+    with Session.begin() as db:
+        application_for(db, application_id, identity)
+        db.get(Application, application_id, with_for_update=True)
+
+        def operation():
+            policy = db.scalar(select(DeploymentPolicy).where(
+                DeploymentPolicy.application_id == application_id,
+                DeploymentPolicy.environment_profile_id == "local-k3s",
+            ).with_for_update())
+            if policy is None:
+                policy = DeploymentPolicy(
+                    application_id=application_id, environment_profile_id="local-k3s",
+                    enabled=body.enabled, actor_id=identity.actor_id,
+                )
+                db.add(policy)
+            else:
+                policy.enabled = body.enabled
+                policy.actor_id = identity.actor_id
+            return {"enabled": body.enabled, "actor_id": identity.actor_id}, 200
+
+        response, code = idempotent(
+            db, identity, f"applications/{application_id}/deployment-policy",
+            key, body.model_dump(), operation,
+        )
+    return JSONResponse(response, status_code=code)
+
+
+@router.post("/deployments/{deployment_id}/execute", status_code=202)
+def execute_deployment(deployment_id: UUID, identity: Actor, key: Key):
+    identity.require_deploy()
+    if settings().auth_mode != "oidc" or not settings().deployment_execution_enabled:
+        raise HTTPException(409, "Authenticated deployment execution is not configured")
+    with Session.begin() as db:
+        run = db.get(DeploymentRun, deployment_id)
+        if run is None:
+            raise HTTPException(404, "Deployment not found")
+        application_for(db, run.application_id, identity)
+        db.get(Application, run.application_id, with_for_update=True)
+        run = db.get(DeploymentRun, deployment_id, with_for_update=True)
+
+        def operation():
+            job = queue_execution(db, run)
+            if job is None:
+                raise HTTPException(409, "Enable deployment for this application and complete preflight first")
+            db.flush()
+            return {"deployment_id": str(run.id), "job_id": str(job.id), "status": run.status}, 202
+
+        response, code = idempotent(
+            db, identity, f"deployments/{deployment_id}/execute", key, {}, operation,
+        )
+    return JSONResponse(response, status_code=code)
+
+
+@router.post("/deployments/{deployment_id}/retry-execution", status_code=202)
+def retry_execution(deployment_id: UUID, identity: Actor, key: Key):
+    """Explicitly reconcile a partly applied release, retaining its UID journal."""
+    identity.require_deploy()
+    if settings().auth_mode != "oidc" or not settings().deployment_execution_enabled:
+        raise HTTPException(409, "Authenticated deployment execution is not configured")
+    with Session.begin() as db:
+        run = db.get(DeploymentRun, deployment_id)
+        if run is None:
+            raise HTTPException(404, "Deployment not found")
+        application_for(db, run.application_id, identity)
+        db.get(Application, run.application_id, with_for_update=True)
+        run = db.get(DeploymentRun, deployment_id, with_for_update=True)
+
+        def operation():
+            policy = db.scalar(select(DeploymentPolicy).where(
+                DeploymentPolicy.application_id == run.application_id,
+                DeploymentPolicy.environment_profile_id == run.environment_profile_id,
+                DeploymentPolicy.enabled.is_(True),
+            ))
+            job = db.scalar(select(ExecutionJob).where(
+                ExecutionJob.deployment_run_id == run.id,
+            ).with_for_update())
+            if not policy or not job or run.status != "reconciling" or job.status != "blocked":
+                raise HTTPException(409, "This deployment is not eligible for reconciliation")
+            now = db.scalar(select(func.now()))
+            job.status = "queued"
+            job.attempts = 0
+            job.error_code = None
+            job.next_dispatch_at = now
+            job.deadline_at = now + timedelta(seconds=settings().execution_deadline_seconds)
+            job.lease_token = None
+            job.lease_expires_at = None
+            transition(db, run, "checking")
+            return {"deployment_id": str(run.id), "job_id": str(job.id), "status": run.status}, 202
+
+        response, code = idempotent(
+            db, identity, f"deployments/{deployment_id}/retry-execution", key, {}, operation,
+        )
+    return JSONResponse(response, status_code=code)
 
 
 @router.post("/pull-requests/{pull_request_id}/release-preparation", status_code=202)

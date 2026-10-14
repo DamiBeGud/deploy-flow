@@ -314,7 +314,7 @@ class DeploymentRun(Base):
         Index(
             "uq_active_deployment_application_environment",
             "application_id", "environment_profile_id", unique=True,
-            postgresql_where=text("status IN ('queued', 'validating', 'retry_wait', 'waiting_for_executor')"),
+            postgresql_where=text("status IN ('queued', 'validating', 'retry_wait', 'waiting_for_executor', 'checking', 'applying', 'monitoring', 'checking_health', 'reconciling')"),
         ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -325,6 +325,9 @@ class DeploymentRun(Base):
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     error_code: Mapped[str | None] = mapped_column(String(64))
     preflight_validation_json: Mapped[dict | None] = mapped_column(JSONB)
+    rollout_json: Mapped[dict | None] = mapped_column(JSONB)
+    health_json: Mapped[dict | None] = mapped_column(JSONB)
+    previous_release_id: Mapped[UUID | None] = mapped_column(ForeignKey("release_specifications.id"))
     event_sequence: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -355,6 +358,46 @@ class DeliveryJob(Base):
     lease_token: Mapped[UUID | None]
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DeploymentPolicy(Base):
+    __tablename__ = "deployment_policies"
+    __table_args__ = (UniqueConstraint("application_id", "environment_profile_id", name="uq_deployment_policy_target"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    application_id: Mapped[UUID] = mapped_column(ForeignKey("applications.id"), index=True)
+    environment_profile_id: Mapped[str] = mapped_column(String(128))
+    enabled: Mapped[bool] = mapped_column(default=False)
+    actor_id: Mapped[str] = mapped_column(String(128))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ExecutionJob(Base):
+    __tablename__ = "execution_jobs"
+    __table_args__ = (UniqueConstraint("deployment_run_id", name="uq_execution_job_run"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    deployment_run_id: Mapped[UUID] = mapped_column(ForeignKey("deployment_runs.id"), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    next_dispatch_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    lease_token: Mapped[UUID | None]
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DeploymentResource(Base):
+    __tablename__ = "deployment_resources"
+    __table_args__ = (UniqueConstraint("deployment_run_id", "kind", "name", name="uq_deployment_resource"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    deployment_run_id: Mapped[UUID] = mapped_column(ForeignKey("deployment_runs.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str] = mapped_column(String(253))
+    status: Mapped[str] = mapped_column(String(32))
+    uid: Mapped[str | None] = mapped_column(String(128))
+    generation: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class PendingJob(Base):

@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { command, errorMessage, request } from '../../shared/api'
 import type { InfrastructurePlan, InfrastructurePullRequest } from './contracts'
+import { DeploymentProgress } from './DeploymentProgress'
 
-export function PullRequestReview({ plan, canWrite, onPlanChange }: {
+export function PullRequestReview({ plan, canWrite, canDeploy, onPlanChange }: {
   plan: InfrastructurePlan
   canWrite: boolean
+  canDeploy: boolean
   onPlanChange: (plan: InfrastructurePlan) => void
 }) {
   const [polledPullRequest, setPullRequest] = useState<InfrastructurePullRequest | null>(null)
@@ -15,13 +17,14 @@ export function PullRequestReview({ plan, canWrite, onPlanChange }: {
   const pullRequestStatus = pullRequest?.status ?? null
 
   useEffect(() => {
-    if (!pullRequestId || (pullRequestStatus && ['verified', 'closed', 'blocked'].includes(pullRequestStatus))) return
+    if (!pullRequestId || (pullRequestStatus && ['closed', 'blocked'].includes(pullRequestStatus))) return
     const abort = new AbortController()
     const poll = () => {
       request<InfrastructurePullRequest>(`/pull-requests/${pullRequestId}`, { signal: abort.signal })
         .then(setPullRequest)
         .catch(reason => { if (!abort.signal.aborted) setError(errorMessage(reason)) })
     }
+    poll()
     const timer = window.setInterval(poll, 10000)
     return () => { abort.abort(); window.clearInterval(timer) }
   }, [pullRequestId, pullRequestStatus])
@@ -61,6 +64,7 @@ export function PullRequestReview({ plan, canWrite, onPlanChange }: {
       {pullRequest.verified_build && <p>Verified image: <code>{pullRequest.verified_build.image_repository}@{pullRequest.verified_build.image_digest}</code></p>}
       {canWrite && pullRequest.number && <button className="button button-secondary" disabled={busy} type="button" onClick={() => void refresh()}>{busy ? 'Checking…' : 'Refresh PR and CI status'}</button>}
       {canWrite && pullRequest.status === 'failed' && !pullRequest.number && <button className="button button-secondary" disabled={busy} type="button" onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry PR creation'}</button>}
+      {pullRequest.status === 'verified' && <DeploymentProgress applicationId={plan.application_id} pullRequest={pullRequest} canDeploy={canDeploy} />}
     </> : <>
       <p>Approval will queue one feature-branch PR for this exact bundle. It will not merge or deploy.</p>
       <button className="button button-primary" disabled={!canWrite || busy || plan.cluster_validation?.status !== 'passed' || plan.status === 'stale' || plan.status === 'invalid'} type="button" onClick={() => void create()}>{busy ? 'Submitting…' : 'Approve and create infrastructure PR'}</button>

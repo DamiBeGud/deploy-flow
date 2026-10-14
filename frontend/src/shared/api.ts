@@ -20,13 +20,19 @@ export const storage = {
 
 let actorScope = ''
 export function setActorScope(organization: string, actor: string) { actorScope = `${organization}:${actor}` }
+let accessToken = storage.get('access_token')
+export function setAccessToken(token: string | null) {
+  accessToken = token
+  if (token) storage.set('access_token', token)
+  else storage.remove('access_token')
+}
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response
   try {
     response = await fetch(`/api/v1${path}`, {
       ...init, signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
-      headers: { 'Content-Type': 'application/json', ...init.headers },
+      headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers },
     })
   } catch (error) {
     if (init.signal?.aborted) throw error

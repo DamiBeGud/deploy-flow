@@ -26,9 +26,22 @@ def main() -> None:
         os.chown(target, 10001, 10001)
         target.chmod(0o600)
         os.environ[environment] = str(target)
+    if os.environ.get("DF_KUBE_MCP_ROLE") == "deployer":
+        github_key = os.environ.get("DF_GITHUB_PRIVATE_KEY_PATH")
+        if github_key:
+            target = runtime / "github-app.pem"
+            target.write_bytes(Path(github_key).read_bytes())
+            os.chown(target, 10001, 10001)
+            target.chmod(0o600)
+            os.environ["DF_GITHUB_PRIVATE_KEY_PATH"] = str(target)
     os.setgroups([])
     os.setgid(10001)
     os.setuid(10001)
+    if os.environ.get("DF_KUBE_MCP_ROLE") == "deployer":
+        os.execvp("dramatiq", [
+            "dramatiq", "app.worker", "--processes", "1", "--threads", "1",
+            "--queues", "execution",
+        ])
     runpy.run_module("mcp_servers.kubernetes_server", run_name="__main__")
 
 

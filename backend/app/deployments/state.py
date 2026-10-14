@@ -3,7 +3,10 @@
 
 from app.persistence.models import DeploymentEvent, DeploymentRun
 
-ACTIVE_STATES = {"queued", "validating", "retry_wait", "waiting_for_executor"}
+ACTIVE_STATES = {
+    "queued", "validating", "retry_wait", "waiting_for_executor",
+    "checking", "applying", "monitoring", "checking_health", "reconciling",
+}
 
 
 def transition(db, run: DeploymentRun, status: str, *, error_code: str | None = None) -> None:

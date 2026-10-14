@@ -1,0 +1,43 @@
+# Operator-reviewed addition to the existing deployflow-test namespace.
+# Do not apply automatically. The executor never receives Secret or delete access.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployflow-deployer
+  namespace: deployflow-test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployflow-deployer
+  namespace: deployflow-test
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, services]
+    verbs: [get, create, patch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, create, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, create, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [services/proxy]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployflow-deployer
+  namespace: deployflow-test
+subjects:
+  - kind: ServiceAccount
+    name: deployflow-deployer
+    namespace: deployflow-test
+roleRef:
+  kind: Role
+  name: deployflow-deployer
+  apiGroup: rbac.authorization.k8s.io

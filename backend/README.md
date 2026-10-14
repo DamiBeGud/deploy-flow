@@ -52,6 +52,37 @@ fallback. The tunnel and MCP entrypoints copy `0600` host credentials into
 private container tmpfs and drop to UID 10001 before serving requests. Do not
 start this profile with `/dev/null` placeholder paths.
 
+### Renew Phase 5 access tokens
+
+The reader and validator use short-lived ServiceAccount tokens. If the UI
+reports `cluster_access_expired`, renew both local token files, then restart
+only the local MCP containers. The following assumes the configured target is
+`connectops@host` and the default local credential directory; adjust the SSH
+target, key, and token paths to match the values in your ignored `.env`.
+
+```bash
+mkdir -p ~/.config/deployflow/phase5
+chmod 700 ~/.config/deployflow/phase5
+
+ssh -i ~/.ssh/id_ed25519 connectops@host \
+  'sudo k3s kubectl -n deployflow-test create token deployflow-validator --duration=24h' \
+  > ~/.config/deployflow/phase5/validator.token
+
+ssh -i ~/.ssh/id_ed25519 connectops@host \
+  'sudo k3s kubectl -n deployflow-test create token deployflow-reader --duration=24h' \
+  > ~/.config/deployflow/phase5/reader.token
+
+chmod 600 ~/.config/deployflow/phase5/validator.token \
+  ~/.config/deployflow/phase5/reader.token
+
+docker compose --profile phase5 restart kube-reader kube-validator
+```
+
+Token creation does not modify workloads, Pods, Deployments, Services,
+namespaces, RBAC, or application data. It creates temporary authentication
+credentials for the already-provisioned ServiceAccounts; in the example above
+they expire after 24 hours. The local restart only reloads the new token files.
+
 Installation-token requests retry transient GitHub `422`, `429`, and `5xx` responses with bounded
 backoff. Permanent failures retain a short sanitized GitHub diagnostic in the failed event; tokens,
 private keys, and source contents are never returned.
@@ -86,17 +117,33 @@ private; make the fixture package public for anonymous verification and later
 cluster pulls. No CI job has a Kubernetes credential. Phase 6 stops at a
 verified build record and never deploys.
 
-## Phase 7 release preparation (local foundation)
+## Phase 7 release preparation and delivery handoff
 
 The internal release-preparation operation binds the verified CI image digest
 to the reviewed Deployment, changing no other manifest field. It requires a
 still-approved plan, a verified PR/build, and the merge commit to remain the
 target branch head. It then runs a fresh server-side dry-run and stores the
 exact final Kubernetes manifest bytes and digest. A reverted merge or failed
-admission cannot produce a release candidate. This operation is not exposed as
-a user action or invoked automatically yet. It has no deployer credential and
-does not apply resources. Deployment, rollout, rollback, and their UI/API
-controls remain future Phase 7 work.
+admission cannot produce a release candidate. A verified CI build records one
+durable preparation job. The delivery worker uses that build ID, stores one
+release and deployment run, and repeats preflight before reporting
+`waiting_for_executor`. The deployment status and ordered events are available
+through `/api/v1/deployments/{id}` and `/api/v1/deployments/{id}/events`.
+
+The `phase7-delivery` Compose profile starts only the delivery worker. It needs
+the configured GitHub App and the existing Phase 5 validator URL; the worker
+joins the validator network but receives no Kubernetes credential. Start the
+validator profile first, then use `docker compose --profile phase5 --profile
+phase7-delivery up -d --build delivery-worker` after applying the local schema
+migration through the normal `migrate` service. Check the PR response's
+`release_preparation`, `release`, and `deployment` fields for progress. A build
+verified before the delivery worker existed can be scheduled with an
+idempotent `POST /api/v1/pull-requests/{id}/release-preparation`; blocked jobs
+can use that route again after correction. Preflight failures can be retried
+with `POST /api/v1/deployments/{id}/retry-preflight`. These commands require
+`Idempotency-Key` and normal application authorization. The worker has no
+deployer identity and cannot apply resources. Rollout, rollback, and full UI
+controls remain later Phase 7 work.
 
 ## Optional DeepSeek agent mode
 

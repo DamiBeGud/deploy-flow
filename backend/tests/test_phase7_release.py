@@ -128,17 +128,19 @@ def release_source(client, monkeypatch):
         )
         db.add(pr)
         db.flush()
-        db.add(VerifiedBuild(
+        build = VerifiedBuild(
             pull_request_id=pr.id, run_id=12, run_attempt=1, merged_sha="c" * 40,
             image_repository=plan.validation_json["image_binding"]["repository"],
             image_digest=IMAGE_DIGEST,
-        ))
-        return pr.id
+        )
+        db.add(build)
+        db.flush()
+        return pr.id, build.id
 
 
 def fake_github(monkeypatch, *, branch_sha="c" * 40):
     class FakeGitHub:
-        def __init__(self, *_):
+        def __init__(self, *_, **__):
             pass
 
         def __enter__(self):
@@ -163,11 +165,19 @@ def fake_github(monkeypatch, *, branch_sha="c" * 40):
         def branch_sha(self, _):
             return branch_sha
 
+        def workflow_run(self, _):
+            return {
+                "status": "completed", "event": "push", "conclusion": "success",
+                "head_sha": "c" * 40, "head_branch": "main",
+                "path": ".github/workflows/deployflow.yml",
+                "repository": {"id": 123}, "run_attempt": 1,
+            }
+
     monkeypatch.setattr("app.deployments.preparation.GitHubAPI", FakeGitHub)
 
 
 def test_preparation_stores_exact_release_once(client, monkeypatch):
-    pr_id = release_source(client, monkeypatch)
+    pr_id, build_id = release_source(client, monkeypatch)
     fake_github(monkeypatch)
     calls = []
 
@@ -176,8 +186,8 @@ def test_preparation_stores_exact_release_once(client, monkeypatch):
         return {"status": "passed", "checks": [{"code": "admission_passed"}]}
 
     monkeypatch.setattr("app.deployments.preparation.call_kubernetes", passed)
-    first = asyncio.run(prepare_release_candidate(pr_id))
-    second = asyncio.run(prepare_release_candidate(pr_id))
+    first = asyncio.run(prepare_release_candidate(pr_id, build_id))
+    second = asyncio.run(prepare_release_candidate(pr_id, build_id))
     assert first == second
     assert len(calls) == 2
     assert calls[0][0:2] == ("validator", "kube.validate_manifests")
@@ -192,7 +202,7 @@ def test_preparation_stores_exact_release_once(client, monkeypatch):
 
 
 def test_preparation_rejects_reverted_branch_before_validation(client, monkeypatch):
-    pr_id = release_source(client, monkeypatch)
+    pr_id, build_id = release_source(client, monkeypatch)
     fake_github(monkeypatch, branch_sha="d" * 40)
 
     async def unexpected(*_):
@@ -200,13 +210,13 @@ def test_preparation_rejects_reverted_branch_before_validation(client, monkeypat
 
     monkeypatch.setattr("app.deployments.preparation.call_kubernetes", unexpected)
     with pytest.raises(ReleasePreparationError, match="verified_revision_not_target_head"):
-        asyncio.run(prepare_release_candidate(pr_id))
+        asyncio.run(prepare_release_candidate(pr_id, build_id))
     with Session() as db:
         assert db.scalars(select(ReleaseSpecificationRecord)).all() == []
 
 
 def test_preparation_requires_final_admission(client, monkeypatch):
-    pr_id = release_source(client, monkeypatch)
+    pr_id, build_id = release_source(client, monkeypatch)
     fake_github(monkeypatch)
 
     async def denied(*_):
@@ -214,6 +224,6 @@ def test_preparation_requires_final_admission(client, monkeypatch):
 
     monkeypatch.setattr("app.deployments.preparation.call_kubernetes", denied)
     with pytest.raises(ReleasePreparationError, match="release_admission_failed"):
-        asyncio.run(prepare_release_candidate(pr_id))
+        asyncio.run(prepare_release_candidate(pr_id, build_id))
     with Session() as db:
         assert db.scalars(select(ReleaseSpecificationRecord)).all() == []

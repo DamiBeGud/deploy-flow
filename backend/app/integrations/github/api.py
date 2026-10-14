@@ -22,10 +22,11 @@ class GitHubPhase6Error(RuntimeError):
 class GitHubAPI:
     """One short-lived, repository-scoped token per worker operation."""
 
-    def __init__(self, config: Settings, owner: str, repository: str):
+    def __init__(self, config: Settings, owner: str, repository: str, *, read_only: bool = False):
         self.config = config
         self.owner = owner
         self.repository = repository
+        self.read_only = read_only
         self.client: httpx.Client | None = None
         self.token: str | None = None
 
@@ -35,11 +36,16 @@ class GitHubAPI:
         try:
             self.token = auth._installation_token(
                 self.client, auth._app_jwt(), self.owner, self.repository,
-                {"contents": "write", "pull_requests": "write", "workflows": "write", "actions": "read"},
+                ({"contents": "read", "pull_requests": "read", "actions": "read"}
+                 if self.read_only else
+                 {"contents": "write", "pull_requests": "write", "workflows": "write", "actions": "read"}),
             )
         except Exception as exc:
             self.client.close()
-            raise GitHubPhase6Error("github_write_auth_unavailable", transient=True) from exc
+            raise GitHubPhase6Error(
+                "github_read_auth_unavailable" if self.read_only else "github_write_auth_unavailable",
+                transient=True,
+            ) from exc
         return self
 
     def __exit__(self, *_):

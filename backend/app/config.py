@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     max_attempts: int = Field(default=3, ge=1, le=5)
     redispatch_seconds: int = Field(default=10, ge=1)
     queue_timeout_seconds: int = Field(default=3600, ge=1)
+    delivery_max_attempts: int = Field(default=5, ge=1, le=10)
+    delivery_lease_seconds: int = Field(default=300, ge=30, le=1800)
+    delivery_retry_seconds: int = Field(default=30, ge=1, le=3600)
 
     @field_validator(
         "github_app_id",

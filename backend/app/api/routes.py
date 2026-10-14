@@ -38,7 +38,9 @@ from app.persistence.models import (
     AnalysisRun,
     Application,
     AssessmentVersion,
+    DeliveryJob,
     DeploymentIntentVersion,
+    DeploymentRun,
     Event,
     GitHubJob,
     InfrastructurePlan,
@@ -46,6 +48,7 @@ from app.persistence.models import (
     InfrastructurePlanValidation,
     InfrastructurePullRequest,
     PlanApproval,
+    ReleaseSpecificationRecord,
     VerifiedBuild,
 )
 from app.telemetry.events import TERMINAL, emit
@@ -162,7 +165,18 @@ def _plan_document(db, plan: InfrastructurePlan) -> dict:
 
 
 def _pull_request_document(db, pull_request: InfrastructurePullRequest) -> dict:
-    build = db.scalar(select(VerifiedBuild).where(VerifiedBuild.pull_request_id == pull_request.id).order_by(VerifiedBuild.verified_at.desc()))
+    build = db.scalar(select(VerifiedBuild).where(
+        VerifiedBuild.pull_request_id == pull_request.id,
+    ).order_by(VerifiedBuild.run_id.desc(), VerifiedBuild.run_attempt.desc()))
+    preparation = db.scalar(select(DeliveryJob).where(
+        DeliveryJob.kind == "prepare", DeliveryJob.verified_build_id == build.id,
+    )) if build else None
+    release = db.scalar(select(ReleaseSpecificationRecord).where(
+        ReleaseSpecificationRecord.verified_build_id == build.id,
+    )) if build else None
+    deployment = db.scalar(select(DeploymentRun).where(
+        DeploymentRun.release_id == release.id,
+    )) if release else None
     return {
         "id": str(pull_request.id),
         "plan_id": str(pull_request.plan_id),
@@ -173,11 +187,25 @@ def _pull_request_document(db, pull_request: InfrastructurePullRequest) -> dict:
         "merged_sha": pull_request.merged_sha,
         "error_code": pull_request.error_code,
         "verified_build": {
+            "id": str(build.id),
             "run_id": build.run_id,
             "run_attempt": build.run_attempt,
             "image_repository": build.image_repository,
             "image_digest": build.image_digest,
         } if build else None,
+        "release_preparation": {
+            "job_id": str(preparation.id),
+            "status": preparation.status,
+            "error_code": preparation.error_code,
+        } if preparation else None,
+        "release": {
+            "id": str(release.id), "digest": release.manifest_digest,
+            "image_reference": release.image_reference,
+        } if release else None,
+        "deployment": {
+            "id": str(deployment.id), "status": deployment.status,
+            "error_code": deployment.error_code,
+        } if deployment else None,
     }
 
 

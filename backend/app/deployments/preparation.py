@@ -10,17 +10,21 @@ import hashlib
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.bootstrap.generator import TEMPLATE_VERSION, canonical_digest
 from app.bootstrap.profiles import local_k3s_profile
 from app.config import settings
 from app.deployments.release import ReleaseSpecification, bind_verified_image
+from app.deployments.state import ACTIVE_STATES, transition
 from app.integrations.github.api import GitHubAPI
+from app.integrations.github.verification import checked_workflow_run
 from app.kubernetes.gateway import call_kubernetes
 from app.persistence.database import Session
 from app.persistence.models import (
     Application,
+    DeliveryJob,
+    DeploymentRun,
     InfrastructurePlan,
     InfrastructurePlanFile,
     InfrastructurePullRequest,
@@ -42,6 +46,8 @@ class _Source:
     application_id: UUID
     approval_id: UUID
     build_id: UUID
+    ci_run_id: int
+    ci_run_attempt: int
     owner: str
     repository: str
     repository_id: int
@@ -57,25 +63,32 @@ class _Source:
     files: dict[str, str]
 
 
-def _source(db, pr_id: UUID, profile: dict, *, lock: bool = False) -> _Source:
+def _source(db, pr_id: UUID, build_id: UUID, profile: dict, *, lock: bool = False) -> _Source:
     pr = db.get(InfrastructurePullRequest, pr_id, with_for_update=lock)
     if pr is None or pr.status != "verified" or pr.error_code:
         raise ReleasePreparationError("pull_request_not_verified")
-    plan = db.get(InfrastructurePlan, pr.plan_id)
+    plan = db.get(InfrastructurePlan, pr.plan_id, with_for_update=lock)
     if plan is None:
         raise ReleasePreparationError("plan_missing")
     application = db.get(Application, plan.application_id)
-    approval = db.scalar(select(PlanApproval).where(
+    approval_query = select(PlanApproval).where(
         PlanApproval.plan_id == plan.id, PlanApproval.invalidated_at.is_(None),
-    ))
+    )
+    approval = db.scalar(approval_query.with_for_update() if lock else approval_query)
     build = db.scalar(select(VerifiedBuild).where(
+        VerifiedBuild.id == build_id,
         VerifiedBuild.pull_request_id == pr.id,
         VerifiedBuild.merged_sha == pr.merged_sha,
-    ).order_by(VerifiedBuild.verified_at.desc(), VerifiedBuild.id.desc()))
+    ))
+    latest_build = db.scalar(select(VerifiedBuild).where(
+        VerifiedBuild.pull_request_id == pr.id,
+        VerifiedBuild.merged_sha == pr.merged_sha,
+    ).order_by(VerifiedBuild.run_id.desc(), VerifiedBuild.run_attempt.desc()))
     rows = db.scalars(select(InfrastructurePlanFile).where(InfrastructurePlanFile.plan_id == plan.id)).all()
     files = {row.path: row.content for row in rows}
     if (
-        application is None or approval is None or build is None
+        application is None or approval is None or build is None or latest_build is None
+        or build.id != latest_build.id
         or plan.status != "approved" or approval.bundle_digest != plan.bundle_digest
         or plan.template_version != TEMPLATE_VERSION
         or plan.environment_profile_id != profile["id"]
@@ -91,6 +104,7 @@ def _source(db, pr_id: UUID, profile: dict, *, lock: bool = False) -> _Source:
         raise ReleasePreparationError("release_source_stale")
     return _Source(
         pr.id, plan.id, application.id, approval.id, build.id,
+        build.run_id, build.run_attempt,
         pr.owner, pr.repository, pr.repository_id, pr.number, pr.base_branch,
         pr.head_branch, pr.head_sha, pr.merged_sha, plan.bundle_digest,
         build.image_repository, build.image_digest,
@@ -99,9 +113,10 @@ def _source(db, pr_id: UUID, profile: dict, *, lock: bool = False) -> _Source:
 
 
 def _check_github(source: _Source) -> None:
-    with GitHubAPI(settings(), source.owner, source.repository) as api:
+    with GitHubAPI(settings(), source.owner, source.repository, read_only=True) as api:
         pull = api.pull_request(source.number)
         merge_sha = pull.get("merge_commit_sha") or api.merged_event_sha(source.number)
+        workflow = api.workflow_run(source.ci_run_id)
         if (
             api.repository_info().get("id") != source.repository_id
             or pull.get("merged") is not True
@@ -111,15 +126,24 @@ def _check_github(source: _Source) -> None:
             or pull.get("head", {}).get("sha") != source.head_sha
             or merge_sha != source.merged_sha
             or api.branch_sha(source.base_branch) != source.merged_sha
+            or not checked_workflow_run(
+                workflow, repository_id=source.repository_id,
+                merged_sha=source.merged_sha, base_branch=source.base_branch,
+            )
+            or workflow.get("run_attempt") != source.ci_run_attempt
         ):
             raise ReleasePreparationError("verified_revision_not_target_head")
 
 
-async def prepare_release_candidate(pr_id: UUID) -> UUID:
+async def prepare_release_candidate(
+    pr_id: UUID, build_id: UUID, *,
+    delivery_job_id: UUID | None = None, lease_token: UUID | None = None,
+    queue_deployment: bool = False,
+) -> UUID:
     """Persist final manifest bytes only after GitHub and final admission checks."""
     profile = local_k3s_profile()
     with Session() as db:
-        source = _source(db, pr_id, profile)
+        source = _source(db, pr_id, build_id, profile)
     _check_github(source)
     release: ReleaseSpecification = bind_verified_image(
         bundle_files=source.files,
@@ -137,10 +161,20 @@ async def prepare_release_candidate(pr_id: UUID) -> UUID:
         "registry": profile["registry"],
     })
     if validation.get("status") != "passed":
-        raise ReleasePreparationError("release_admission_failed")
+        raise ReleasePreparationError(
+            "release_admission_unavailable" if validation.get("status") == "unavailable"
+            else "release_admission_failed"
+        )
     with Session.begin() as db:
-        if _source(db, pr_id, profile, lock=True) != source:
+        db.get(Application, source.application_id, with_for_update=True)
+        if _source(db, pr_id, build_id, profile, lock=True) != source:
             raise ReleasePreparationError("release_source_stale")
+        if delivery_job_id is not None:
+            job = db.get(DeliveryJob, delivery_job_id, with_for_update=True)
+            now = db.scalar(select(func.now()))
+            if (not job or job.lease_token != lease_token or job.status != "running"
+                    or job.lease_expires_at is None or job.lease_expires_at <= now):
+                raise ReleasePreparationError("release_job_stale")
         existing = db.scalar(select(ReleaseSpecificationRecord).where(
             ReleaseSpecificationRecord.plan_id == source.plan_id,
             ReleaseSpecificationRecord.verified_build_id == source.build_id,
@@ -157,20 +191,47 @@ async def prepare_release_candidate(pr_id: UUID) -> UUID:
                 hashlib.sha256(row.content.encode()).hexdigest() != row.content_hash for row in stored
             ):
                 raise ReleasePreparationError("release_record_corrupt")
-            return existing.id
-        record = ReleaseSpecificationRecord(
-            application_id=source.application_id, plan_id=source.plan_id,
-            verified_build_id=source.build_id, approval_id=source.approval_id,
-            environment_profile_id=profile["id"], environment_profile_hash=profile["hash"],
-            source_bundle_digest=source.bundle_digest, manifest_digest=release.digest,
-            merged_sha=source.merged_sha, image_reference=release.image_reference,
-            validation_json=validation,
-        )
-        db.add(record)
-        db.flush()
-        for path, content in sorted(release.files.items()):
-            db.add(ReleaseFile(
-                release_id=record.id, path=path, content=content,
-                content_hash=hashlib.sha256(content.encode()).hexdigest(),
-            ))
+            record = existing
+        else:
+            record = ReleaseSpecificationRecord(
+                application_id=source.application_id, plan_id=source.plan_id,
+                verified_build_id=source.build_id, approval_id=source.approval_id,
+                environment_profile_id=profile["id"], environment_profile_hash=profile["hash"],
+                source_bundle_digest=source.bundle_digest, manifest_digest=release.digest,
+                merged_sha=source.merged_sha, image_reference=release.image_reference,
+                validation_json=validation,
+            )
+            db.add(record)
+            db.flush()
+            for path, content in sorted(release.files.items()):
+                db.add(ReleaseFile(
+                    release_id=record.id, path=path, content=content,
+                    content_hash=hashlib.sha256(content.encode()).hexdigest(),
+                ))
+        if queue_deployment:
+            run = db.scalar(select(DeploymentRun).where(DeploymentRun.release_id == record.id))
+            if run is None:
+                active = db.scalar(select(DeploymentRun).where(
+                    DeploymentRun.application_id == source.application_id,
+                    DeploymentRun.environment_profile_id == profile["id"],
+                    DeploymentRun.status.in_(ACTIVE_STATES),
+                ).with_for_update())
+                if active:
+                    if active.status != "waiting_for_executor":
+                        raise ReleasePreparationError("deployment_slot_busy")
+                    transition(db, active, "superseded", error_code="newer_verified_release")
+                    db.flush()
+                run = DeploymentRun(
+                    application_id=source.application_id, release_id=record.id,
+                    verified_build_id=source.build_id,
+                    environment_profile_id=profile["id"], status="created",
+                    event_sequence=0,
+                )
+                db.add(run)
+                db.flush()
+                transition(db, run, "queued")
+                db.add(DeliveryJob(
+                    kind="preflight", verified_build_id=source.build_id,
+                    deployment_run_id=run.id, status="queued", attempts=0,
+                ))
         return record.id

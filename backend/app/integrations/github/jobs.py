@@ -25,6 +25,7 @@ from app.persistence.models import (
     AnalysisRun,
     Application,
     AssessmentVersion,
+    DeliveryJob,
     GitHubJob,
     GitHubWebhookDelivery,
     InfrastructurePlan,
@@ -167,7 +168,8 @@ def _reconcile_one(pr_id: UUID) -> None:
             return
         with Session.begin() as db:
             row = db.get(InfrastructurePullRequest, pr_id, with_for_update=True)
-            row.status = "merged"
+            if row.status != "verified":
+                row.status = "merged"
             row.error_code = None
         merged_sha = pull.get("merge_commit_sha")
         if merged_sha is None:
@@ -176,7 +178,8 @@ def _reconcile_one(pr_id: UUID) -> None:
         with Session.begin() as db:
             row = db.get(InfrastructurePullRequest, pr_id, with_for_update=True)
             row.merged_sha = merged_sha
-            row.status = "merged"
+            if row.status != "verified":
+                row.status = "merged"
         runs = [run for run in api.workflow_runs(base_branch, merged_sha) if run.get("head_sha") == merged_sha]
         if not runs:
             return
@@ -207,7 +210,16 @@ def _reconcile_one(pr_id: UUID) -> None:
         if existing and (existing.image_digest != digest or existing.merged_sha != merged_sha):
             raise GitHubPhase6Error("verified_build_conflict")
         if not existing:
-            db.add(VerifiedBuild(pull_request_id=pr_id, run_id=run["id"], run_attempt=run["run_attempt"], merged_sha=merged_sha, image_repository=image_repository, image_digest=digest))
+            existing = VerifiedBuild(
+                pull_request_id=pr_id, run_id=run["id"], run_attempt=run["run_attempt"],
+                merged_sha=merged_sha, image_repository=image_repository, image_digest=digest,
+            )
+            db.add(existing)
+            db.flush()
+        if not db.scalar(select(DeliveryJob).where(
+            DeliveryJob.kind == "prepare", DeliveryJob.verified_build_id == existing.id,
+        )):
+            db.add(DeliveryJob(kind="prepare", verified_build_id=existing.id, status="queued", attempts=0))
         row.status = "verified"
         row.error_code = None
 

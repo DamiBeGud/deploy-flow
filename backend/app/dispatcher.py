@@ -8,8 +8,8 @@ from sqlalchemy import func, or_, select
 from app.analysis.jobs import finish, retry_or_fail
 from app.config import settings
 from app.persistence.database import Session
-from app.persistence.models import AnalysisRun, GitHubJob, PendingJob
-from app.worker import analyze, github_job
+from app.persistence.models import AnalysisRun, DeliveryJob, GitHubJob, PendingJob
+from app.worker import analyze, delivery_job, github_job
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +87,31 @@ def dispatch_github_once(publish=github_job.send) -> int:
     return dispatched
 
 
+def dispatch_delivery_once(publish=delivery_job.send) -> int:
+    dispatched = 0
+    with Session.begin() as db:
+        now = db.scalar(select(func.now()))
+        jobs = db.scalars(
+            select(DeliveryJob)
+            .where(or_(
+                (DeliveryJob.status.in_({"queued", "retry_wait"})) & (DeliveryJob.next_dispatch_at <= now),
+                (DeliveryJob.status == "running") & (DeliveryJob.lease_expires_at <= now),
+            ))
+            .order_by(DeliveryJob.next_dispatch_at)
+            .limit(20)
+            .with_for_update(skip_locked=True)
+        ).all()
+        for job in jobs:
+            try:
+                publish(str(job.id))
+            except Exception:
+                log.warning("delivery_job_publish_unavailable job_id=%s", job.id)
+                break
+            job.next_dispatch_at = now + timedelta(seconds=settings().redispatch_seconds)
+            dispatched += 1
+    return dispatched
+
+
 def main():
     logging.basicConfig(level=logging.INFO)
     stopping = False
@@ -101,6 +126,7 @@ def main():
         try:
             dispatch_once()
             dispatch_github_once()
+            dispatch_delivery_once()
         except Exception:
             log.error("dispatcher_database_unavailable")
         time.sleep(1)

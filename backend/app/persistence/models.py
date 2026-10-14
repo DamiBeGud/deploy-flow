@@ -11,6 +11,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -304,6 +305,56 @@ class ReleaseFile(Base):
     path: Mapped[str] = mapped_column(String(512))
     content: Mapped[str] = mapped_column(Text)
     content_hash: Mapped[str] = mapped_column(String(64))
+
+
+class DeploymentRun(Base):
+    __tablename__ = "deployment_runs"
+    __table_args__ = (
+        UniqueConstraint("release_id", name="uq_deployment_release"),
+        Index(
+            "uq_active_deployment_application_environment",
+            "application_id", "environment_profile_id", unique=True,
+            postgresql_where=text("status IN ('queued', 'validating', 'retry_wait', 'waiting_for_executor')"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    application_id: Mapped[UUID] = mapped_column(ForeignKey("applications.id"), index=True)
+    release_id: Mapped[UUID] = mapped_column(ForeignKey("release_specifications.id"))
+    verified_build_id: Mapped[UUID] = mapped_column(ForeignKey("verified_builds.id"))
+    environment_profile_id: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    preflight_validation_json: Mapped[dict | None] = mapped_column(JSONB)
+    event_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DeploymentEvent(Base):
+    __tablename__ = "deployment_events"
+    __table_args__ = (UniqueConstraint("deployment_run_id", "sequence", name="uq_deployment_event_sequence"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    deployment_run_id: Mapped[UUID] = mapped_column(ForeignKey("deployment_runs.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[dict] = mapped_column(JSONB)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DeliveryJob(Base):
+    __tablename__ = "delivery_jobs"
+    __table_args__ = (UniqueConstraint("kind", "verified_build_id", name="uq_delivery_job_build_kind"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(32))
+    verified_build_id: Mapped[UUID] = mapped_column(ForeignKey("verified_builds.id"), index=True)
+    deployment_run_id: Mapped[UUID | None] = mapped_column(ForeignKey("deployment_runs.id"))
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    next_dispatch_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    lease_token: Mapped[UUID | None]
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class PendingJob(Base):

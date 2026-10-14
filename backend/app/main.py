@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.delivery_routes import router as delivery_router
 from app.api.identity import DevelopmentIdentityProvider
 from app.api.routes import router
 from app.config import settings
@@ -113,3 +114,4 @@ def ready():
 
 
 app.include_router(router)
+app.include_router(delivery_router)

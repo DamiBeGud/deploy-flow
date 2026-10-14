@@ -125,6 +125,15 @@ services:
     volumes:
       - ${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:ro
 
+  delivery-worker:
+    <<: *backend
+    profiles: ["phase7-delivery"]
+    develop: *source-watch
+    networks: [default, kube-validator]
+    command: ["dramatiq", "app.worker", "--processes", "1", "--threads", "2", "--queues", "delivery"]
+    volumes:
+      - ${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:ro
+
   webhook:
     <<: *backend
     develop: *source-watch

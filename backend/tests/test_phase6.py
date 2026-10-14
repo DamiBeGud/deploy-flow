@@ -4,6 +4,7 @@ import io
 import json
 import zipfile
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +22,7 @@ from app.integrations.github.verification import (
 from app.persistence.database import Session
 from app.persistence.models import (
     AnalysisRun,
+    DeliveryJob,
     GitHubJob,
     GitHubWebhookDelivery,
     InfrastructurePlanFile,
@@ -214,6 +216,23 @@ def test_merged_pr_and_exact_ci_artifact_record_verified_image_without_deploymen
     assert result["verified_build"]["image_digest"] == "sha256:" + "d" * 64
     with Session() as db:
         assert len(db.scalars(select(VerifiedBuild)).all()) == 1
+        jobs = db.scalars(select(DeliveryJob)).all()
+        assert len(jobs) == 1
+        assert jobs[0].kind == "prepare"
+        assert jobs[0].verified_build_id == db.scalar(select(VerifiedBuild)).id
+    with Session.begin() as db:
+        repeated = GitHubJob(
+            kind="reconcile", pull_request_id=UUID(created.json()["id"]),
+            status="queued", attempts=0,
+        )
+        db.add(repeated)
+        db.flush()
+        repeated_id = str(repeated.id)
+    execute_github(repeated_id)
+    with Session() as db:
+        assert len(db.scalars(select(VerifiedBuild)).all()) == 1
+        assert len(db.scalars(select(DeliveryJob)).all()) == 1
+        assert db.get(InfrastructurePullRequest, UUID(created.json()["id"])).status == "verified"
 
 
 def test_missing_merge_event_does_not_falsely_block_merged_pr(client, monkeypatch):

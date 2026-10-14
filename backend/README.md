@@ -86,6 +86,18 @@ private; make the fixture package public for anonymous verification and later
 cluster pulls. No CI job has a Kubernetes credential. Phase 6 stops at a
 verified build record and never deploys.
 
+## Phase 7 release preparation (local foundation)
+
+The internal release-preparation operation binds the verified CI image digest
+to the reviewed Deployment, changing no other manifest field. It requires a
+still-approved plan, a verified PR/build, and the merge commit to remain the
+target branch head. It then runs a fresh server-side dry-run and stores the
+exact final Kubernetes manifest bytes and digest. A reverted merge or failed
+admission cannot produce a release candidate. This operation is not exposed as
+a user action or invoked automatically yet. It has no deployer credential and
+does not apply resources. Deployment, rollout, rollback, and their UI/API
+controls remain future Phase 7 work.
+
 ## Optional DeepSeek agent mode
 
 `DF_ANALYSIS_MODE=deterministic` is the default and does not call a model. To

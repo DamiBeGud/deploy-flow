@@ -278,6 +278,34 @@ class VerifiedBuild(Base):
     verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ReleaseSpecificationRecord(Base):
+    __tablename__ = "release_specifications"
+    __table_args__ = (UniqueConstraint("plan_id", "verified_build_id", name="uq_release_plan_build"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    application_id: Mapped[UUID] = mapped_column(ForeignKey("applications.id"), index=True)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("infrastructure_plans.id"), index=True)
+    verified_build_id: Mapped[UUID] = mapped_column(ForeignKey("verified_builds.id"), index=True)
+    approval_id: Mapped[UUID] = mapped_column(ForeignKey("plan_approvals.id"))
+    environment_profile_id: Mapped[str] = mapped_column(String(128))
+    environment_profile_hash: Mapped[str] = mapped_column(String(64))
+    source_bundle_digest: Mapped[str] = mapped_column(String(64))
+    manifest_digest: Mapped[str] = mapped_column(String(64))
+    merged_sha: Mapped[str] = mapped_column(String(40))
+    image_reference: Mapped[str] = mapped_column(String(330))
+    validation_json: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReleaseFile(Base):
+    __tablename__ = "release_files"
+    __table_args__ = (UniqueConstraint("release_id", "path", name="uq_release_file_path"),)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    release_id: Mapped[UUID] = mapped_column(ForeignKey("release_specifications.id"), index=True)
+    path: Mapped[str] = mapped_column(String(512))
+    content: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+
+
 class PendingJob(Base):
     __tablename__ = "pending_jobs"
     run_id: Mapped[UUID] = mapped_column(ForeignKey("analysis_runs.id"), primary_key=True)

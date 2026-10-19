@@ -42,6 +42,11 @@ def main() -> None:
             "dramatiq", "app.worker", "--processes", "1", "--threads", "1",
             "--queues", "execution",
         ])
+    if os.environ.get("DF_KUBE_MCP_ROLE") == "cleaner":
+        os.execvp("dramatiq", [
+            "dramatiq", "app.worker", "--processes", "1", "--threads", "1",
+            "--queues", "cleanup",
+        ])
     runpy.run_module("mcp_servers.kubernetes_server", run_name="__main__")
 
 

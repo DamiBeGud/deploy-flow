@@ -38,6 +38,7 @@ x-backend: &backend
     DF_KUBE_READER_MCP_URL: ${DF_KUBE_READER_MCP_URL:-}
     DF_KUBE_VALIDATOR_MCP_URL: ${DF_KUBE_VALIDATOR_MCP_URL:-}
     DF_DEPLOYMENT_EXECUTION_ENABLED: ${DF_DEPLOYMENT_EXECUTION_ENABLED:-false}
+    DF_DEPLOYMENT_CLEANUP_ENABLED: ${DF_DEPLOYMENT_CLEANUP_ENABLED:-false}
     DF_OIDC_ISSUER: ${DF_OIDC_ISSUER:-}
     DF_OIDC_AUDIENCE: ${DF_OIDC_AUDIENCE:-}
     DF_OIDC_JWKS_URL: ${DF_OIDC_JWKS_URL:-}
@@ -56,6 +57,23 @@ x-backend: &backend
   restart: unless-stopped
 
 services:
+  # Development-only identity provider. Published only on this machine's loopback.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.0
+    profiles: ["local-oidc"]
+    env_file: ${DF_LOCAL_OIDC_ENV_FILE:-/dev/null}
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: local-admin
+      KC_HOSTNAME: http://localhost:8180
+    command: ["start-dev", "--import-realm"]
+    ports:
+      - "127.0.0.1:8180:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+      - ./ops/local-oidc/deployflow-local-realm.json:/opt/keycloak/data/import/deployflow-local-realm.json:ro
+    mem_limit: 1g
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     environment:
@@ -152,7 +170,7 @@ services:
       - ${DF_K3S_SSH_KEY_PATH:-/dev/null}:/run/deployflow/ssh_key:ro
       - ${DF_K3S_KNOWN_HOSTS_PATH:-/dev/null}:/run/deployflow/known_hosts:ro
     tmpfs: [/run/deployflow-runtime:mode=0700]
-    networks: [default, kube-validator]
+    networks: [default, kube-validator, external-health]
     restart: unless-stopped
 
   kube-deployer:
@@ -177,6 +195,57 @@ services:
       - ${DF_KUBE_CA_PATH:-/dev/null}:/run/deployflow/ca.crt:ro
       - ${DF_KUBE_DEPLOYER_TOKEN_PATH:-/dev/null}:/run/deployflow/token:ro
       - ${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:${DF_GITHUB_PRIVATE_KEY_PATH:-/dev/null}:ro
+    tmpfs: [/run/deployflow-runtime:mode=0700]
+    command: ["python", "-m", "mcp_servers.credential_bootstrap"]
+    restart: unless-stopped
+
+  external-probe:
+    profiles: ["phase7-executor"]
+    build: .
+    image: deployflow-backend:local
+    user: "10001:10001"
+    networks: [external-health]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    command: ["uvicorn", "app.external_probe:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+
+  kube-cleaner-tunnel:
+    profiles: ["phase7-cleanup"]
+    build:
+      context: .
+      dockerfile: ops/k3s/Dockerfile.tunnel
+    environment:
+      DF_K3S_SSH_TARGET: ${DF_K3S_SSH_TARGET:-}
+    volumes:
+      - ${DF_K3S_SSH_KEY_PATH:-/dev/null}:/run/deployflow/ssh_key:ro
+      - ${DF_K3S_KNOWN_HOSTS_PATH:-/dev/null}:/run/deployflow/known_hosts:ro
+    tmpfs: [/run/deployflow-runtime:mode=0700]
+    networks: [default]
+    restart: unless-stopped
+
+  kube-cleaner:
+    <<: *backend
+    profiles: ["phase7-cleanup"]
+    network_mode: service:kube-cleaner-tunnel
+    user: "0:0"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      kube-cleaner-tunnel:
+        condition: service_started
+    environment:
+      <<: *environment
+      DF_KUBE_MCP_ROLE: cleaner
+      DF_KUBE_API_SERVER: https://127.0.0.1:16443
+      DF_KUBE_CA_PATH: /run/deployflow/ca.crt
+      DF_KUBE_TOKEN_PATH: /run/deployflow/token
+    volumes:
+      - ${DF_KUBE_CA_PATH:-/dev/null}:/run/deployflow/ca.crt:ro
+      - ${DF_KUBE_CLEANER_TOKEN_PATH:-/dev/null}:/run/deployflow/token:ro
     tmpfs: [/run/deployflow-runtime:mode=0700]
     command: ["python", "-m", "mcp_servers.credential_bootstrap"]
     restart: unless-stopped
@@ -270,6 +339,7 @@ services:
     environment:
       <<: *environment
       DF_DATABASE_URL: postgresql+psycopg://deployflow:local-only@postgres:5432/deployflow_test
+      DF_AUTH_MODE: development
       DF_FAKE_STEP_SECONDS: "0"
       DF_ANALYSIS_PROVIDER: "fake"
       DF_ANALYSIS_MODE: "fake"
@@ -279,7 +349,9 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  keycloak-data:
 
 networks:
   kube-reader:
   kube-validator:
+  external-health:

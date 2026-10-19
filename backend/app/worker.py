@@ -3,6 +3,7 @@ from dramatiq.brokers.redis import RedisBroker
 
 from app.analysis.jobs import execute
 from app.config import settings
+from app.deployments.cleanup import execute as execute_cleanup
 from app.deployments.execution import execute as execute_execution
 from app.deployments.jobs import execute as execute_delivery
 from app.integrations.github.jobs import execute as execute_github
@@ -30,3 +31,8 @@ def delivery_job(job_id: str):
 @dramatiq.actor(queue_name="execution", max_retries=0, time_limit=310_000)
 def execution_job(job_id: str):
     execute_execution(job_id)
+
+
+@dramatiq.actor(queue_name="cleanup", max_retries=0, time_limit=310_000)
+def cleanup_job(job_id: str):
+    execute_cleanup(job_id)

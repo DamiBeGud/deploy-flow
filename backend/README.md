@@ -146,6 +146,45 @@ has no deployer identity and cannot apply resources.
 
 ## Phase 7 guarded execution (opt-in; not provisioned by default)
 
+### Local-only OIDC sign-in
+
+For local testing, the `local-oidc` Compose profile runs Keycloak in development
+mode on **127.0.0.1:8180**. It is not a production identity provider and must
+not be exposed publicly. The backend accepts its exact HTTP issuer and internal
+JWKS endpoint only when `DF_ENVIRONMENT=local`; any deployed environment still
+requires HTTPS. Create its two random passwords outside Git, then start only
+the new identity container:
+
+```bash
+cd backend
+python3 scripts/setup_local_oidc.py
+docker compose --profile local-oidc up -d keycloak
+curl -fsS http://127.0.0.1:8180/realms/deployflow-local/.well-known/openid-configuration
+```
+
+The ignored `.env` needs `DF_LOCAL_OIDC_ENV_FILE` pointing to the generated
+`~/.config/deployflow/local-oidc/keycloak.env`, plus these non-secret values:
+
+```dotenv
+DF_AUTH_MODE=oidc
+DF_OIDC_ISSUER=http://localhost:8180/realms/deployflow-local
+DF_OIDC_AUDIENCE=deployflow-api
+DF_OIDC_JWKS_URL=http://keycloak:8080/realms/deployflow-local/protocol/openid-connect/certs
+DF_OIDC_AUTHORIZATION_ENDPOINT=http://localhost:8180/realms/deployflow-local/protocol/openid-connect/auth
+DF_OIDC_TOKEN_ENDPOINT=http://localhost:8180/realms/deployflow-local/protocol/openid-connect/token
+DF_OIDC_CLIENT_ID=deployflow-local-ui
+```
+
+The browser client is public, requires S256 PKCE, and accepts only the
+`/auth/callback` route at local port 5174. The imported user is
+`deployflow-local`; its password is `DF_LOCAL_OIDC_USER_PASSWORD` in the private
+file. Do not paste this file or its values into issues, logs, or chat. This
+user receives `administrator` only in the local DeployFlow realm and
+`organization_id=local-organization`, so it can see existing local test apps.
+Keycloak imports the realm only when it is first created; editing the import
+file later does not overwrite existing users or passwords. OIDC configuration
+alone does **not** enable cluster deployment or run database migrations.
+
 The executor can apply the stored, verified release to `deployflow-test` only
 after OIDC authorization, an application-specific deployment policy, fresh
 GitHub/CI checks, and another server-side admission dry-run. The default
@@ -161,13 +200,13 @@ Execution uses a separate short-lived `deployflow-deployer` ServiceAccount,
 SSH tunnel, and one-thread worker. The proposed additive namespace RBAC is
 [phase7-deployer-access.yaml](ops/k3s/phase7-deployer-access.yaml). It grants
 only `get/create/patch` on ConfigMaps, Services, Deployments, and Ingresses;
-`list` on Pods; and `get` on the Service proxy. It grants no Secret or delete
+`list` on Pods; and `get` on the dedicated health checker's Service proxy. It grants no Secret or delete
 access and changes no existing Role or workload. **This manifest is for
 operator review only and is not applied by Compose or migrations.** Do not
 apply it or create a token until the k3s operator approves those exact changes.
 The existing reader and validator identities remain separate.
 
-Before activation, configure a real HTTPS OIDC provider for a browser public
+Before deployment outside the local profile, configure a real HTTPS OIDC provider for a browser public
 client using authorization-code + PKCE. Register the frontend callback
 `<frontend-origin>/auth/callback`, allow token-endpoint CORS for that origin,
 and issue signed access tokens with this API's audience, `organization_id`,
@@ -178,6 +217,15 @@ execute deployment; application ownership rules still apply. Set
 `DF_OIDC_CLIENT_ID` in the ignored local `.env`. Production mode refuses
 development identity. The current development identity cannot deploy, even
 if assigned a deployer role.
+
+The [health checker manifest](ops/k3s/phase7-health-checker.yaml) is also for
+operator review only. Before execution is enabled, build and publish the
+checker image from this backend code, pin its verified digest in that manifest,
+review its restricted Pod and ClusterIP Service, and obtain separate approval
+to add it to `deployflow-test`. It has no Kubernetes API token. Without a
+healthy checker, internal health remains pending and deployments cannot be
+reported as successful. Do not point the executor directly at application
+Services as a fallback.
 
 After separate approval of k3s changes, supply the reviewed ServiceAccount
 token in a `0600` host file outside Git and point
@@ -192,16 +240,53 @@ so first confirm the OIDC claims and target namespace. Never use the reader or
 validator token as the deployer token.
 
 The executor journals each resource before the bounded Kubernetes request,
-checks ownership/UIDs on retries, and never forces apply conflicts. It waits
-for the Deployment's observed generation and ready/available replicas, then
-performs an internal HTTP GET through the Service proxy. The UI displays
+checks ownership/UIDs on retries, and never forces apply conflicts. After all
+resources are journaled as applied, rollout and health retries observe the
+existing resources without reapplying them; the execution deadline still bounds
+the wait. It waits for the Deployment's observed generation and ready/available
+replicas, checks the recorded Deployment generation and Service UID, then
+asks the dedicated in-cluster checker to GET the application's ClusterIP
+Service through the checker's Service proxy. Releases with an
+Ingress also require an HTTP/TLS check by the separate, credential-free
+`external-probe` container; it does not follow redirects or return response
+bodies. DNS, connection, timeout, and non-2xx responses remain pending until
+the execution deadline. The UI displays
 deployment ID, resource journal, rollout counts, health, and ordered events.
 Partial or ambiguous failures enter `reconciling` without deleting or rolling
 back existing resources. An authorized deployer can use **Retry
-reconciliation** after investigating and fixing the cause. ConfigMap changes
-without a Pod-template change are rejected rather than falsely reported as a
-successful rollout. Automated rollback and multi-environment support remain
-later work.
+reconciliation** after investigating and fixing the cause. Newly generated
+bundles put a digest of the ConfigMap data on the Pod template, so a
+configuration-only change rolls new Pods. Older bundles without a Pod-template
+change are rejected instead of falsely reported as a successful rollout.
+An authorized deployer can manually roll back the latest successful deployment
+only when it has a previous successful release and no active deployment. The
+backend creates a **new immutable rollback release** by copying the previous
+stored Kubernetes bytes and verified image digest. The isolated executor runs
+fresh server-side admission before applying it. No historical GitHub branch
+head is required, and rollback does not revert application database data.
+The application lifecycle page shows history, rollout and health, resource
+inventory, and an explicit rollback review. A failed first deployment has no
+rollback target.
+
+For that first-deployment case only, an explicitly enabled cleanup command can
+remove the resource journal after the user reviews the exact release digest,
+kind, name, and recorded UID. It runs in a **separate cleaner worker** with no
+GitHub App key and no create/patch permission. The cleaner rechecks that each
+resource belongs to this application and deletes using a live UID
+precondition; it waits until absence is observed. Other deployments and
+unmanaged resources are never cleanup targets. `DF_DEPLOYMENT_CLEANUP_ENABLED`
+defaults to `false`. The additive [cleaner RBAC](ops/k3s/phase7-cleaner-access.yaml)
+is for operator review only. It has not been applied to the cluster.
+
+To activate cleanup later, first review and separately approve that RBAC and
+the new `deployflow-cleaner` ServiceAccount on k3s. Store a short-lived cleaner
+token outside Git at `DF_KUBE_CLEANER_TOKEN_PATH`, then enable the cleanup flag
+and start the `phase7-cleanup` Compose profile. The API, dispatcher, and cleaner
+must receive the same flag. Do not reuse the deployer token: its Role has no
+delete permission, while the cleaner Role has no create/patch permission.
+Apply the local schema migrations only after reviewing the database backup and
+restart plan. Neither Compose profiles nor migrations apply the RBAC manifests.
+Multi-environment support remains later work.
 
 ## Optional DeepSeek agent mode
 
@@ -422,14 +507,13 @@ when queued runs are not progressing.
 
 ## Identity boundary
 
-`IdentityProvider` is the interface for future authentication. The current provider
-uses a single server-configured development identity. It ignores caller-supplied
-actor/role headers. All resource reads and mutations enforce organization and
+`IdentityProvider` supports OIDC and a local development identity. The local
+identity ignores caller-supplied actor/role headers and has **no login or token
+verification**. All resource reads and mutations enforce organization and
 ownership; administrators may access other owners in their own organization.
 Viewer identities can read, while developer/deployer/administrator roles can
-mutate. This local provider has **no login or token verification**. Configuring
-`DF_ENVIRONMENT=production` refuses startup until real authentication is implemented.
-Do not publish or tunnel this development API.
+mutate. `DF_ENVIRONMENT=production` requires the OIDC configuration described
+above. Do not publish or tunnel the development-identity API.
 
 ## Verification
 

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { command, errorMessage, request } from '../../shared/api'
-import type { DeploymentRun, InfrastructurePullRequest } from './contracts'
+import type { DeploymentRun } from '../../shared/contracts'
+import type { InfrastructurePullRequest } from './contracts'
 
 type Policy = { enabled: boolean; execution_available: boolean; actor_id: string | null }
 type Events = { events: { sequence: number; type: string; occurred_at: string; error_code?: string | null }[]; last_sequence: number }
@@ -102,7 +104,8 @@ export function DeploymentProgress({ applicationId, pullRequest, canDeploy }: {
       {policy?.execution_available && canDeploy && !policy.enabled && <button className="button button-secondary" disabled={busy} type="button" onClick={() => void enable()}>Enable automatic deployment for this application</button>}
       {policy?.execution_available && canDeploy && policy.enabled && <button className="button button-secondary" disabled={busy} type="button" onClick={() => void disable()}>Disable future automatic deployments</button>}
       {policy?.enabled && canDeploy && deployment?.status === 'waiting_for_executor' && <button className="button button-primary" disabled={busy} type="button" onClick={() => void execute()}>Deploy this prepared release</button>}
-      {policy?.enabled && canDeploy && deployment?.status === 'reconciling' && <button className="button button-primary" disabled={busy} type="button" onClick={() => void retry()}>Retry reconciliation</button>}
+      {policy?.enabled && canDeploy && deployment?.status === 'reconciling' && deployment.execution_job?.purpose === 'deploy' && <button className="button button-primary" disabled={busy} type="button" onClick={() => void retry()}>Retry reconciliation</button>}
+      {deployment?.status === 'reconciling' && <Link className="button button-secondary" to={`/applications/${applicationId}`}>View lifecycle and recovery options</Link>}
       {!policy?.execution_available && deployment?.status === 'waiting_for_executor' && <p className="section-note">Release is ready. Cluster execution has not been configured.</p>}
     </>}
   </section>

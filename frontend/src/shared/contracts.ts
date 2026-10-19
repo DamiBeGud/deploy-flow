@@ -26,4 +26,16 @@ export type Analysis = {
 }
 export type ApplicationDetail = Application & { latest_analysis: Analysis | null }
 export type QueuedAnalysis = { run_id: string; events_url: string; status: 'queued' }
+export type DeploymentRun = {
+  id: string; application_id: string; environment_profile_id: string
+  release_id: string; release_digest: string; image_reference: string
+  kind: 'standard' | 'rollback'; rollback_target_release_id: string | null
+  status: string; error_code: string | null; event_sequence: number
+  previous_release_id: string | null; created_at: string
+  preflight_validation: { status: string; checks?: unknown[] } | null
+  rollout: { status?: string; desired_replicas: number; updated_replicas?: number; ready_replicas: number; available_replicas: number; reason?: string } | null
+  health: { status: string; service: string; path: string; code?: string } | null
+  execution_job: { id: string; purpose: 'deploy' | 'cleanup'; status: string; error_code: string | null } | null
+  resources: { kind: string; name: string; status: string; uid: string | null; generation: number | null; error_code: string | null }[]
+}
 export const isTerminal = (status: Analysis['status']) => ['completed', 'needs_input', 'failed', 'cancelled'].includes(status)

@@ -1,0 +1,37 @@
+# Operator-reviewed addition. Do not apply automatically.
+# Separate from deployflow-deployer; this identity cannot create or patch workloads.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployflow-cleaner
+  namespace: deployflow-test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployflow-cleaner
+  namespace: deployflow-test
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, services]
+    verbs: [get, delete]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployflow-cleaner
+  namespace: deployflow-test
+subjects:
+  - kind: ServiceAccount
+    name: deployflow-cleaner
+    namespace: deployflow-test
+roleRef:
+  kind: Role
+  name: deployflow-cleaner
+  apiGroup: rbac.authorization.k8s.io

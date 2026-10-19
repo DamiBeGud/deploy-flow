@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { ArrowRight, Layers3, LogOut, Plus, ServerCog } from 'lucide-react'
 import { errorMessage, request, setAccessToken, setActorScope, storage } from './shared/api'
@@ -9,12 +9,13 @@ import { Brand, ErrorNotice } from './shared/ui'
 import { ApplicationsPage } from './features/applications/ApplicationsPage'
 import { AnalysisPage } from './features/analysis/AnalysisPage'
 import { ServicesPage } from './features/services/ServicesPage'
+import { ApplicationLifecyclePage } from './features/deployments/ApplicationLifecyclePage'
 import './App.css'
 
 function Workspace({ identity, onLogout }: { identity: Identity; onLogout: () => void }) {
   const canWrite = identity.roles.some(role => ['developer', 'deployer', 'administrator'].includes(role))
   const canDeploy = identity.roles.some(role => ['deployer', 'administrator'].includes(role)) && identity.authentication === 'oidc'
-  return <div className="app-shell"><aside className="sidebar"><Brand dark /><nav><NavLink to="/services"><Layers3 size={18} />Applications</NavLink>{canWrite && <NavLink to="/deploy"><Plus size={18} />Add application</NavLink>}</nav><div className="sidebar-footer"><div className="cluster-mini"><span><ServerCog size={15} /></span><div><b>{identity.authentication === 'oidc' ? 'Authenticated backend' : 'Local backend'}</b><small>{identity.actor_id}</small></div></div><button onClick={onLogout} className="logout"><LogOut size={16} />Leave workspace</button></div></aside><main className="workspace"><Routes><Route path="/services" element={<ServicesPage><ApplicationsPage canWrite={canWrite} /></ServicesPage>} /><Route path="/deploy" element={<AnalysisPage canWrite={canWrite} canDeploy={canDeploy} />} /><Route path="*" element={<Navigate to="/services" replace />} /></Routes></main></div>
+  return <div className="app-shell"><aside className="sidebar"><Brand dark /><nav><NavLink to="/services"><Layers3 size={18} />Applications</NavLink>{canWrite && <NavLink to="/deploy"><Plus size={18} />Add application</NavLink>}</nav><div className="sidebar-footer"><div className="cluster-mini"><span><ServerCog size={15} /></span><div><b>{identity.authentication === 'oidc' ? 'Authenticated backend' : 'Local backend'}</b><small>{identity.actor_id}</small></div></div><button onClick={onLogout} className="logout"><LogOut size={16} />Leave workspace</button></div></aside><main className="workspace"><Routes><Route path="/services" element={<ServicesPage><ApplicationsPage canWrite={canWrite} /></ServicesPage>} /><Route path="/applications/:applicationId" element={<ApplicationLifecyclePage canDeploy={canDeploy} />} /><Route path="/deploy" element={<AnalysisPage canWrite={canWrite} canDeploy={canDeploy} />} /><Route path="*" element={<Navigate to="/services" replace />} /></Routes></main></div>
 }
 
 function App() {
@@ -22,14 +23,27 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null)
+  const callbackExchange = useRef<Promise<string> | null>(null)
   const [connectAttempt, setConnectAttempt] = useState(() => window.location.pathname !== '/auth/callback' && storage.get('workspace') ? 1 : 0)
+  useEffect(() => {
+    const expired = () => {
+      setAccessToken(null)
+      storage.remove('workspace')
+      setIdentity(null)
+      setConnectAttempt(0)
+      setError('Your session expired. Sign in again to continue.')
+    }
+    window.addEventListener('deployflow:session-expired', expired)
+    return () => window.removeEventListener('deployflow:session-expired', expired)
+  }, [])
   useEffect(() => {
     request<AuthConfig>('/auth/config').then(setAuthConfig).catch(reason => setError(errorMessage(reason)))
   }, [])
   useEffect(() => {
     if (window.location.pathname !== '/auth/callback' || authConfig?.mode !== 'oidc') return
     let active = true
-    finishSignIn(authConfig).then(token => {
+    callbackExchange.current ??= finishSignIn(authConfig)
+    callbackExchange.current.then(token => {
       if (!active) return
       setAccessToken(token)
       setConnectAttempt(value => value + 1)

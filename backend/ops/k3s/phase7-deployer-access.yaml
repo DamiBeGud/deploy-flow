@@ -26,6 +26,7 @@ rules:
     verbs: [list]
   - apiGroups: [""]
     resources: [services/proxy]
+    resourceNames: [deployflow-health-checker]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

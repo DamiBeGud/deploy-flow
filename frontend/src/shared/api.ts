@@ -27,6 +27,32 @@ export function setAccessToken(token: string | null) {
   else storage.remove('access_token')
 }
 
+function reportExpiredSession(status: number) {
+  if (status === 401 && accessToken) window.dispatchEvent(new Event('deployflow:session-expired'))
+}
+
+// Fetch-based SSE permits the same bearer token as the rest of the API.
+// A streaming response must not use the normal 15-second request timeout.
+export async function openEventStream(path: string, signal: AbortSignal): Promise<Response> {
+  let response: Response
+  try {
+    response = await fetch(`/api/v1${path}`, {
+      signal,
+      headers: { Accept: 'text/event-stream', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+    })
+  } catch (error) {
+    if (signal.aborted) throw error
+    throw new ApiError(0, 'Cannot reach the backend. Check Docker and retry.')
+  }
+  if (!response.ok) {
+    reportExpiredSession(response.status)
+    const problem = await response.json().catch(() => ({}))
+    throw new ApiError(response.status, problem.detail || `Backend request failed (${response.status}).`)
+  }
+  if (!response.body) throw new ApiError(0, 'The browser cannot read the analysis event stream.')
+  return response
+}
+
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response
   try {
@@ -39,6 +65,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     throw new ApiError(0, 'Cannot reach the backend. Check Docker and retry; your request can be retried safely.')
   }
   if (!response.ok) {
+    reportExpiredSession(response.status)
     const problem = await response.json().catch(() => ({}))
     throw new ApiError(response.status, problem.detail || `Backend request failed (${response.status}).`)
   }

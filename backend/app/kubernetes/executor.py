@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 
@@ -13,6 +15,57 @@ _METHODS = {
     "Deployment": (client.AppsV1Api, "read_namespaced_deployment", "create_namespaced_deployment", "patch_namespaced_deployment"),
     "Ingress": (client.NetworkingV1Api, "read_namespaced_ingress", "create_namespaced_ingress", "patch_namespaced_ingress"),
 }
+_DELETE_METHODS = {
+    "ConfigMap": (client.CoreV1Api, "read_namespaced_config_map", "delete_namespaced_config_map"),
+    "Service": (client.CoreV1Api, "read_namespaced_service", "delete_namespaced_service"),
+    "Deployment": (client.AppsV1Api, "read_namespaced_deployment", "delete_namespaced_deployment"),
+    "Ingress": (client.NetworkingV1Api, "read_namespaced_ingress", "delete_namespaced_ingress"),
+}
+
+
+def delete_owned(kind: str, name: str, application_id: str, expected_uid: str | None) -> bool:
+    """Delete one journaled object with an observed UID precondition.
+
+    Return true only after a read confirms the object is absent. A missing
+    journal UID is allowed for a crash in the create/response gap, but labels
+    and the live UID are still checked before a delete is issued.
+    """
+    api_type, read_method, delete_method = _DELETE_METHODS[kind]
+    try:
+        with _api_client() as api:
+            instance = api_type(api)
+            try:
+                existing = getattr(instance, read_method)(name, NAMESPACE, _request_timeout=8)
+            except ApiException as exc:
+                if exc.status == 404:
+                    return True
+                raise
+            labels = existing.metadata.labels or {}
+            if (labels.get("app.kubernetes.io/managed-by") != "deployflow"
+                    or labels.get("app.kubernetes.io/instance") != application_id):
+                raise ClusterError("resource_ownership_conflict")
+            if expected_uid and existing.metadata.uid != expected_uid:
+                raise ClusterError("resource_identity_changed")
+            if existing.metadata.deletion_timestamp:
+                return False
+            getattr(instance, delete_method)(
+                name, NAMESPACE,
+                body=client.V1DeleteOptions(
+                    preconditions=client.V1Preconditions(uid=existing.metadata.uid),
+                ),
+                _request_timeout=8,
+            )
+            return False
+    except ApiException as exc:
+        if exc.status == 404:
+            return True
+        if exc.status == 409:
+            raise ClusterError("resource_identity_changed") from None
+        raise _failure(exc) from None
+    except ClusterError:
+        raise
+    except Exception as exc:
+        raise ClusterError("cluster_unavailable") from exc
 
 
 def apply_owned(item: dict, application_id: str, expected_uid: str | None = None) -> dict:
@@ -64,7 +117,7 @@ def apply_owned(item: dict, application_id: str, expected_uid: str | None = None
         raise ClusterError("cluster_unavailable") from exc
 
 
-def rollout_status(name: str, application_id: str, expected_uid: str, image_reference: str) -> dict:
+def rollout_status(name: str, application_id: str, expected_uid: str, image_reference: str, expected_generation: int | None = None) -> dict:
     try:
         with _api_client() as api:
             deployment = client.AppsV1Api(api).read_namespaced_deployment(name, NAMESPACE, _request_timeout=8)
@@ -73,6 +126,8 @@ def rollout_status(name: str, application_id: str, expected_uid: str, image_refe
             if (meta.uid != expected_uid or labels.get("app.kubernetes.io/instance") != application_id
                     or labels.get("app.kubernetes.io/managed-by") != "deployflow"):
                 raise ClusterError("resource_identity_changed")
+            if expected_generation is not None and meta.generation != expected_generation:
+                raise ClusterError("resource_generation_changed")
             spec = deployment.spec
             status = deployment.status
             image = spec.template.spec.containers[0].image
@@ -113,23 +168,50 @@ def rollout_status(name: str, application_id: str, expected_uid: str, image_refe
         raise ClusterError("cluster_unavailable") from exc
 
 
-def service_health(name: str, path: str) -> dict:
-    """HTTP GET through the Kubernetes Service proxy from inside the cluster."""
+def service_health(name: str, path: str, application_id: str | None = None, expected_uid: str | None = None, expected_port: int | None = None) -> dict:
+    """Proxy to the credential-free in-cluster checker, never directly to the app."""
     if not path.startswith("/") or "?" in path or "#" in path or ".." in path:
         raise ClusterError("health_path_denied")
     try:
         with _api_client() as api:
             core = client.CoreV1Api(api)
-            response = core.connect_get_namespaced_service_proxy_with_path(
-                name, NAMESPACE, path.lstrip("/"), _request_timeout=8,
-            )
-            # The API raises on non-2xx. Never persist the application's response body.
-            return {"status": "passed", "service": name, "path": path,
-                    "response_received": response is not None}
+            if application_id is None or expected_uid is None or expected_port is None:
+                raise ClusterError("service_inventory_missing")
+            service = core.read_namespaced_service(name, NAMESPACE, _request_timeout=8)
+            labels = service.metadata.labels or {}
+            if (
+                service.metadata.uid != expected_uid
+                or labels.get("app.kubernetes.io/managed-by") != "deployflow"
+                or labels.get("app.kubernetes.io/instance") != application_id
+                or len(service.spec.ports or []) != 1
+                or service.spec.ports[0].port != expected_port
+            ):
+                raise ClusterError("resource_identity_changed")
+            try:
+                response = core.connect_get_namespaced_service_proxy_with_path(
+                    "deployflow-health-checker", NAMESPACE,
+                    f"probe/{name}/{expected_port}/{path.lstrip('/')}", _request_timeout=8,
+                )
+            except ApiException as exc:
+                if exc.status in {404, 502, 503, 504}:
+                    return {"status": "pending", "service": name, "path": path,
+                            "code": "health_checker_unavailable"}
+                raise
+            try:
+                result = json.loads(response) if isinstance(response, str) else response
+            except ValueError:
+                raise ClusterError("health_checker_invalid") from None
+            if (
+                not isinstance(result, dict) or result.get("status") not in {"passed", "pending"}
+                or result.get("service") != name or result.get("path") != path
+            ):
+                raise ClusterError("health_checker_invalid")
+            return {"status": result["status"], "service": name, "path": path,
+                    **({"code": result["code"]} if result.get("code") else {})}
     except ApiException as exc:
         if exc.status in {400, 404, 500, 502, 503, 504}:
             return {"status": "pending", "service": name, "path": path,
-                    "code": "application_unhealthy"}
+                    "code": "service_unreachable"}
         raise _failure(exc) from None
     except ClusterError:
         raise

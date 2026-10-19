@@ -9,7 +9,7 @@ from app.analysis.jobs import finish, retry_or_fail
 from app.config import settings
 from app.persistence.database import Session
 from app.persistence.models import AnalysisRun, DeliveryJob, ExecutionJob, GitHubJob, PendingJob
-from app.worker import analyze, delivery_job, execution_job, github_job
+from app.worker import analyze, cleanup_job, delivery_job, execution_job, github_job
 
 log = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def dispatch_delivery_once(publish=delivery_job.send) -> int:
     return dispatched
 
 
-def dispatch_execution_once(publish=execution_job.send) -> int:
+def dispatch_execution_once(publish=execution_job.send, cleanup_publish=cleanup_job.send) -> int:
     if not settings().deployment_execution_enabled:
         return 0
     dispatched = 0
@@ -123,8 +123,10 @@ def dispatch_execution_once(publish=execution_job.send) -> int:
             (ExecutionJob.status == "running") & (ExecutionJob.lease_expires_at <= now),
         )).order_by(ExecutionJob.next_dispatch_at).limit(20).with_for_update(skip_locked=True)).all()
         for job in jobs:
+            if job.purpose == "cleanup" and not settings().deployment_cleanup_enabled:
+                continue
             try:
-                publish(str(job.id))
+                (cleanup_publish if job.purpose == "cleanup" else publish)(str(job.id))
             except Exception:
                 log.warning("execution_job_publish_unavailable job_id=%s", job.id)
                 break

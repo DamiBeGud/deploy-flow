@@ -16,11 +16,14 @@ from app.bootstrap.profiles import local_k3s_profile
 from app.config import settings
 from app.deployments.preparation import ReleasePreparationError, _source
 from app.deployments.queue import queue_execution
+from app.deployments.rollback import RollbackError, queue_rollback
 from app.deployments.state import ACTIVE_STATES, transition
+from app.kubernetes.policy import ManifestPolicyError
 from app.persistence.commands import application_for, idempotent
 from app.persistence.database import Session
 from app.persistence.models import (
     Application,
+    AuditEvent,
     DeliveryJob,
     DeploymentEvent,
     DeploymentPolicy,
@@ -40,6 +43,17 @@ Key = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=12
 
 class DeploymentPolicyWrite(BaseModel):
     enabled: bool
+
+
+class CleanupResource(BaseModel):
+    kind: str
+    name: str
+    uid: str | None
+
+
+class CleanupWrite(BaseModel):
+    expected_release_digest: str
+    resources: list[CleanupResource]
 
 
 def _job_document(job: DeliveryJob) -> dict:
@@ -62,12 +76,14 @@ def _run_document(db, run: DeploymentRun) -> dict:
         "id": str(run.id), "application_id": str(run.application_id),
         "environment_profile_id": run.environment_profile_id,
         "release_id": str(run.release_id), "release_digest": release.manifest_digest,
+        "kind": release.kind,
+        "rollback_target_release_id": str(release.rollback_target_release_id) if release.rollback_target_release_id else None,
         "image_reference": release.image_reference, "status": run.status,
         "error_code": run.error_code, "event_sequence": run.event_sequence,
         "preflight_validation": run.preflight_validation_json,
         "rollout": run.rollout_json, "health": run.health_json,
         "previous_release_id": str(run.previous_release_id) if run.previous_release_id else None,
-        "execution_job": {"id": str(job.id), "status": job.status, "error_code": job.error_code} if job else None,
+        "execution_job": {"id": str(job.id), "purpose": job.purpose, "status": job.status, "error_code": job.error_code} if job else None,
         "resources": [{"kind": row.kind, "name": row.name, "status": row.status,
                        "uid": row.uid, "generation": row.generation,
                        "error_code": row.error_code} for row in resources],
@@ -84,6 +100,9 @@ def get_release(release_id: UUID, identity: Actor):
         application_for(db, release.application_id, identity)
         return {
             "id": str(release.id), "application_id": str(release.application_id),
+            "kind": release.kind,
+            "rollback_target_release_id": str(release.rollback_target_release_id) if release.rollback_target_release_id else None,
+            "rollback_from_release_id": str(release.rollback_from_release_id) if release.rollback_from_release_id else None,
             "plan_id": str(release.plan_id), "verified_build_id": str(release.verified_build_id),
             "environment_profile_id": release.environment_profile_id,
             "source_bundle_digest": release.source_bundle_digest,
@@ -143,6 +162,7 @@ def get_deployment_policy(application_id: UUID, identity: Actor):
         ))
         return {"enabled": bool(policy and policy.enabled),
                 "execution_available": settings().deployment_execution_enabled,
+                "cleanup_available": settings().deployment_cleanup_enabled,
                 "actor_id": policy.actor_id if policy else None}
 
 
@@ -227,7 +247,7 @@ def retry_execution(deployment_id: UUID, identity: Actor, key: Key):
             job = db.scalar(select(ExecutionJob).where(
                 ExecutionJob.deployment_run_id == run.id,
             ).with_for_update())
-            if not policy or not job or run.status != "reconciling" or job.status != "blocked":
+            if not policy or not job or job.purpose != "deploy" or run.status != "reconciling" or job.status != "blocked":
                 raise HTTPException(409, "This deployment is not eligible for reconciliation")
             now = db.scalar(select(func.now()))
             job.status = "queued"
@@ -242,6 +262,105 @@ def retry_execution(deployment_id: UUID, identity: Actor, key: Key):
 
         response, code = idempotent(
             db, identity, f"deployments/{deployment_id}/retry-execution", key, {}, operation,
+        )
+    return JSONResponse(response, status_code=code)
+
+
+@router.post("/deployments/{deployment_id}/rollback", status_code=202)
+def rollback_deployment(deployment_id: UUID, identity: Actor, key: Key):
+    """Queue a new release containing the prior successful manifest bytes."""
+    identity.require_deploy()
+    if settings().auth_mode != "oidc" or not settings().deployment_execution_enabled:
+        raise HTTPException(409, "Authenticated deployment execution is not configured")
+    with Session.begin() as db:
+        current = db.get(DeploymentRun, deployment_id)
+        if current is None:
+            raise HTTPException(404, "Deployment not found")
+        application_for(db, current.application_id, identity)
+        db.get(Application, current.application_id, with_for_update=True)
+        current = db.get(DeploymentRun, deployment_id, with_for_update=True)
+
+        def operation():
+            policy = db.scalar(select(DeploymentPolicy).where(
+                DeploymentPolicy.application_id == current.application_id,
+                DeploymentPolicy.environment_profile_id == current.environment_profile_id,
+                DeploymentPolicy.enabled.is_(True),
+            ))
+            if policy is None:
+                raise HTTPException(409, "Enable deployment for this application first")
+            try:
+                return queue_rollback(db, current, identity.actor_id), 202
+            except (RollbackError, ManifestPolicyError) as exc:
+                raise HTTPException(409, str(exc)) from None
+
+        response, code = idempotent(
+            db, identity, f"deployments/{deployment_id}/rollback", key, {}, operation,
+        )
+    return JSONResponse(response, status_code=code)
+
+
+@router.post("/deployments/{deployment_id}/cleanup", status_code=202)
+def cleanup_deployment(deployment_id: UUID, body: CleanupWrite, identity: Actor, key: Key):
+    """Explicitly delete only the recorded first-deployment inventory."""
+    identity.require_deploy()
+    if settings().auth_mode != "oidc" or not settings().deployment_cleanup_enabled:
+        raise HTTPException(409, "Authenticated cleanup is not configured")
+    with Session.begin() as db:
+        run = db.get(DeploymentRun, deployment_id)
+        if run is None:
+            raise HTTPException(404, "Deployment not found")
+        application_for(db, run.application_id, identity)
+        db.get(Application, run.application_id, with_for_update=True)
+        run = db.get(DeploymentRun, deployment_id, with_for_update=True)
+
+        def operation():
+            policy = db.scalar(select(DeploymentPolicy).where(
+                DeploymentPolicy.application_id == run.application_id,
+                DeploymentPolicy.environment_profile_id == run.environment_profile_id,
+                DeploymentPolicy.enabled.is_(True),
+            ))
+            job = db.scalar(select(ExecutionJob).where(
+                ExecutionJob.deployment_run_id == run.id,
+            ).with_for_update())
+            release = db.get(ReleaseSpecificationRecord, run.release_id)
+            resources = db.scalars(select(DeploymentResource).where(
+                DeploymentResource.deployment_run_id == run.id,
+            )).all()
+            expected = sorted((row.kind, row.name, row.uid) for row in resources)
+            submitted = sorted(
+                ((row.kind, row.name, row.uid) for row in body.resources),
+                key=lambda row: (row[0], row[1], row[2] or ""),
+            )
+            if (
+                policy is None or job is None or job.status != "blocked"
+                or run.status != "reconciling" or run.previous_release_id is not None
+                or release is None or body.expected_release_digest != release.manifest_digest
+                or not resources or expected != submitted
+            ):
+                raise HTTPException(409, "Cleanup inventory changed or this deployment is not eligible")
+            now = db.scalar(select(func.now()))
+            job.purpose = "cleanup"
+            job.status = "queued"
+            job.attempts = 0
+            job.error_code = None
+            job.next_dispatch_at = now
+            job.deadline_at = now + timedelta(seconds=settings().execution_deadline_seconds)
+            job.lease_token = None
+            job.lease_expires_at = None
+            transition(db, run, "cleanup_pending")
+            db.add(AuditEvent(
+                organization_id=identity.organization_id, actor_id=identity.actor_id,
+                action="deployment.cleanup.requested", resource_type="deployment",
+                resource_id=str(run.id), metadata_json={
+                    "release_digest": release.manifest_digest,
+                    "resource_count": len(resources),
+                },
+            ))
+            return {"deployment_id": str(run.id), "job_id": str(job.id), "status": run.status}, 202
+
+        response, code = idempotent(
+            db, identity, f"deployments/{deployment_id}/cleanup", key,
+            body.model_dump(), operation,
         )
     return JSONResponse(response, status_code=code)
 

@@ -281,11 +281,17 @@ class VerifiedBuild(Base):
 
 class ReleaseSpecificationRecord(Base):
     __tablename__ = "release_specifications"
-    __table_args__ = (UniqueConstraint("plan_id", "verified_build_id", name="uq_release_plan_build"),)
+    __table_args__ = (Index(
+        "uq_standard_release_plan_build", "plan_id", "verified_build_id", unique=True,
+        postgresql_where=text("kind = 'standard'"),
+    ),)
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     application_id: Mapped[UUID] = mapped_column(ForeignKey("applications.id"), index=True)
     plan_id: Mapped[UUID] = mapped_column(ForeignKey("infrastructure_plans.id"), index=True)
     verified_build_id: Mapped[UUID] = mapped_column(ForeignKey("verified_builds.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), default="standard")
+    rollback_target_release_id: Mapped[UUID | None] = mapped_column(ForeignKey("release_specifications.id"))
+    rollback_from_release_id: Mapped[UUID | None] = mapped_column(ForeignKey("release_specifications.id"))
     approval_id: Mapped[UUID] = mapped_column(ForeignKey("plan_approvals.id"))
     environment_profile_id: Mapped[str] = mapped_column(String(128))
     environment_profile_hash: Mapped[str] = mapped_column(String(64))
@@ -314,7 +320,7 @@ class DeploymentRun(Base):
         Index(
             "uq_active_deployment_application_environment",
             "application_id", "environment_profile_id", unique=True,
-            postgresql_where=text("status IN ('queued', 'validating', 'retry_wait', 'waiting_for_executor', 'checking', 'applying', 'monitoring', 'checking_health', 'reconciling')"),
+            postgresql_where=text("status IN ('queued', 'validating', 'retry_wait', 'waiting_for_executor', 'checking', 'applying', 'monitoring', 'checking_health', 'reconciling', 'cleanup_pending', 'cleaning')"),
         ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -377,6 +383,7 @@ class ExecutionJob(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     deployment_run_id: Mapped[UUID] = mapped_column(ForeignKey("deployment_runs.id"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    purpose: Mapped[str] = mapped_column(String(32), default="deploy")
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error_code: Mapped[str | None] = mapped_column(String(64))
     next_dispatch_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

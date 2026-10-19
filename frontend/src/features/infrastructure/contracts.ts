@@ -103,14 +103,3 @@ export type InfrastructurePullRequest = {
   release: { id: string; digest: string; image_reference: string } | null
   deployment: { id: string; status: string; error_code: string | null } | null
 }
-
-export type DeploymentRun = {
-  id: string
-  status: string
-  error_code: string | null
-  environment_profile_id: string
-  image_reference: string
-  rollout: { desired_replicas: number; ready_replicas: number; available_replicas: number; reason?: string } | null
-  health: { status: string; service: string; path: string; code?: string } | null
-  resources: { kind: string; name: string; status: string; error_code: string | null }[]
-}

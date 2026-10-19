@@ -157,6 +157,17 @@ def test_node_bundle_is_deterministic_and_internal():
     }
 
 
+def test_config_change_rolls_pods_without_changing_image():
+    original = render(assessment(), intent(), profile())
+    changed_intent = copy.deepcopy(intent())
+    changed_intent["connectivity"]["environment"]["APP_GREETING"] = "Updated greeting"
+    changed = render(assessment(), changed_intent, profile())
+    original_deployment = yaml.safe_load(original.files["deploy/kubernetes/deployment.yaml"])
+    changed_deployment = yaml.safe_load(changed.files["deploy/kubernetes/deployment.yaml"])
+    assert original_deployment["spec"]["template"]["spec"]["containers"][0]["image"] == changed_deployment["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert original_deployment["spec"]["template"]["metadata"]["annotations"]["deployflow.io/config-sha256"] != changed_deployment["spec"]["template"]["metadata"]["annotations"]["deployflow.io/config-sha256"]
+
+
 def test_external_bundle_adds_ingress_and_rejects_unsafe_command():
     external = copy.deepcopy(intent())
     external["connectivity"]["exposure"] = {

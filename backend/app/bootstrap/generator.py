@@ -258,6 +258,11 @@ PY"""
         "metadata": {"name": f"{name}-config", "namespace": profile["namespace"], "labels": labels},
         "data": environment,
     }
+    # ConfigMap values used through envFrom are captured when a Pod starts.
+    # Changing only the ConfigMap would otherwise leave running Pods unchanged.
+    config_digest = hashlib.sha256(
+        json.dumps(environment, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     deployment = {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
@@ -266,7 +271,10 @@ PY"""
             "replicas": replicas,
             "selector": {"matchLabels": labels},
             "template": {
-                "metadata": {"labels": labels},
+                "metadata": {
+                    "labels": labels,
+                    "annotations": {"deployflow.io/config-sha256": config_digest},
+                },
                 "spec": {
                     "automountServiceAccountToken": False,
                     "securityContext": {

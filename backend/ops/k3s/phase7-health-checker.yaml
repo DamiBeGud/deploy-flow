@@ -1,0 +1,64 @@
+# Operator review only. Replace the image with a pinned, published digest.
+# This platform checker has no Kubernetes API token, Secret, or write permission.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployflow-health-checker
+  namespace: deployflow-test
+  labels:
+    app.kubernetes.io/name: deployflow-health-checker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: deployflow-health-checker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: deployflow-health-checker
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: checker
+          image: ghcr.io/REPLACE_WITH_OPERATOR_IMAGE@sha256:REPLACE_WITH_VERIFIED_DIGEST
+          command: ["uvicorn", "app.incluster_health:app", "--host", "0.0.0.0", "--port", "8080"]
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deployflow-health-checker
+  namespace: deployflow-test
+  labels:
+    app.kubernetes.io/name: deployflow-health-checker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: deployflow-health-checker
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

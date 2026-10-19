@@ -6,6 +6,7 @@ from app.persistence.models import DeploymentEvent, DeploymentRun
 ACTIVE_STATES = {
     "queued", "validating", "retry_wait", "waiting_for_executor",
     "checking", "applying", "monitoring", "checking_health", "reconciling",
+    "cleanup_pending", "cleaning",
 }
 
 

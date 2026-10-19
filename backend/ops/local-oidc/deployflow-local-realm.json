@@ -1,0 +1,91 @@
+{
+  "realm": "deployflow-local",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "accessTokenLifespan": 600,
+  "roles": {
+    "realm": [
+      { "name": "administrator", "description": "Local DeployFlow administrator" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "deployflow-local-ui",
+      "name": "DeployFlow local browser",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5174/auth/callback",
+        "http://127.0.0.1:5174/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:5174",
+        "http://127.0.0.1:5174"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "DeployFlow API audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "deployflow-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "DeployFlow organization",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "config": {
+            "claim.name": "organization_id",
+            "claim.value": "local-organization",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "DeployFlow roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "deployflow-local",
+      "enabled": true,
+      "email": "deployflow-local@localhost.invalid",
+      "emailVerified": true,
+      "firstName": "Local",
+      "lastName": "Operator",
+      "realmRoles": ["administrator"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${DF_LOCAL_OIDC_USER_PASSWORD}",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

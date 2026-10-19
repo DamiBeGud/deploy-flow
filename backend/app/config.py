@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     oidc_token_endpoint: str | None = None
     oidc_client_id: str | None = None
     deployment_execution_enabled: bool = False
+    deployment_cleanup_enabled: bool = False
     dev_actor_id: str = "local-developer"
     dev_organization_id: str = "local-organization"
     dev_roles: list[str] = ["developer"]
@@ -111,20 +112,29 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def local_auth_only(self):
-        if self.auth_mode == "oidc" and not (
-            self.oidc_issuer and self.oidc_issuer.startswith("https://")
-            and self.oidc_audience and self.oidc_jwks_url
-            and self.oidc_jwks_url.startswith("https://")
-            and self.oidc_authorization_endpoint
-            and self.oidc_authorization_endpoint.startswith("https://")
-            and self.oidc_token_endpoint and self.oidc_token_endpoint.startswith("https://")
-            and self.oidc_client_id
-        ):
-            raise ValueError("OIDC issuer, audience and HTTPS JWKS URL are required")
+        if self.auth_mode == "oidc":
+            issuer = "http://localhost:8180/realms/deployflow-local"
+            local_provider = self.environment == "local" and (
+                self.oidc_issuer == issuer
+                and self.oidc_jwks_url == "http://keycloak:8080/realms/deployflow-local/protocol/openid-connect/certs"
+                and self.oidc_authorization_endpoint == f"{issuer}/protocol/openid-connect/auth"
+                and self.oidc_token_endpoint == f"{issuer}/protocol/openid-connect/token"
+            )
+            https_provider = all(
+                value and value.startswith("https://")
+                for value in (
+                    self.oidc_issuer, self.oidc_jwks_url,
+                    self.oidc_authorization_endpoint, self.oidc_token_endpoint,
+                )
+            )
+            if not (self.oidc_audience and self.oidc_client_id and (local_provider or https_provider)):
+                raise ValueError("OIDC requires a complete HTTPS provider or the local Keycloak profile")
         if self.environment == "production" and self.auth_mode != "oidc":
             raise ValueError("OIDC authentication is required in production")
         if self.deployment_execution_enabled and self.auth_mode != "oidc":
             raise ValueError("Deployment execution requires OIDC authentication")
+        if self.deployment_cleanup_enabled and not self.deployment_execution_enabled:
+            raise ValueError("Deployment cleanup requires deployment execution")
         return self
 
 

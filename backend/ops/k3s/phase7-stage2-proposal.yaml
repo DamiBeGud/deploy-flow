@@ -1,0 +1,113 @@
+# Stage 2 proposal only: NOT APPLIED OR APPROVED.
+# The local OCI manifest digest is verified. Publishing, public pull verification,
+# and explicit operator approval are still required before applying this file.
+# Operator-reviewed addition to the existing deployflow-test namespace.
+# Do not apply automatically. The executor never receives Secret or delete access.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployflow-deployer
+  namespace: deployflow-test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployflow-deployer
+  namespace: deployflow-test
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, services]
+    verbs: [get, create, patch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, create, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, create, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [services/proxy]
+    resourceNames: [deployflow-health-checker]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployflow-deployer
+  namespace: deployflow-test
+subjects:
+  - kind: ServiceAccount
+    name: deployflow-deployer
+    namespace: deployflow-test
+roleRef:
+  kind: Role
+  name: deployflow-deployer
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Operator review only. Replace the image with a pinned, published digest.
+# This platform checker has no Kubernetes API token, Secret, or write permission.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployflow-health-checker
+  namespace: deployflow-test
+  labels:
+    app.kubernetes.io/name: deployflow-health-checker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: deployflow-health-checker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: deployflow-health-checker
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: checker
+          image: ghcr.io/damibegud/deployflow-health-checker@sha256:1baa051801e554b17a330fb74e5ee2cae9a2bac72e14ac52a7355c5429defe6f
+          command: ["uvicorn", "app.incluster_health:app", "--host", "0.0.0.0", "--port", "8080"]
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deployflow-health-checker
+  namespace: deployflow-test
+  labels:
+    app.kubernetes.io/name: deployflow-health-checker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: deployflow-health-checker
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

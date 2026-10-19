@@ -146,6 +146,11 @@ has no deployer identity and cannot apply resources.
 
 ## Phase 7 guarded execution (opt-in; not provisioned by default)
 
+The [operational closure record](ops/phase7-operational-closure.md) contains the
+latest preflight findings, pending migration SQL, and the local backup/restart
+proposal. Preview the current Phase 7 upgrade without connecting to a database
+using `alembic upgrade 2f73b94e8c16:91d2e0a7b534 --sql` inside the backend image.
+
 ### Local-only OIDC sign-in
 
 For local testing, the `local-oidc` Compose profile runs Keycloak in development
@@ -220,7 +225,9 @@ if assigned a deployer role.
 
 The [health checker manifest](ops/k3s/phase7-health-checker.yaml) is also for
 operator review only. Before execution is enabled, build and publish the
-checker image from this backend code, pin its verified digest in that manifest,
+checker image using [Dockerfile.health-checker](ops/k3s/Dockerfile.health-checker),
+which copies only the checker module and locked runtime dependencies. Build for
+the target cluster architecture and pin the verified published digest in the manifest,
 review its restricted Pod and ClusterIP Service, and obtain separate approval
 to add it to `deployflow-test`. It has no Kubernetes API token. Without a
 healthy checker, internal health remains pending and deployments cannot be

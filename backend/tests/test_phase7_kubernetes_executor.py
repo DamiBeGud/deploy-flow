@@ -1,10 +1,14 @@
 """The narrow Kubernetes writer refuses foreign or changed resources."""
 
 from contextlib import contextmanager
+from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from kubernetes.client.exceptions import ApiException
+from urllib3.response import HTTPResponse
 
 from app.kubernetes import executor
 from app.kubernetes.client import ClusterError
@@ -129,17 +133,62 @@ def test_internal_health_uses_dedicated_checker_and_fences_service(monkeypatch):
     calls = []
     service = existing()
     service.spec = SimpleNamespace(ports=[SimpleNamespace(port=4587)])
+
+    def proxy(name, namespace, path, **kwargs):
+        assert kwargs["_preload_content"] is False
+        calls.append((name, namespace, path))
+        return HTTPResponse(body=BytesIO(
+            b'{"status":"passed","service":"sample-config","path":"/healthz"}'
+        ), preload_content=False)
+
     instance = SimpleNamespace(
         read_namespaced_service=lambda *_args, **_kwargs: service,
-        connect_get_namespaced_service_proxy_with_path=lambda name, namespace, path, **_kwargs: (
-            calls.append((name, namespace, path)) or
-            '{"status":"passed","service":"sample-config","path":"/healthz"}'
-        ),
+        connect_get_namespaced_service_proxy_with_path=proxy,
     )
     monkeypatch.setattr(executor, "_api_client", fake_client)
     monkeypatch.setattr(executor.client, "CoreV1Api", lambda _: instance)
     result = executor.service_health("sample-config", "/healthz", "application-id", "owned-uid", 4587)
     assert result["status"] == "passed"
-    assert calls == [("deployflow-health-checker", "deployflow-test", "probe/sample-config/4587/healthz")]
+    assert calls == [("deployflow-health-checker:http", "deployflow-test", "probe/sample-config/4587/healthz")]
     with pytest.raises(ClusterError, match="resource_identity_changed"):
         executor.service_health("sample-config", "/healthz", "application-id", "other-uid", 4587)
+
+
+@pytest.mark.parametrize("payload", [
+    b"{'status': 'passed'}",
+    b" " * 4097,
+    b'{"status":"passed","service":"other-service","path":"/healthz"}',
+])
+def test_internal_health_rejects_invalid_raw_response_and_closes_connection(monkeypatch, payload):
+    service = existing()
+    service.spec = SimpleNamespace(ports=[SimpleNamespace(port=4587)])
+    response = HTTPResponse(body=BytesIO(payload), preload_content=False)
+    instance = SimpleNamespace(
+        read_namespaced_service=lambda *_args, **_kwargs: service,
+        connect_get_namespaced_service_proxy_with_path=lambda *_args, **_kwargs: response,
+    )
+    monkeypatch.setattr(executor, "_api_client", fake_client)
+    monkeypatch.setattr(executor.client, "CoreV1Api", lambda _: instance)
+    with pytest.raises(ClusterError, match="health_checker_invalid"):
+        executor.service_health("sample-config", "/healthz", "application-id", "owned-uid", 4587)
+    assert response.closed
+
+
+@pytest.mark.parametrize("manifest", ["phase7-deployer-access.yaml", "phase7-stage2-proposal.yaml"])
+def test_checker_proxy_rbac_matches_named_service_port(manifest):
+    ops = Path(__file__).resolve().parents[1] / "ops" / "k3s"
+    checker = next(
+        item for item in yaml.safe_load_all((ops / "phase7-health-checker.yaml").read_text())
+        if item["kind"] == "Service"
+    )
+    assert checker["metadata"]["namespace"] == "deployflow-test"
+    assert checker["spec"]["ports"][0]["name"] == "http"
+    role = next(
+        item for item in yaml.safe_load_all((ops / manifest).read_text())
+        if item["kind"] == "Role"
+    )
+    proxy_rules = [rule for rule in role["rules"] if "services/proxy" in rule["resources"]]
+    assert proxy_rules == [{
+        "apiGroups": [""], "resources": ["services/proxy"],
+        "resourceNames": [f"{checker['metadata']['name']}:http"], "verbs": ["get"],
+    }]

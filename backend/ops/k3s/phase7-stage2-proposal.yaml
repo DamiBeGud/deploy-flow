@@ -1,6 +1,6 @@
-# Stage 2 proposal only: NOT APPLIED OR APPROVED.
-# The local OCI manifest digest is verified. Publishing, public pull verification,
-# and explicit operator approval are still required before applying this file.
+# Stage 2 scoped proposal approved and applied on 2026-10-19.
+# Published OCI digest and anonymous manifest/config access verified 2026-10-19.
+# Further changes or removal require separate explicit operator approval.
 # Operator-reviewed addition to the existing deployflow-test namespace.
 # Do not apply automatically. The executor never receives Secret or delete access.
 apiVersion: v1
@@ -29,7 +29,7 @@ rules:
     verbs: [list]
   - apiGroups: [""]
     resources: [services/proxy]
-    resourceNames: [deployflow-health-checker]
+    resourceNames: ["deployflow-health-checker:http"]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -47,7 +47,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 
 ---
-# Operator review only. Replace the image with a pinned, published digest.
+# Operator review only. Image is pinned to the verified published digest.
 # This platform checker has no Kubernetes API token, Secret, or write permission.
 apiVersion: apps/v1
 kind: Deployment

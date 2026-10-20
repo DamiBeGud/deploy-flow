@@ -189,8 +189,11 @@ def service_health(name: str, path: str, application_id: str | None = None, expe
                 raise ClusterError("resource_identity_changed")
             try:
                 response = core.connect_get_namespaced_service_proxy_with_path(
-                    "deployflow-health-checker", NAMESPACE,
+                    "deployflow-health-checker:http", NAMESPACE,
                     f"probe/{name}/{expected_port}/{path.lstrip('/')}", _request_timeout=8,
+                    # The generated client declares this response as str and
+                    # otherwise turns a JSON object into Python's dict repr.
+                    _preload_content=False,
                 )
             except ApiException as exc:
                 if exc.status in {404, 502, 503, 504}:
@@ -198,9 +201,15 @@ def service_health(name: str, path: str, application_id: str | None = None, expe
                             "code": "health_checker_unavailable"}
                 raise
             try:
-                result = json.loads(response) if isinstance(response, str) else response
-            except ValueError:
+                payload = response.read(4097)
+                if len(payload) > 4096:
+                    raise ClusterError("health_checker_invalid")
+                result = json.loads(payload)
+            except (ValueError, TypeError):
                 raise ClusterError("health_checker_invalid") from None
+            finally:
+                response.close()
+                response.release_conn()
             if (
                 not isinstance(result, dict) or result.get("status") not in {"passed", "pending"}
                 or result.get("service") != name or result.get("path") != path

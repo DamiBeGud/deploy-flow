@@ -25,7 +25,9 @@ MANAGED_PATHS = {
     "deploy/kubernetes/configmap.yaml",
     "deploy/kubernetes/ingress.yaml",
 }
-TEMPLATE_VERSION = "node-web-v3"
+TEMPLATE_VERSION = "node-web-v4"
+NODE_RUNTIME_UID = 1000
+NODE_RUNTIME_GID = 1000
 _NAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
@@ -164,7 +166,15 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         docker_lines.append(f"RUN {json.dumps(build_command)}")
     dockerfile = "\n".join(
         docker_lines + [
-            "USER node",
+            # Kubernetes cannot verify a named image user with runAsNonRoot.
+            # Fail the build if a custom base has a different node identity,
+            # rather than silently running it with another account's UID.
+            "RUN " + json.dumps([
+                "sh", "-c",
+                f'test "$(id -u node)" = {NODE_RUNTIME_UID} && '
+                f'test "$(id -g node)" = {NODE_RUNTIME_GID}',
+            ]),
+            f"USER {NODE_RUNTIME_UID}:{NODE_RUNTIME_GID}",
             f"EXPOSE {port}",
             f"CMD {json.dumps(start)}",
             "",

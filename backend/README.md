@@ -15,6 +15,16 @@ local Kubernetes policy to return one complete editable intent. It does not ask 
 user deployment questions or query a live cluster; resource and exposure defaults
 are explicitly labelled as policy defaults.
 
+The Node generator (`node-web-v4`) declares `USER 1000:1000` in generated
+application images, while keeping Kubernetes `runAsNonRoot: true`. Each image
+build checks that its base image's `node` account really has UID/GID 1000;
+incompatible custom bases fail the build instead of silently choosing another
+identity. A named `USER node` alone is insufficient for Kubernetes to verify
+nonroot execution. Older generated plans must be regenerated and reviewed;
+existing approved bundles and releases are never rewritten. Fixing an already
+deployed old image requires a newly reviewed bundle, PR/CI image, and authorized
+release, not just rebuilding the DeployFlow backend or restarting the old Pod.
+
 ## k3s readiness (pre-Phase 5)
 
 The local profile now matches the existing cluster's `nginx` IngressClass and
@@ -209,7 +219,11 @@ only `get/create/patch` on ConfigMaps, Services, Deployments, and Ingresses;
 access and changes no existing Role or workload. **This manifest is for
 operator review only and is not applied by Compose or migrations.** Do not
 apply it or create a token until the k3s operator approves those exact changes.
-The existing reader and validator identities remain separate.
+The existing reader and validator identities remain separate. The checker has
+a named Service port, so the executor uses the exact proxy name
+`deployflow-health-checker:http`; the Role allows only `get` on that same
+port-qualified name. Omitting the port can return `503` despite ready endpoints,
+and granting only the unqualified name does not authorize the correct request.
 
 Before deployment outside the local profile, configure a real HTTPS OIDC provider for a browser public
 client using authorization-code + PKCE. Register the frontend callback

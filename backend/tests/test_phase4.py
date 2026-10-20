@@ -1,4 +1,5 @@
 import copy
+import json
 
 import pytest
 import yaml
@@ -155,6 +156,19 @@ def test_node_bundle_is_deterministic_and_internal():
         "status": "provisional",
         "final_reference_kind": "digest",
     }
+
+
+def test_node_image_has_verified_numeric_non_root_user():
+    bundle = render(assessment(), intent(), profile())
+    lines = bundle.files["Dockerfile"].splitlines()
+    user_index = lines.index("USER 1000:1000")
+    assert "USER node" not in lines
+    identity_check = json.loads(lines[user_index - 1].removeprefix("RUN "))
+    assert identity_check == [
+        "sh", "-c", 'test "$(id -u node)" = 1000 && test "$(id -g node)" = 1000',
+    ]
+    deployment = yaml.safe_load(bundle.files["deploy/kubernetes/deployment.yaml"])
+    assert deployment["spec"]["template"]["spec"]["securityContext"]["runAsNonRoot"] is True
 
 
 def test_config_change_rolls_pods_without_changing_image():

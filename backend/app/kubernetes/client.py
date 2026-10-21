@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from kubernetes import client
+from kubernetes import config as kube_config
 from kubernetes.client.exceptions import ApiException
 
 NAMESPACE = "deployflow-test"
@@ -43,22 +44,38 @@ def _failure(exc: ApiException) -> ClusterError:
 
 @contextmanager
 def _api_client():
-    endpoint = os.environ.get("DF_KUBE_API_SERVER", "https://127.0.0.1:16443")
-    ca_path = os.environ.get("DF_KUBE_CA_PATH")
-    token_path = os.environ.get("DF_KUBE_TOKEN_PATH")
-    if not endpoint.startswith("https://127.0.0.1:") or not ca_path or not token_path:
-        raise ClusterError("cluster_access_unconfigured")
-    try:
-        token = Path(token_path).read_text(encoding="ascii").strip()
-        if not token or not Path(ca_path).is_file():
-            raise OSError("credential_missing")
-    except OSError as exc:
-        raise ClusterError("cluster_access_unconfigured") from exc
     config = client.Configuration()
-    config.host = endpoint
+    mode = os.environ.get("DF_KUBE_ACCESS_MODE", "ssh")
+    if mode == "incluster":
+        # Use the official projected-token loader on each bounded operation.
+        # Never copy the rotating token into bootstrap tmpfs or fall back to
+        # developer/admin kubeconfig if the Pod identity is unavailable.
+        if any(os.environ.get(key) for key in (
+            "DF_KUBE_API_SERVER", "DF_KUBE_CA_PATH", "DF_KUBE_TOKEN_PATH",
+        )):
+            raise ClusterError("cluster_access_unconfigured")
+        try:
+            kube_config.load_incluster_config(client_configuration=config, try_refresh_token=True)
+        except (kube_config.ConfigException, OSError, ValueError) as exc:
+            raise ClusterError("cluster_access_unconfigured") from exc
+    elif mode == "ssh":
+        endpoint = os.environ.get("DF_KUBE_API_SERVER", "https://127.0.0.1:16443")
+        ca_path = os.environ.get("DF_KUBE_CA_PATH")
+        token_path = os.environ.get("DF_KUBE_TOKEN_PATH")
+        if not endpoint.startswith("https://127.0.0.1:") or not ca_path or not token_path:
+            raise ClusterError("cluster_access_unconfigured")
+        try:
+            token = Path(token_path).read_text(encoding="ascii").strip()
+            if not token or not Path(ca_path).is_file():
+                raise OSError("credential_missing")
+        except OSError as exc:
+            raise ClusterError("cluster_access_unconfigured") from exc
+        config.host = endpoint
+        config.ssl_ca_cert = ca_path
+        config.api_key = {"BearerToken": "Bearer " + token}
+    else:
+        raise ClusterError("cluster_access_unconfigured")
     config.verify_ssl = True
-    config.ssl_ca_cert = ca_path
-    config.api_key = {"BearerToken": "Bearer " + token}
     config.retries = 0
     api = client.ApiClient(configuration=config)
     try:

@@ -60,6 +60,7 @@ deliberately configure the desired mode in the ignored `backend/.env`.
 | [Frontend guide](frontend/README.md) | UI development, authentication, lifecycle, browser tests |
 | [Operational guide](backend/ops/README.md) | Access, activation, backups, recovery, approval boundaries |
 | [Operational status and evidence](backend/ops/phase7-operational-closure.md) | Dated acceptance results, identifiers, blockers, next steps |
+| [k3s hosting preparation](deploy/k3s/README.md) | Proposed fresh hosted installation, rendering tools, activation gates |
 | `backend/skills/` | Reviewed runtime instruction bundles; these are application assets |
 
 ## Maturity

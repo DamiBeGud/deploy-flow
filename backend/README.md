@@ -33,6 +33,11 @@ The files in [skills/](skills/) are versioned runtime inputs loaded and hashed b
 
 ## Development and configuration
 
+For the separately prepared hosted installation, see the
+[k3s hosting guide](../deploy/k3s/README.md). Hosted reader/validator/deployer Pods
+use explicit `DF_KUBE_ACCESS_MODE=incluster` and rotating projected identities;
+the local SSH client remains the default. Hosting is not operationally accepted.
+
 Use the [root quickstart](../README.md#fresh-local-development) for a new stack.
 Containers use Python 3.12 and `uv sync --frozen` with [uv.lock](uv.lock).
 The `migrate` service upgrades the database before backend processes start.

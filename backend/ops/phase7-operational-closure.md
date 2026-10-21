@@ -14,6 +14,81 @@ Use the [operational guide](README.md) for procedures and approval boundaries,
 and the [backend guide](../README.md) for implementation rules. No historical
 approval in this record authorizes a new operation.
 
+## Hosted-platform preparation — not activated
+
+The user selected `deployflow.damibegud.cloud`, fresh application data, the
+existing Keycloak configuration, and the existing GHCR publisher namespace.
+[Local hosting preparation](../../deploy/k3s/README.md) now includes a phased
+renderer, private Secret preparation, frontend/Keycloak packaging, and explicit
+in-cluster projected-identity support. **Current identity decision: create new
+accounts after the Docker reset**, superseding the earlier preservation request.
+A separate one-time setup Job creates a temporary master administrator and a new
+application operator with required first-login password change. Generated passwords
+stay in private files/Secrets; the long-running Keycloak Pod receives neither
+bootstrap passwords nor automatic import flags. The optional full-export recovery
+helper remains available but is not part of this fresh installation. No real
+export/import or account creation occurred.
+
+New read-only SSH checks reconfirmed `homeserver1`, the target namespace UID,
+nginx, local-path storage, and ready Let's Encrypt issuers. DNS already points
+to the server, but the mockup Ingress still owns the selected host/root. No
+Ingress, certificate, Secret, workload, binding, token, or database was changed.
+
+Fifteen offline hosting/identity checks and eight database-free credential-loader tests pass;
+changed-file Ruff and frontend build/lint pass. Compiled assets served through
+isolated native nginx passed desktop Chromium connect/form/reload, API forwarding,
+unbuffered SSE, and private-path 404 checks with a fake API and no console errors.
+Temporary screenshot: `/tmp/deployflow-hosted-prep-desktop.png` (not live evidence).
+Docker was subsequently factory-reset by the user. Inspection found the engine
+running with no containers, volumes, or images. Host-side application database
+backups and the Keycloak bootstrap password file survived, but no full identity
+export/volume backup was found in the known private backup directory. The user
+accepted account recreation, removing identity recovery as a prerequisite. Original
+users/IDs/MFA are not being preserved. The normal Compose stack has not been
+recreated. Repeated local image builds passed for backend, frontend, and Keycloak
+on `linux/amd64`; the isolated full backend suite passed **176 tests in 25.15s**
+(one dependency deprecation warning). Fifteen current offline hosting checks and
+changed-file Ruff pass. Disposable nonroot/read-only container checks passed for
+PostgreSQL, authenticated Redis, the fresh pinned application migration, and
+frontend SPA/API/SSE/private-path handling with a fake API. Two synthetic Keycloak
+realms/users survived full CLI export/adaptation/import with matching account IDs,
+credentials, and roles; administrator login/authenticated lookup passed. The test
+found and fixed an optimized-image build-time health-path mismatch. Temporary
+preparation harness/log: `/tmp/deployflow-hosted-container-check.py` and
+`/tmp/deployflow-hosted-container-check.log` (not live acceptance evidence).
+The backend image's client source hash matches the working tree. Interrupted or
+failed harness runs are superseded by the successful final run; they were not
+counted as passing results. Disposable test resources were removed.
+The rendered import Job's exact command and three-variable environment also
+passed against disposable PostgreSQL with synthetic exports. Local image IDs,
+source hashes, and test results are recorded in
+[hosting preparation evidence](evidence/hosting-preparation-20261021.json).
+
+The subsequent new-account setup check (2026-10-22 local date) passed the exact
+read-only empty-database guard, offline temporary-admin bootstrap, and application
+realm import against disposable PostgreSQL. Replay was blocked by the guard before
+either Keycloak mutation; the guard is necessary because duplicate bootstrap can
+log an error while exiting zero. The operator explicitly receives `UPDATE_PASSWORD`
+in addition to its temporary credential. Desktop Chromium (1440×1000) passed first
+login/password change and PKCE token exchange with the required claims and no
+console errors. The HTTPS origin was simulated through a local test proxy; real
+Ingress/TLS/hosted login remain unproven. Temporary harness/log:
+`/tmp/deployflow-fresh-identity-check.{py,log}`. Fifteen current hosting checks and
+changed-file Ruff pass; application/backend code is unchanged since the 176-test
+run. All disposable containers/networks were removed. Seven proposed Secret files
+and initial passwords were prepared outside Git with restrictive permissions;
+real credentials were not supplied to tests. The existing ignored App key was
+restricted to 0600 without changing bytes and copied privately outside the checkout.
+No real account has been created.
+
+Post-reset read-only SSH reconfirmed `homeserver1`, the same target namespace UID,
+and one ready/available replica each for `node-express-service3213214` and the
+health checker. The platform namespace is still absent. The reset affected local
+Docker state, not those observed cluster workloads. Real fresh-account creation,
+hosted login, and cluster activation remain unproven.
+No image publication or cluster activation occurred. The earlier
+baseline acceptance below does not establish acceptance of this fresh installation.
+
 ## Acceptance matrix
 
 | Criterion | Recorded status | Evidence / remaining requirement |

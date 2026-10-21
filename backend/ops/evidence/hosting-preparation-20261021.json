@@ -1,0 +1,137 @@
+{
+  "recorded_date": "2026-10-21",
+  "scope": "Local hosted-platform preparation with disposable data; not live operational acceptance",
+  "source_commit": "81a8801cf75b13405f1f6a8a05e2d55ed16a342b",
+  "uncommitted_changes": true,
+  "materials_sha256": {
+    "backend/app/kubernetes/client.py": "6a56933d1f0db9ecb326e6354602dbae65849497b580c039e111efababa3ecca",
+    "backend/Dockerfile": "222337f27c1d42cb3a721877b102c21cfb9e50183ba9e533510969977ad7aecd",
+    "frontend/Dockerfile": "7abe6d3465851962f39f1c4ea1d63a7cbbe3792f8adb60667fd07c286b598c88",
+    "frontend/nginx.conf": "084c10830a169c8fd8d94144ed8554b90166339b295c073d4ed758b0444536ff",
+    "deploy/k3s/Dockerfile.keycloak": "389b5d49ed2a73f36e5841434adce10dd713d76ae2a22a247268b95cc4c72406",
+    "deploy/k3s/render.py": "e29ebbf1df2a2234f65a3b4934d7f2f33750adcd58a42e53d811a24dfcc56de0",
+    "deploy/k3s/prepare_secrets.py": "1777c85fdc55264a4b670ceb2e2932e968e2f8e9f0cf939477d63f13a40d5e24",
+    "deploy/k3s/prepare_identity_import.py": "de6ebfd2b6fefc717989dbc81e2a96b1302236b2096b2808fa9bbc4886c1a997"
+  },
+  "images": [
+    {
+      "tag": "deployflow-backend:hosted-prep-20261021",
+      "local_image_id": "sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+      "architecture": "amd64",
+      "user": "deployflow"
+    },
+    {
+      "tag": "deployflow-frontend:hosted-prep-20261021",
+      "local_image_id": "sha256:e937deae28527b738e2f99f5291201aa61b9aabcd8f65fc6bfe6d40665adff22",
+      "architecture": "amd64",
+      "user": "101:101"
+    },
+    {
+      "tag": "deployflow-keycloak:hosted-prep-20261021",
+      "local_image_id": "sha256:4f88fd5187d543ed01be0a5998c58071b8212ca4d71420b363c0d7bc1e9f4e63",
+      "architecture": "amd64",
+      "user": "1000:1000"
+    }
+  ],
+  "registry_publication_verified": false,
+  "backend_suite": {
+    "working_directory": "backend",
+    "command": "DF_TEST_IMAGE=deployflow-backend:hosted-prep-20261021 sh scripts/test_phase7_isolated.sh",
+    "passed": 176,
+    "warnings": 1,
+    "seconds": 25.15,
+    "live_credentials_supplied": false
+  },
+  "offline_hosting_tests": {
+    "command": "python3 -m unittest discover -s deploy/k3s -p 'test_*.py' -v",
+    "passed": 13
+  },
+  "container_smoke": {
+    "postgres_nonroot_readonly": "passed",
+    "fresh_application_migration": "c3a71d9e4208",
+    "redis_nonroot_readonly_auth": "passed",
+    "frontend_nonroot_readonly_spa_proxy_boundaries_sse": {
+      "passed": true,
+      "first_event_seconds": 0.01
+    },
+    "synthetic_keycloak_export_adapt_import_startup_admin_login": {
+      "passed": true,
+      "realms": 2,
+      "users": 2,
+      "account_ids_credentials_roles": "equal"
+    }
+  },
+  "rendered_identity_import_minimal_environment": "passed with synthetic full exports and disposable PostgreSQL",
+  "ephemeral_supporting_files": [
+    "/tmp/deployflow-hosted-backend-tests.log",
+    "/tmp/deployflow-hosted-container-check.py",
+    "/tmp/deployflow-hosted-container-check.log",
+    "/tmp/deployflow-hosted-import-job-check.log"
+  ],
+  "after_tests": {
+    "docker_containers": 0,
+    "normal_compose_stack_recreated": false,
+    "cluster_mutations": false,
+    "git_writes": false
+  },
+  "unproven": [
+    "Registry publication and cluster image pulls",
+    "Live platform migration/import/startup",
+    "Cluster RBAC, NetworkPolicy and projected-token operation",
+    "Hosted HTTPS/PKCE login and signed webhook ingestion",
+    "Real automatic update, rollback and worker replay acceptance",
+    "Real fresh-account setup and first login against hosted Keycloak"
+  ],
+  "identity_decision": {
+    "selected": "recreate_accounts",
+    "supersedes": "preserve_accounts_before_Docker_factory_reset",
+    "identity_backup_required": false
+  },
+  "fresh_identity_preparation": {
+    "recorded_date": "2026-10-22",
+    "command": "python3 /tmp/deployflow-fresh-identity-check.py",
+    "harness": "Temporary synthetic-only harness outside Git; not live acceptance",
+    "offline_hosting_tests_passed": 15,
+    "changed_file_ruff": "passed",
+    "materials_sha256": {
+      "deploy/k3s/render.py": "0d854c8d8814f3ff4c9d363cbc9b5c9fb789a697ee907d5272f0fa525eaad54c",
+      "deploy/k3s/prepare_secrets.py": "c9a4b33f0c255ddcf80f91b277012f7b022d232fa38d4ca4f281f0f647cec952",
+      "deploy/k3s/test_render.py": "0dd1e2d38ec938a0411dd549813d4994079951620ad311a2a0a36e9040457973"
+    },
+    "browser": {
+      "flow": "login -> required password change -> authorization callback -> PKCE token exchange",
+      "passed": true,
+      "viewport": "1440x1000",
+      "consoleErrors": [],
+      "tokenValuesPrinted": false,
+      "browserPlugin": "not available; existing Playwright used",
+      "network": "all browser requests intercepted; HTTP forwarded only to disposable Keycloak"
+    },
+    "container_checks": {
+      "fresh_identity_exact_job_commands": "passed",
+      "fresh_setup_replay": "rejected_by_readonly_guard",
+      "temporary_admin_login": "passed",
+      "operator_password_change": "passed",
+      "operator_account_id_stable": true,
+      "real_accounts_created": false,
+      "cluster_mutations": false,
+      "normal_stack_started": false
+    },
+    "screenshots": [
+      "/tmp/deployflow-fresh-identity-password-change.png",
+      "/tmp/deployflow-fresh-identity-callback.png"
+    ],
+    "private_credentials_prepared": {
+      "secret_files": 7,
+      "account_instructions": true,
+      "directories_mode": "0700",
+      "files_mode": "0600",
+      "outside_git": true,
+      "test_runners_received_real_credentials": false
+    },
+    "credential_permissions": "Existing ignored App PEM restricted to 0600 without changing bytes; hosted copy prepared outside checkout",
+    "docker_containers_after_checks": 0,
+    "limits": "No real account creation, TLS/DNS cutover, registry publication or Kubernetes mutation"
+  },
+  "superseded_requirement": "Preserving original Keycloak accounts after the Docker reset; user selected recreation instead"
+}

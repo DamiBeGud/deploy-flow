@@ -1,6 +1,199 @@
 # Phase 7 operational closure
 
-## Latest live checkpoint — 2026-10-21, 14:55 UTC
+## Latest access recovery — 2026-10-21, 19:32–19:34 UTC
+
+**Cluster access is restored. The Services API returns 200 and the real desktop
+UI shows fresh ready/available 1/1 after refresh and reload.** This section
+supersedes the expired-credential/current-outage snapshot below. Phase 7 remains
+open for automatic source update, rollback and replay acceptance.
+
+The user approved the exact three-identity renewal and six-service tunnel
+activation, and explicitly requested tokens lasting one to two months. Chose
+**30 days (`--duration=720h`)** within that requested range. No API-server settings
+or maximum-token-duration configuration was changed. The server granted all
+three requested durations; actual claims and authenticated API use were checked.
+
+| ServiceAccount | Actual expiry UTC | Local private file |
+| --- | --- | --- |
+| `deployflow-reader` | **2026-11-20 19:32:08** | `~/.config/deployflow/phase5/reader.token` |
+| `deployflow-validator` | **2026-11-20 19:32:09** | `~/.config/deployflow/phase5/validator.token` |
+| `deployflow-deployer` | **2026-11-20 19:32:10** | `~/.config/deployflow/phase7/deployer.token` |
+
+Exact k3s mutations were **only three TokenRequests** via SSH:
+`sudo -n k3s kubectl -n deployflow-test create token deployflow-{reader,validator,deployer} --duration=720h`
+(one command per explicit role, no shell brace expansion needed). Private helper
+captured output without printing credentials, verified exact ServiceAccount
+subjects and namespace UID, then atomically replaced role-specific files (0600,
+0700 directories). RBAC and ServiceAccounts were not modified; no Secret was
+created. No application/checker/namespace resources were applied or deleted.
+
+Private backups/metadata:
+`/Users/damibegud/.config/deployflow/backups/k3s-access-renewal-koheufad`
+(0700; token/.env snapshots and `renewal.json` 0600). Never print backup token or
+.env files. Old tokens were not revoked; they expire naturally. Do not copy any
+private credentials into Git or tests.
+
+Selected `DF_K3S_TUNNEL_IMAGE=deployflow-k3s-tunnel:reconnect-20261021` in ignored
+0600 `.env`, preserving all other settings. Stopped only the three identity
+services and recreated exactly:
+`kube-reader-tunnel kube-validator-tunnel kube-deployer-tunnel kube-reader
+kube-validator kube-deployer`. Tunnels run tested image
+`sha256:8e159dabef37b8191ed01bb0da7c6eae9a54a77e0fe7cb32929ad9e5da21879b`.
+Identity services retain backend image `59fb4d9…`; API/frontend, other workers,
+databases, policies and execution/cleanup flags were not changed or restarted.
+
+Verification:
+
+- Reader, validator and deployer now share their respective current tunnel
+  namespaces; all three tunnel restart counters are **0** after activation.
+- All three identity services, running as UID **10001**, authenticated successfully
+  with their distinct renewed tokens and read the target Deployment (1 ready,
+  1 available). No validator dry-run or deployer write was invoked for this check.
+- Authenticated exact previously failing endpoint
+  `/api/v1/services?cluster_id=local-k3s&namespace=deployflow-test` returns **200**,
+  fresh observation timestamp `2026-10-21T19:33:25.992988Z`.
+- Real OIDC desktop Playwright (1600×1100) checked Services and lifecycle pages,
+  refresh/reload, current 1/1 ready/available and historical durable `succeeded`,
+  with zero runtime/console errors and no Vite overlay. Browser plugin was absent;
+  existing Playwright was used. Screenshot visually inspected.
+- All **10** namespace resource identities/spec hashes compare exactly equal
+  before and after renewal/activation. Execution jobs remain three blocked and
+  one completed. Only app3213214 policy remains enabled with its baseline SHA
+  restriction; cleanup remains disabled. No release was deployed or retried.
+
+Read-only evidence is outside Git:
+`/tmp/deployflow-access-restored.json`, `/tmp/deployflow-services-restored.png`,
+`/tmp/deployflow-access-restored.png`, and
+`/tmp/phase7-namespace-{before,after}-access-renewal.json`.
+The preceding correction's **168 backend tests** and isolated Docker namespace/
+shutdown checks passed; no code changed after those checks. Shell/Compose/diff
+checks passed. Long-duration tokens still expire on the exact dates above;
+there is no automatic renewal and this approval is not standing authorization
+for future renewals. SSH reconnect no longer exits the tunnel container;
+arbitrary forced Docker/daemon replacement still warrants namespace checks.
+
+## Earlier access incident — 2026-10-21, 19:23–19:30 UTC (resolved above)
+
+**Local cluster access is currently unavailable; the application itself remains
+ready/available 1/1. A tested reconnect correction is prepared, not activated.
+Token renewal and the scoped activation below await explicit approval.** This
+section supersedes earlier same-day statements about current credential validity
+and local connectivity. Historical successful deployment evidence remains valid.
+
+User-reported correlation `ae79f954-54f7-4632-a79f-6ae000c7de2d` matches HTTP 503
+from `GET /api/v1/services?cluster_id=local-k3s&namespace=deployflow-test`.
+Read-only audit found both independent problems:
+
+- Tunnel containers restarted around 18:18 UTC while their dependent processes
+  retained older shared network namespaces. All three identity services mismatch
+  their current tunnel namespace. The reader tunnel had 2184 historical restarts;
+  its PID 1 is SSH, whose connection failure exits the container.
+- Reader token expired `2026-10-21T18:50:23Z`; validator expired `18:50:25Z`.
+  Deployer expires `19:54:38Z`. All files remain 0600 in 0700 private directories.
+  No token values were printed, requested or replaced during diagnosis.
+
+Read-only SSH reconfirmed `connectops@homeserver1`, namespace UID
+`84a720fd-dc36-4592-a2bb-12c8f54ddc7c` and target Deployment 1/1 ready/available.
+No queued/running GitHub, delivery or execution jobs were found; execution jobs
+are three blocked and one completed. Only app3213214's policy is enabled,
+restricted to baseline SHA `5ee02c99f312269f95854b3c26d0301d6088df00`.
+Main HEAD is now user commit `24d953e`; the prior Phase 7 work was committed by
+the user. The reconnect correction below is new uncommitted local work.
+
+### Prepared correction and actual tests
+
+`scripts/k3s_tunnel_session.sh` supervises SSH as a child and retries every five
+seconds without replacing the container/network namespace. It has bounded
+connection time, server-alive checks, pinned host-key validation, an unchanged
+loopback-only forward and signal forwarding/reaping for both SSH and retry sleep.
+The existing credential bootstrap still copies private SSH files and drops UID.
+The tunnel Dockerfile includes this supervisor. Compose supports
+`DF_K3S_TUNNEL_IMAGE` and restarts dependents on explicit Compose tunnel updates.
+Arbitrary Docker/daemon restarts still require verifying shared namespaces;
+this fix does not claim automatic credential renewal or recovery from every
+possible container/daemon replacement.
+
+Prepared local image `deployflow-k3s-tunnel:reconnect-20261021`, Docker image ID
+`sha256:8e159dabef37b8191ed01bb0da7c6eae9a54a77e0fe7cb32929ad9e5da21879b`.
+Not selected in ignored `.env`; existing tunnel containers are unchanged.
+
+Actual checks:
+
+- `DF_TEST_IMAGE=deployflow-backend:phase7-source-lifecycle-20261021 sh scripts/test_phase7_isolated.sh pytest -q tests/test_k3s_tunnel_reconnect.py tests/test_phase5.py`:
+  **16 passed**, one existing Starlette/AnyIO warning.
+- Full isolated runner with the same image: **168 passed**, 38.02 seconds,
+  same warning. No live environment/credentials mounted; test DB only.
+- Real isolated Docker supervisor test with fake SSH, no network/credentials:
+  two disconnects, **zero container restarts**, same container PID, same shared
+  namespace as its test sidecar, graceful stop exit 0. Own test containers removed.
+- Changed-test Ruff check, shell syntax, `docker compose config --quiet` and
+  `git diff --check`: passed. Frontend/runtime API source was not changed.
+
+### Exact renewal and activation proposal (not executed)
+
+Scope: Kubernetes **TokenRequest only** for existing ServiceAccounts in
+`deployflow-test`, then local credential loading/tunnel recreation. No namespace,
+ServiceAccount, Role/RoleBinding, Secret, checker, Deployment, Service or ConfigMap
+is created, patched or deleted. No application release, policy, execution flag,
+cleanup, database, GitHub, frontend or API operation is included.
+
+Request **24-hour** tokens via read-only-verified SSH target using precisely:
+`sudo -n k3s kubectl -n deployflow-test create token deployflow-reader --duration=24h`,
+then the same command for `deployflow-validator` and `deployflow-deployer`.
+These are three TokenRequest API operations; **never execute them with token
+stdout exposed**. The prepared private helper captures stdout into memory and
+private files, verifies namespace UID and each exact ServiceAccount subject and
+expiry before publication, and prints only non-secret expiry/destination metadata.
+
+| Existing ServiceAccount | Private local destination, 0600 |
+| --- | --- |
+| `deployflow-reader` | `/Users/damibegud/.config/deployflow/phase5/reader.token` |
+| `deployflow-validator` | `/Users/damibegud/.config/deployflow/phase5/validator.token` |
+| `deployflow-deployer` | `/Users/damibegud/.config/deployflow/phase7/deployer.token` |
+
+Existing token files and ignored backend `.env` are backed up first in a new
+0700 `~/.config/deployflow/backups/k3s-access-renewal-*` directory, files 0600.
+New token values are never printed or committed. Existing tokens are not revoked
+or given additional permissions; they expire naturally. Actual issued expiry is
+recorded (the API server may cap duration).
+
+After approval, from `backend/`:
+
+```bash
+# Recheck pending jobs and image identity first; stop if the scope has changed.
+python3 /tmp/deployflow-renew-k3s-access.py --approved
+# Privately persist only DF_K3S_TUNNEL_IMAGE=deployflow-k3s-tunnel:reconnect-20261021
+# in the existing 0600 ignored .env, preserving every other setting.
+docker compose --profile phase5 --profile phase7-executor stop kube-reader kube-validator kube-deployer
+DF_K3S_TUNNEL_IMAGE=deployflow-k3s-tunnel:reconnect-20261021 docker compose --profile phase5 --profile phase7-executor up -d --no-deps --no-build --force-recreate kube-reader-tunnel kube-validator-tunnel kube-deployer-tunnel kube-reader kube-validator kube-deployer
+```
+
+The helper `/tmp/deployflow-renew-k3s-access.py` was syntax/read-only proposal
+checked, but its `--approved` branch has not run. If `/tmp` artifacts are gone,
+reconstruct/review a helper from this exact proposal; do not improvise broader
+requests. Keep new tokens out of command arguments, console and Git.
+
+Expect about one minute of interrupted local cluster reads/validation/execution;
+API/frontend remain running. Recheck all three shared namespaces, runtime UIDs,
+MCP reachability, reader-only Kubernetes access, real `/services` response and
+browser refresh/reload. No deployment test or validator apply/dry-run is included.
+
+Fallback: retain renewed role-specific tokens and recreate these same six local
+services with the previously available per-role tunnel images:
+reader `58f219fddce36a9e6e8b86018e8d93be8ec9e97d83baac7e329e71d9130895d1`,
+validator `8340b72978a035a35dfc1ad15722f7f59b3138e0ab88f8c8126eb40ecc027960`,
+deployer `8145c15f68563e475916f191eeacd750eb5640ac664c32faf40a685d33bcb2e6`.
+All backend identity services retain image `59fb4d9…`. This restores the prior
+SSH entrypoint and its reconnect limitation. Restoring expired token backups
+would not restore access; renewed tokens remain separate identities and need
+no RBAC/cluster-resource reversal. Stop relevant local identity services if a
+safe fallback cannot be verified, rather than substituting an admin credential.
+
+The explicit approval is required by the user's original restriction on new
+Kubernetes token requests and scoped service/tunnel interruption. No token
+renewal or live reconnect activation has been inferred from a reported error.
+
+## Earlier successful baseline checkpoint — 2026-10-21, 14:55 UTC
 
 **Backend activation and first-release operational acceptance passed. Phase 7
 remains open for automatic update, rollback and replay evidence.** This section

@@ -4,6 +4,44 @@ Recorded 2026-10-21. This is a handoff, not authorization to activate anything.
 All runtime, GitHub, credential and cluster observations below are snapshots;
 reinspect them before acting. Phase 7 remains operationally incomplete.
 
+## Latest recovery update — 2026-10-21, 19:34 UTC
+
+The access incident below is **resolved** after the user's explicit approval.
+Requested and received 30-day tokens (`720h`) for reader, validator and deployer;
+actual expiry is **2026-11-20 around 19:32 UTC**, recorded individually in the
+[closure record](phase7-operational-closure.md). Files are private outside Git.
+Activated the tested SSH supervisor image in the six named identity/tunnel
+services. No RBAC, namespace or application/checker resources were changed.
+
+The Services API now returns 200; real browser Services/lifecycle refresh and
+reload pass with fresh ready/available 1/1 and durable succeeded. All three role
+services authenticated as UID 10001, namespaces match their tunnels, and all ten
+namespace resource identities/spec hashes were unchanged. Full backend suite:
+168 passed before activation. Source policy/flags and pending jobs are unchanged.
+
+**Resume with the pending webhook endpoint decision and bounded source PR test**,
+not another token renewal, migration or baseline deployment. This renewal approval
+was specific to these three requests and does not authorize future renewals.
+Automatic update, rollback and replay acceptance remain open.
+
+## Access incident update — 2026-10-21, 19:23 UTC
+
+Local Services requests now fail with 503: SSH container restarts again left
+stale shared namespaces, and reader/validator tokens have expired. App3213214
+remains 1/1 ready/available via read-only SSH; its historical durable success is
+unchanged. A tested SSH supervisor correction is prepared in a separate tunnel
+image; **168 isolated backend tests passed** and an isolated Docker reconnect
+check preserved container PID/network namespace across two disconnects.
+
+**Resume at the exact renewal/activation proposal in the new top section of the
+[closure record](phase7-operational-closure.md)**: request 24-hour reader,
+validator and deployer tokens into existing private role-specific files, and
+activate the tested tunnel image in only six named local identity/tunnel services.
+This awaits explicit token-request/scope approval. No token request or live
+activation happened during diagnosis. After restoring local access, continue
+with the still-pending webhook endpoint decision, source update, rollback and
+replay acceptance. Do not redo migrations or baseline deployment.
+
 ## Update after approved activation — 2026-10-21, 14:55 UTC
 
 The backend/schema activation and baseline recovery below are now **completed**.

@@ -62,6 +62,31 @@ fallback. The tunnel and MCP entrypoints copy `0600` host credentials into
 private container tmpfs and drop to UID 10001 before serving requests. Do not
 start this profile with `/dev/null` placeholder paths.
 
+The tunnel entrypoint now supervises SSH and retries a disconnected session
+inside the same container every five seconds. This preserves the network
+namespace shared by the MCP/worker process. SSH remains restricted to a
+loopback-only API forward with pinned host keys, a ten-second connect timeout
+and server-alive checks. Select a reviewed tunnel build with
+`DF_K3S_TUNNEL_IMAGE`; building/editing it does not activate it in existing
+containers. See the latest closure-record incident for activation status.
+
+An explicit Compose tunnel update/restart also restarts its dependent service
+through `depends_on.restart: true`. After a forced Docker/daemon restart, inspect
+the shared network namespaces and recreate an affected tunnel **together with**
+its dependent process if needed; Compose dependency restart does not supervise
+arbitrary daemon restarts. See [Docker's startup-order documentation](https://docs.docker.com/compose/how-tos/startup-order/).
+Reconnect does not renew Kubernetes credentials. Reader, validator and deployer
+tokens remain separate, short-lived, private files; replacement requires the
+operator's scoped token-request approval and recreation of the corresponding
+process to load the new token.
+
+The local test identities were renewed with explicit operator approval on
+2026-10-21 for 30 days. Their actual reader/validator/deployer expiries are
+2026-11-20 around 19:32 UTC; see the top of the closure record for exact times.
+The tested reconnect supervisor is active in the three local tunnel containers.
+Future renewals still require approval; never assume a requested duration was
+issued without checking the actual expiry.
+
 ### Renew Phase 5 access tokens
 
 The reader and validator use short-lived ServiceAccount tokens. If the UI

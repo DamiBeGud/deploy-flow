@@ -1,5 +1,6 @@
 FROM alpine:3.20
 RUN apk add --no-cache openssh-client su-exec && adduser -D -u 10001 deployflow
 COPY scripts/k3s_tunnel_container.sh /usr/local/bin/k3s-tunnel
-RUN chmod 755 /usr/local/bin/k3s-tunnel
+COPY scripts/k3s_tunnel_session.sh /usr/local/bin/k3s-tunnel-session
+RUN chmod 755 /usr/local/bin/k3s-tunnel /usr/local/bin/k3s-tunnel-session
 ENTRYPOINT ["/usr/local/bin/k3s-tunnel"]

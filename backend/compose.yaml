@@ -161,6 +161,7 @@ services:
 
   kube-deployer-tunnel:
     profiles: ["phase7-executor"]
+    image: ${DF_K3S_TUNNEL_IMAGE:-deployflow-k3s-tunnel:local}
     build:
       context: .
       dockerfile: ops/k3s/Dockerfile.tunnel
@@ -185,6 +186,7 @@ services:
         condition: service_healthy
       kube-deployer-tunnel:
         condition: service_started
+        restart: true
     environment:
       <<: *environment
       DF_KUBE_MCP_ROLE: deployer
@@ -213,6 +215,7 @@ services:
 
   kube-cleaner-tunnel:
     profiles: ["phase7-cleanup"]
+    image: ${DF_K3S_TUNNEL_IMAGE:-deployflow-k3s-tunnel:local}
     build:
       context: .
       dockerfile: ops/k3s/Dockerfile.tunnel
@@ -237,6 +240,7 @@ services:
         condition: service_healthy
       kube-cleaner-tunnel:
         condition: service_started
+        restart: true
     environment:
       <<: *environment
       DF_KUBE_MCP_ROLE: cleaner
@@ -267,6 +271,7 @@ services:
 
   kube-reader-tunnel:
     profiles: ["phase5"]
+    image: ${DF_K3S_TUNNEL_IMAGE:-deployflow-k3s-tunnel:local}
     build:
       context: .
       dockerfile: ops/k3s/Dockerfile.tunnel
@@ -281,6 +286,7 @@ services:
 
   kube-validator-tunnel:
     profiles: ["phase5"]
+    image: ${DF_K3S_TUNNEL_IMAGE:-deployflow-k3s-tunnel:local}
     build:
       context: .
       dockerfile: ops/k3s/Dockerfile.tunnel
@@ -301,6 +307,7 @@ services:
     depends_on:
       kube-reader-tunnel:
         condition: service_started
+        restart: true
     environment:
       DF_KUBE_MCP_ROLE: reader
       DF_KUBE_API_SERVER: https://127.0.0.1:16443
@@ -321,6 +328,7 @@ services:
     depends_on:
       kube-validator-tunnel:
         condition: service_started
+        restart: true
     environment:
       DF_KUBE_MCP_ROLE: validator
       DF_KUBE_API_SERVER: https://127.0.0.1:16443

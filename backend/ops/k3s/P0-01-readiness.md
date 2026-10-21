@@ -1,39 +1,28 @@
-# P0-01 k3s readiness record
+# Historical initial k3s readiness — P0-01
 
-Checked: 2026-10-07. Target: the existing shared k3s host (`homeserver1`),
-not a new or dedicated cluster. This record contains no kubeconfig, token, or
-private key.
+Checked **2026-10-07** on the existing shared host `homeserver1`.
+This is an initial-access record, not current runtime status or a setup checklist.
+Later credential provisioning, deployment integration, and acceptance results are
+in the [operational status record](../phase7-operational-closure.md).
+Use the [operational guide](../README.md) for current procedures.
 
-| Check | Result |
+| Initial check | Recorded result |
 | --- | --- |
-| k3s API | v1.36.3+k3s1; reachable through a local-only SSH tunnel to the server's loopback API. CA-verified TLS succeeded; unauthenticated requests returned 401 as expected. |
-| Namespace | `deployflow-test` exists with restricted Pod Security admission labels pinned to v1.36. |
-| Ingress | `nginx` exists and uses controller `k8s.io/ingress-nginx`. The local profile now names `nginx`. |
-| Reader | `deployflow-test/deployflow-reader` can read permitted workloads, Services, and Ingresses. It cannot create Deployments, read/list Secrets, or list Deployments in `default`. |
-| Validator | `deployflow-test/deployflow-validator` can get/create/patch the supported dry-run kinds in its namespace. It cannot delete Deployments, read/list Secrets, or patch Deployments in `default`. |
-| Registry network | GHCR `/v2/` responded with an HTTP 401 authentication challenge from the host. This proves network reachability, not image pull/push authorization. |
+| k3s API | v1.36.3+k3s1, reached over a local-only SSH tunnel; CA-verified TLS, unauthenticated 401 |
+| Namespace | `deployflow-test` with restricted Pod Security enforcement pinned to v1.36 |
+| Ingress | `nginx`, controller `k8s.io/ingress-nginx` |
+| Reader | Permitted namespace reads; no Deployment create, Secret read/list, or cross-namespace Deployment list |
+| Validator | Supported namespace dry-run kinds authorized for get/create/patch; no Deployment delete, Secret access, or cross-namespace patch |
+| Registry network | GHCR `/v2/` returned an authentication challenge; network reachability only |
 
-The seven administrator-owned resources in `p0-01-access.yaml` were applied to
-the shared cluster: one namespace, two ServiceAccounts, two Roles, and two
-RoleBindings. No application workload was deployed. The manifest is a record of
-those resources, **not** part of an application-generated bundle.
+The seven administrator-owned resources in [p0-01-access.yaml](p0-01-access.yaml)
+were applied: one namespace, two ServiceAccounts, two Roles, and two RoleBindings.
+No application workload was deployed by that provisioning. The manifest is not
+an application-generated bundle and is not authorization to reapply or delete it.
 
-Phase 5 cluster integration remains **pending**. A distinct deployment identity
-is deferred to Phase 7; the validator is not a deployer. Scoped client credentials
-and a kubeconfig outside Git have not yet been provisioned/tested for the
-backend. GHCR publishing is deferred to Phase 6. The intended images are
-public; an anonymous pull can be tested once the actual image exists.
-The tunnel proves transport only and does not grant API access. No further
-server changes should be made without the operator's explicit confirmation.
-
-Run `DF_K3S_SSH_TARGET=user@host bash backend/scripts/check_k3s_readiness.sh`
-from the repository root for repeatable read-only checks. An optional
-`DF_K3S_SSH_KEY` can select an SSH key outside the repository. The check now
-asserts the restricted Pod Security enforcement label and pinned version. It
-does not verify image availability or scoped Kubernetes credentials.
-
-The validator's Kubernetes RBAC grants write-equivalent verbs because the API
-authorizes dry-run as it would a real write. The future validation service must
-force `dryRun=All` and refuse arbitrary manifests; never expose its credential
-to the analysis model or a general-purpose client. Deployment and Secret access
-must remain separate.
+At this initial checkpoint, scoped backend credentials and later deployment/
+registry integration were pending. Those statements are historical; do not use
+them to undo or repeat later approved setup. The tunnel grants transport only.
+Validator RBAC authorizes write-equivalent verbs for server-side dry-run; its
+service must force `dryRun=All` and accept only stored bundles.
+Reader, validator, deployer, and cleaner credentials remain separate.

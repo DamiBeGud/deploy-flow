@@ -1,51 +1,72 @@
 # DeployFlow
 
-Agentic infrastructure provisioning and application deployment platform.
+DeployFlow analyzes a GitHub application repository, recommends editable deployment
+configuration, and turns reviewed infrastructure into verified Kubernetes releases.
+**Kubernetes is the only deployment target.** The supported generator and automatic
+source-compatibility policy currently focus on Node web applications.
 
-```text
-deploy-flow/
-  frontend/    React + TypeScript + Vite
-  backend/     FastAPI, PostgreSQL, Redis, and Dramatiq
-```
+## Application lifecycle
 
-## Local development
+1. Register a repository and branch, then analyze its source.
+2. Review the prefilled configuration and override values where needed.
+3. Generate, validate, and approve the bundle to open an infrastructure PR;
+   review and merge that PR on GitHub.
+4. After merge, independently verify CI and the immutable published image.
+5. Prepare a release and deploy under explicit application policy and execution gates.
+6. Observe resource application, rollout readiness, and application health separately.
+7. Release compatible later commits using the approved infrastructure; manually
+   roll back through a new release when a previous healthy release exists.
 
-Terminal 1:
+A published image is not a deployment. Automatic updates require working signed
+webhooks, eligible CI, compatible source changes, and deployment authorization.
 
-```bash
+## Fresh local development
+
+Requires Docker with Compose and Node.js/npm compatible with the
+[frontend lockfile](frontend/package-lock.json). Compose Watch needs Compose 2.32+.
+These commands are for a **new development stack**, not an existing operational
+installation: startup runs migrations and workers. For an existing stack, use the
+[operational guide](backend/ops/README.md) before changing services or configuration.
+
+From the repository root, start a simulated-analysis backend without GitHub or
+Kubernetes credentials:
+
+~~~bash
 cd backend
-docker compose up --build -d
-docker compose watch --no-up api worker dispatcher
-```
+test -e .env || cp .env.example .env
+DF_ANALYSIS_MODE=fake docker compose up --build -d
+~~~
 
-Terminal 2:
+From the repository root in a second terminal:
 
-```bash
+~~~bash
 cd frontend
 npm ci
 npm run dev
-```
+~~~
 
-Open **http://127.0.0.1:5174** and click **Connect to local backend**.
-API documentation: **http://127.0.0.1:8000/docs**.
+Open http://127.0.0.1:5174 and choose **Connect to local backend**.
+The API reference is http://127.0.0.1:8000/docs. Fake mode exercises analysis;
+bundle planning also needs a valid image repository in the backend configuration.
+Neither establishes GitHub verification or cluster deployment.
+Keep the same analysis-mode override on subsequent backend recreations, or
+deliberately configure the desired mode in the ignored `backend/.env`.
 
-React changes hot reload through Vite. Python source edits are synced into Docker
-and automatically restart the API, worker, and dispatcher. PostgreSQL and Redis
-remain running. Dependency/lockfile changes trigger image rebuilds. Keep the
-watch command running; stopping it leaves services running but stops code sync.
+## Repository and documentation
 
-The frontend supports repository registration, durable GitHub repository analysis,
-optional DeepSeek-assisted review, and Phase 4 delivery planning. After analysis,
-DeployFlow produces a complete Kubernetes recommendation from repository evidence
-and Kubernetes policy defaults. You may override a recommendation when needed, then
-generate and approve a reviewable infrastructure bundle.
-Reviewed infrastructure PRs, verified CI images, immutable Kubernetes releases,
-guarded execution, and manual rollback are implemented. Subsequent compatible
-source releases and fresh lifecycle observations are active in the local backend.
-The baseline deployment now succeeds durably; automatic-update, rollback and
-replay acceptance remain pending. Authentication supports
-OIDC or an explicitly configured development identity. See the current
-[Phase 7 evidence and approval boundaries](backend/ops/phase7-operational-closure.md)
-before running migrations, restarting an existing stack, or enabling execution.
+| Location | Purpose |
+| --- | --- |
+| [Backend guide](backend/README.md) | Architecture, configuration, release rules, isolated tests |
+| [Frontend guide](frontend/README.md) | UI development, authentication, lifecycle, browser tests |
+| [Operational guide](backend/ops/README.md) | Access, activation, backups, recovery, approval boundaries |
+| [Operational status and evidence](backend/ops/phase7-operational-closure.md) | Dated acceptance results, identifiers, blockers, next steps |
+| `backend/skills/` | Reviewed runtime instruction bundles; these are application assets |
 
-See the [frontend guide](frontend/README.md) and [backend guide](backend/README.md).
+## Maturity
+
+The last recorded local-k3s acceptance demonstrated a healthy baseline release,
+durable success, and matching UI. Real subsequent automatic deployment, manual
+rollback, and worker replay after rollback remain unproven. **Phase 7 is not
+complete.** See the dated evidence record for the exact environment and limits.
+The Compose stack and local Keycloak profile are development infrastructure;
+production hosting is not supplied by the frontend dev server.

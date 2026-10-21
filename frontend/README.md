@@ -1,105 +1,95 @@
 # DeployFlow frontend
 
-React, TypeScript and Vite. The frontend connects to the local Docker backend
-through a same-origin Vite proxy: browser `/api/v1/*` requests are forwarded to
-`http://127.0.0.1:8000/api/v1/*`. This also proxies server-sent events.
+React, TypeScript, React Router, and Vite. Start with the
+[root quickstart](../README.md#fresh-local-development); backend configuration and
+release rules live in the [backend guide](../backend/README.md).
 
-## Run locally
+## Development and proxy
 
-Start the backend first (see [backend instructions](../backend/README.md)):
+Requires Node.js `^20.19.0 || >=22.12.0` as declared by the locked Vite toolchain,
+and npm. From `frontend/`:
 
-```bash
-cd deploy-flow/backend
-docker compose up --build -d
-docker compose watch --no-up api worker dispatcher
-```
-
-Keep the watch command running. In another terminal:
-
-```bash
-cd deploy-flow/frontend
+~~~bash
 npm ci
 npm run dev
-```
+~~~
 
-Open **http://127.0.0.1:5174** and choose **Connect to local backend**. Vite binds
-to loopback and uses port 5174 explicitly, so it does not silently select another
-port if one is occupied. Edit React/CSS files for Vite hot reload.
+Vite binds to `127.0.0.1:5174` with a strict port and hot reload.
+It proxies `/api`, including analysis SSE, to `http://127.0.0.1:8000`.
+For another backend, set `BACKEND_URL` in an ignored `frontend/.env` using
+[.env.example](.env.example), then restart Vite. This setting belongs to the
+server-side proxy, not browser credentials.
 
-For a different backend port, create a local `.env` using `.env.example` and set
-`BACKEND_URL`. Restart Vite after changing it. This is a server-side proxy setting;
-it is not a browser credential. The proxy means no additional backend CORS origin
-is needed. A production static deployment needs its own `/api` reverse proxy;
-the development proxy is not embedded in `npm run build` output.
+The proxy avoids additional backend CORS configuration for same-origin requests.
+`npm run build` produces static assets in `dist/`; the dev proxy is not included.
+A hosted frontend needs its own API reverse proxy and configured OIDC callback.
+This repository does not supply a complete hosted platform deployment.
 
-## Connected features
+## Authentication
 
-| Endpoint under `/api/v1` | UI |
-| --- | --- |
-| `GET /me` | Connect/restore the development workspace and check roles |
-| `POST /applications` | Register a repository, name, and revision |
-| `GET /applications` | Display the latest 100 registered applications |
-| `GET /applications/{id}` | Open an application and resume its latest analysis |
-| `POST /applications/{id}/analyses` | Start a durable analysis job |
-| `GET /analyses/{id}` | Load persisted status and assessment |
-| `GET /analyses/{id}/events` | Live progress and replay after reconnect |
-| `PATCH /analyses/{id}/assessment` | Save port/health-path corrections with expected version |
-| `POST /analyses/{id}/reanalyze` | Create a new analysis without replacing the old run |
-| `POST /analyses/{id}/cancel` | Cancel queued or running work |
-| `GET /environment-profiles` | Load the available local-k3s preview profile |
-| `GET /applications/{id}/kubernetes-recommendation` | Load the prefilled AI/policy Kubernetes recommendation |
-| `GET` / `PUT /applications/{id}/deployment-intent` | Load and version connectivity and workflow settings |
-| `POST /applications/{id}/infrastructure-plans` | Generate a review-only bundle |
-| `POST /infrastructure-plans/{id}/approve` | Record approval of the generated bundle |
+The UI reads the backend authentication configuration:
 
-The backend can run deterministic GitHub repository analysis when
-`DF_ANALYSIS_PROVIDER=github`, or simulated fixture analysis when it is `fake`.
-The UI displays the backend's analysis mode and pinned commit when available.
-Installation-token failures are retried by the worker and expose a sanitized diagnostic if exhausted.
-The dashboard lists applications; it does not claim to show live cluster workloads.
+- **Development:** Connect to local backend uses the configured local identity,
+  without password or token verification. Never expose this API publicly.
+- **OIDC:** Sign-in uses authorization code with S256 PKCE and `/auth/callback`.
+  The backend verifies bearer tokens; deployment controls require authorized
+  OIDC roles and execution availability. See
+  [identity setup](../backend/ops/README.md#local-oidc).
 
-The connection button uses the backend's configured development identity; it is
-not email/password or GitHub authentication. Leaving the workspace clears only
-the browser's local workspace marker. Real authentication is required before
-exposing this system remotely.
+Leaving the workspace clears its local session state. Browser authentication
+state and credentials must not be copied into documentation, logs, or tests.
 
-Application and run IDs are in the URL. Refreshing resumes the run. Event IDs are
-saved per run in session storage, and EventSource reconnects automatically.
-Periodic status reads provide a fallback during SSE interruptions. Terminal runs
-close their stream. Connectivity and workflow changes are saved only through their
-explicit save actions; moving forward also saves first. The review step shows the
-saved delivery settings and any bundle generated during the current session.
+## User workflows
 
-Mutations use idempotency keys scoped by actor, action, target, and request body.
-An uncertain failed request keeps its key across retries/reloads until a successful
-response arrives. Duplicate clicks are blocked while a command is in flight.
-Concurrent assessment edits report `409` and preserve your unsaved inputs; use
-**Reload latest assessment** to explicitly discard them and load the newer version.
+- Register an application, follow durable repository analysis, edit the prefilled
+  Kubernetes recommendation, and review the generated infrastructure PR.
+- Use the existing application's lifecycle page for later releases; another
+  application registration or infrastructure PR is unnecessary for compatible
+  source changes.
+- Inspect source/baseline provenance, build verification/errors, pending release,
+  image digest, policy, resource journal, rollout, health, and deployment history.
+- Select a historical run explicitly; otherwise newer releases become the
+  default. Historical rollout/health remains separate from the current cluster.
+- Review manual rollback to a previous successful release. First-deployment
+  cleanup controls require a separate enabled capability and exact inventory review.
 
-The delivery flow starts with a complete Kubernetes recommendation, derived from
-repository evidence and Kubernetes policy defaults. Users only edit values they
-wish to override. It supports service port, health path, replicas, resource requests
-and limits, external exposure, detected non-secret environment values, and build
-commands. The local profile currently has no approved connection or secret catalogue,
-so those controls are accurately unavailable. Bundle generation and Kubernetes
-admission checking are review-only. The final Review action explicitly approves
-the bundle and queues one GitHub infrastructure PR. The page shows PR and verified
-CI image status; it does not merge the PR or deploy to Kubernetes.
+The Applications dashboard combines registered applications and a separate
+read-only Kubernetes workload table in the configured namespace. Applied resources
+do not mean rollout-ready or application-healthy. Replica counts preserve zero;
+unavailable, missing, drifted, and stale observations remain visible.
+Current observation does not run a fresh application health probe.
+
+Lifecycle reads do not overlap: active runs poll about every five seconds,
+settled state every thirty seconds, and failed refresh requests back off up to sixty.
+Hidden tabs pause observation polling. Analysis uses persisted SSE replay with
+periodic status fallback. URL identifiers, persisted API state, and session replay
+positions restore progress after reload. Conflicting assessment edits preserve
+unsaved input until the user explicitly reloads; mutation retries retain their
+idempotency keys.
+
+Code is organized under `src/features/` with shared HTTP/contracts/UI helpers.
+See [API schemas](http://127.0.0.1:8000/docs) while the backend is running.
 
 ## Verification
 
-```bash
+From `frontend/`:
+
+~~~bash
 npm run build
 npm run lint
-npm run test:e2e
-```
+npm run test:e2e -- tests/phase7-lifecycle.spec.ts tests/oidc-callback.spec.ts
+~~~
 
-The Playwright tests expect the frontend at 127.0.0.1:5174 and the real Docker
-backend running. Tests create applications prefixed `e2e-` or `retry-` in the
-local development database; they do not delete existing data or access Kubernetes.
-Coverage includes create/analyze/reload, SSE replay, persistent assessment edits,
-reanalysis, cancellation, optimistic conflicts, idempotent retries after a lost
-response, backend connection errors, and the fixed sidebar.
+Playwright expects an already running frontend on `127.0.0.1:5174`; it does not
+start servers. Those two browser suites mock backend APIs/token exchange, so they
+need no real backend, Keycloak, or Kubernetes credentials. They cover lifecycle
+transitions, failed/unavailable/stale/missing/zero observations, reload/history,
+rollback/cleanup review, and OIDC callback exchange. Mock success is not live
+deployment evidence.
 
-New code is grouped into `features/applications`, `features/analysis`, and a
-small shared layer for HTTP contracts, request handling, and UI primitives.
+`npm run test:e2e` also includes `tests/deployflow.spec.ts`. That suite requires
+a dedicated backend with development identity, fake analysis, and a configured
+planning image. It creates applications/runs and saves assessments/plans in its
+database; some admission/PR interactions are mocked. Do not point it at the user's
+operational stack. It is not a live-CD acceptance test. See the
+[backend testing precautions](../backend/README.md#testing).

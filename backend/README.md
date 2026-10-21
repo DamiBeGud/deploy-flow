@@ -131,8 +131,10 @@ verified build record and never deploys.
 
 The internal release-preparation operation binds the verified CI image digest
 to the reviewed Deployment, changing no other manifest field. It requires a
-still-approved plan, a verified PR/build, and the merge commit to remain the
-target branch head. It then runs a fresh server-side dry-run and stores the
+still-approved plan and a verified PR/build. For bootstrap, the merge commit
+must remain the target branch head; subsequent builds retain that approved
+baseline and require their independently verified source commit at branch head
+(see the source-update rules below). It then runs a fresh server-side dry-run and stores the
 exact final Kubernetes manifest bytes and digest. A reverted merge or failed
 admission cannot produce a release candidate. A verified CI build records one
 durable preparation job. The delivery worker uses that build ID, stores one
@@ -569,3 +571,126 @@ assessment revisions, ownership/roles, and ordered SSE replay.
 
 Implementation references: [Dramatiq guide](https://dramatiq.io/guide.html) and
 [Dramatiq Redis broker reference](https://dramatiq.io/reference.html).
+
+## Phase 7 source updates and current observations (activated 2026-10-21)
+
+For resuming automatic-release work, use the focused
+[agent handoff and remaining acceptance checklist](ops/automatic-releases-handoff.md).
+
+Migration `c3a71d9e4208` and the tested backend image were activated with operator
+approval. The selected baseline now has a durable successful rollout/health
+result and correct fresh UI. Automatic source-update acceptance is still pending
+webhook endpoint configuration and the bounded PR test.
+The current operational status and exact approval proposal are at the **top** of
+[the closure record](ops/phase7-operational-closure.md); older snapshots below it
+are historical. Local checks alone do not complete Phase 7.
+
+### Source builds retain their infrastructure baseline
+
+`InfrastructurePullRequest.merged_sha` and `VerifiedBuild.merged_sha` identify
+the reviewed infrastructure merge. `VerifiedBuild.source_sha` identifies the
+actual application commit built by CI. Immutable releases carry both fields;
+existing rows are backfilled with their previously verified merge SHA. Builds
+also retain the GitHub artifact ID, workflow run/attempt, image digest, approved
+bundle/assessment/approval references, compatibility policy version, and changed
+file hashes. Deployment runs retain previous-release lineage; rollback copies
+the target's source provenance into a new release.
+
+Signed workflow completion notifications queue reconciliation. The worker uses
+a repository-scoped **read** token to query the configured branch's current
+head, its exact successful push workflow run, the approved workflow/file bytes,
+the build artifact's repository/SHA/run/attempt/image identity, and the immutable
+registry digest. The notification payload is never accepted as build proof.
+Bootstrap verification still requires the reviewed PR and exact merged files.
+Source errors are stored separately and do not invalidate historical builds.
+
+The initial compatibility policy is deliberately conservative for the supported
+Node fixture. It accepts documentation/test changes and JS response-data changes
+under `src/`, including a literal version marker used only in JSON responses.
+A parsed JavaScript structure check preserves executable statements, calls,
+getters, assignments, nonliteral references, and health handlers. Changes to
+imports, dependencies/lockfiles, runtime/startup, ports, environment references,
+health, managed files, unknown file types, or ambiguous expressions require
+reassessment/review. It does **not** prove arbitrary JavaScript equivalence or
+support Phase 8 runtimes. Compatible response changes reuse the approved
+infrastructure; they do not need another infrastructure PR. Changed managed
+files report `approved_infrastructure_changed`; other unsupported edits report
+`deployment_requirements_need_review`.
+
+Ordering is **current branch head, forward ancestry only**, serialized by the
+application row lock. Each admitted source SHA is used once. Duplicate events,
+CI reruns, and replay do not create a second release for that source. Newer
+verified builds invalidate older unstarted preparation/preflight/execution;
+GitHub head is rechecked before each apply. A fully journaled run may finish
+read-only observation after branch movement. A newer release cannot cross an
+active apply or unresolved reconciliation. Waiting releases can be superseded;
+other occupied slots retain bounded preparation retries and a visible error.
+After investigation, the existing release-preparation API can retry a blocked
+latest build. Replayed events after rollback cannot redeploy a previously
+admitted source, even if the CI run was rerun. A genuinely new forward source
+commit is eligible under the application's explicit policy.
+
+Disabled policy or global execution disables mutation, while verification and
+preparation may continue. Policy authorization is checked again and its row is
+locked immediately before a bounded Kubernetes mutation. For a bounded live
+test, `PUT /api/v1/applications/{id}/deployment-policy` supports
+`{"enabled":true,"allowed_source_sha":"<exact 40-character SHA>"}`. Only that
+source may queue/apply as a standard release; other prepared releases wait.
+Omitting this field preserves its existing value; explicit `null` removes the
+restriction and authorizes future compatible commits. Removing a restriction
+is a separate deployment-policy decision. Explicit rollback remains separately
+authorized and restores its stored target, irrespective of this source bound.
+
+### Lifecycle reads and manual reconciliation
+
+- `GET /applications/{id}/release-status` returns current verification/preparation
+  status, baseline, build provenance, and useful review/error codes.
+- `GET /applications/{id}/observation` uses only the reader identity. It compares
+  the latest applied Deployment and Service with their recorded UIDs, owner,
+  generation and image. Missing, drifted, unavailable and pending states remain
+  distinct. ConfigMap contents are not inspected: the reader has no ConfigMap
+  permission, and no RBAC was widened. This endpoint checks rollout, not a new
+  application health probe.
+- Snapshot reads are coalesced, cached five seconds (errors fifteen), and bounded
+  to twelve seconds. The desktop lifecycle uses nonoverlapping requests, backs
+  off errors to sixty seconds, polls settled state every thirty seconds, and
+  pauses hidden tabs. The dashboard refreshes read-only observations too.
+- Stored rollout/health results now contain observation times. Historical rows
+  without times are labelled historical/stale. Unavailable reads never become
+  a zero count. Zero remains a valid number. Immutable release history is not
+  overwritten with current drift. Reload restores progress from the API; new
+  releases become the default selection until a user selects history.
+- `POST /applications/{id}/reconcile-source`, with normal authorization and an
+  `Idempotency-Key`, is an explicit fallback for a missed webhook. It can lead
+  to execution if policy/flags permit. It is **manual reconciliation**, not
+  evidence of automatic event ingestion. PR refresh also schedules source
+  reconciliation. The wizard continues to review the infrastructure PR; the
+  lifecycle page is the current application/release surface.
+
+The dispatcher retains the staged retry fix: a due retry becomes `queued` only
+following successful publication, before setting its next publication time.
+Workers block on that transaction's row lock, then claim the queued retry.
+Backoff, publication failures, leases, deadlines, and authorization remain
+independent checks. Fully applied inventory can be observed through an approved
+normal reconciliation retry without reapplying resources or requiring the old
+source to remain branch head. Deadlines are not silently extended.
+
+### Isolated verification and image selection
+
+`DF_BACKEND_IMAGE` selects a prepared image in Compose; its default remains
+`deployflow-backend:local`. Changing this setting does not change running
+containers. Do not use `up`, `restart`, migrations, policy commands, or source
+reconciliation against the normal stack without the operator's scoped approval.
+
+```bash
+DF_TEST_IMAGE=deployflow-backend:phase7-source-lifecycle-20261021 \
+  sh scripts/test_phase7_isolated.sh
+```
+
+This script creates its own disposable PostgreSQL container and network, mounts
+only source/test directories, and passes no live configuration or credentials.
+It removes only the resources it created. Tests still refuse cleanup outside
+`deployflow_test`. The migration SQL for review is
+[phase7-source-lifecycle-migration.sql](ops/phase7-source-lifecycle-migration.sql).
+Downgrade refuses to discard provenance; use a reviewed backup restore only with
+separate approval. The additive schema supports the previous backend's reads.

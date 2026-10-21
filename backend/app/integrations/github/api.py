@@ -104,6 +104,12 @@ class GitHubAPI:
     def commit(self, sha: str) -> dict:
         return self.request("GET", f"{self.repo_path}/git/commits/{sha}").json()
 
+    def require_descendant(self, base_sha: str, head_sha: str) -> None:
+        response = self.request("GET", f"{self.repo_path}/compare/{base_sha}...{head_sha}", params={"per_page": 1})
+        body = response.json()
+        if body.get("status") not in {"ahead", "identical"} or body.get("merge_base_commit", {}).get("sha") != base_sha:
+            raise GitHubPhase6Error("source_history_requires_review")
+
     def compare_paths(self, base_sha: str, head_sha: str) -> set[str]:
         response = self.request("GET", f"{self.repo_path}/compare/{base_sha}...{head_sha}", params={"per_page": 100})
         body = response.json()

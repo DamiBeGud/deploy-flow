@@ -1,0 +1,114 @@
+[
+  {
+    "kind": "ConfigMap",
+    "name": "kube-root-ca.crt",
+    "uid": "ebb41c09-bc83-4dae-af80-d76d91fd0646",
+    "generation": null,
+    "labels": {},
+    "spec_or_data_sha256": "1f51f63eee3bf36b06796b49d83fc831e5cb0815beabed56b0338dd6dfe4ab54"
+  },
+  {
+    "kind": "ConfigMap",
+    "name": "node-express-service-config",
+    "uid": "b42ffd81-1931-4b63-83fd-3c7f2e04433e",
+    "generation": null,
+    "labels": {
+      "app.kubernetes.io/instance": "601c738c-abe7-4206-8270-965576f6e88a",
+      "app.kubernetes.io/managed-by": "deployflow",
+      "app.kubernetes.io/name": "node-express-service"
+    },
+    "spec_or_data_sha256": "0780ce56ab2db64f83b3ddf83d34574621f408602b077dbc64a72679759cb473"
+  },
+  {
+    "kind": "ConfigMap",
+    "name": "node-express-service3213214-config",
+    "uid": "64fae1ec-088e-41a3-b6f8-9135e71271a8",
+    "generation": null,
+    "labels": {
+      "app.kubernetes.io/instance": "ad7c395b-836d-4874-a5a6-e35ba836f366",
+      "app.kubernetes.io/managed-by": "deployflow",
+      "app.kubernetes.io/name": "node-express-service3213214"
+    },
+    "spec_or_data_sha256": "0780ce56ab2db64f83b3ddf83d34574621f408602b077dbc64a72679759cb473"
+  },
+  {
+    "kind": "Deployment",
+    "name": "deployflow-health-checker",
+    "uid": "189ad4f2-8db1-4268-94e2-2ea8d37cf85f",
+    "generation": 1,
+    "labels": {
+      "app.kubernetes.io/name": "deployflow-health-checker"
+    },
+    "spec_or_data_sha256": "43fe5dd5cb48835f3d6d0080ec36183fbe368b9545e317a46c8481c69969b876"
+  },
+  {
+    "kind": "Deployment",
+    "name": "node-express-service3213214",
+    "uid": "a4e5a93a-75a9-4339-91f4-5da8a4693f79",
+    "generation": 1,
+    "labels": {
+      "app.kubernetes.io/instance": "ad7c395b-836d-4874-a5a6-e35ba836f366",
+      "app.kubernetes.io/managed-by": "deployflow",
+      "app.kubernetes.io/name": "node-express-service3213214"
+    },
+    "spec_or_data_sha256": "c95c156dce6f3091c049b42157bb348b1747c31fe9bae25afb701186777d9c81"
+  },
+  {
+    "kind": "Pod",
+    "name": "deployflow-health-checker-7bf4b8b7d7-9klsf",
+    "uid": "8bc8242c-f6fc-4214-9dc9-df44bb39e6fb",
+    "generation": 1,
+    "labels": {
+      "app.kubernetes.io/name": "deployflow-health-checker",
+      "pod-template-hash": "7bf4b8b7d7"
+    },
+    "spec_or_data_sha256": "4e4700f287a0fdb057395c94aaf5b59a3cff1c2217d133833631a1c174d424aa"
+  },
+  {
+    "kind": "Pod",
+    "name": "node-express-service3213214-8477f6db49-6ltg4",
+    "uid": "ffaddc40-5c8b-427f-b645-3da20384f5c4",
+    "generation": 1,
+    "labels": {
+      "app.kubernetes.io/instance": "ad7c395b-836d-4874-a5a6-e35ba836f366",
+      "app.kubernetes.io/managed-by": "deployflow",
+      "app.kubernetes.io/name": "node-express-service3213214",
+      "pod-template-hash": "8477f6db49"
+    },
+    "spec_or_data_sha256": "5dac0c23ff00531dd0160aa86251b6743d6235bf4f3446835b9315e3c473b4b8"
+  },
+  {
+    "kind": "Service",
+    "name": "deployflow-health-checker",
+    "uid": "9522f9d9-8865-480e-b7f6-8a89363b9cc6",
+    "generation": null,
+    "labels": {
+      "app.kubernetes.io/name": "deployflow-health-checker"
+    },
+    "spec_or_data_sha256": "a847ad4619473a60f426bb8cae80ff0a24831398e90cae45b947c7f89ce2b268"
+  },
+  {
+    "kind": "Service",
+    "name": "node-express-service",
+    "uid": "28ef2698-09e7-4ce3-919f-3589b631b8db",
+    "generation": null,
+    "labels": {
+      "app.kubernetes.io/instance": "601c738c-abe7-4206-8270-965576f6e88a",
+      "app.kubernetes.io/managed-by": "deployflow",
+      "app.kubernetes.io/name": "node-express-service"
+    },
+    "spec_or_data_sha256": "8e9eaf7cc95b94133b2f90234704084a02a3f9bdddb1e2f963484772ba44055d"
+  },
+  {
+    "kind": "Service",
+    "name": "node-express-service3213214",
+    "uid": "d4a13c5f-adf7-4f57-8922-4baf83649f1e",
+    "generation": null,
+    "labels": {
+      "app.kubernetes.io/instance": "ad7c395b-836d-4874-a5a6-e35ba836f366",
+      "app.kubernetes.io/managed-by": "deployflow",
+      "app.kubernetes.io/name": "node-express-service3213214"
+    },
+    "spec_or_data_sha256": "dc82421299d50715b02278391c0deb3734ab23f0d2bd94b88da1202b26862687"
+  }
+]

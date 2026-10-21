@@ -133,7 +133,7 @@ def rollout_status(name: str, application_id: str, expected_uid: str, image_refe
             image = spec.template.spec.containers[0].image
             if image != image_reference:
                 raise ClusterError("deployment_image_changed")
-            desired = spec.replicas or 1
+            desired = spec.replicas if spec.replicas is not None else 1
             result = {
                 "name": name, "generation": meta.generation,
                 "observed_generation": status.observed_generation or 0,

@@ -106,7 +106,7 @@ def queue_rollback(db, current: DeploymentRun, actor_id: str) -> dict:
         environment_profile_hash=target.environment_profile_hash,
         source_bundle_digest=target.source_bundle_digest,
         manifest_digest=target.manifest_digest,
-        merged_sha=target.merged_sha,
+        merged_sha=target.merged_sha, source_sha=target.source_sha or target.merged_sha,
         image_reference=target.image_reference,
         validation_json={"status": "pending", "kind": "manual_rollback", "actor_id": actor_id},
     )

@@ -238,6 +238,9 @@ class InfrastructurePullRequest(Base):
     number: Mapped[int | None] = mapped_column(Integer)
     url: Mapped[str | None] = mapped_column(String(1024))
     merged_sha: Mapped[str | None] = mapped_column(String(40))
+    source_head_sha: Mapped[str | None] = mapped_column(String(40))
+    source_status: Mapped[str | None] = mapped_column(String(32))
+    source_error_code: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     error_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -276,6 +279,9 @@ class VerifiedBuild(Base):
     merged_sha: Mapped[str] = mapped_column(String(40))
     image_repository: Mapped[str] = mapped_column(String(255))
     image_digest: Mapped[str] = mapped_column(String(71))
+    source_sha: Mapped[str | None] = mapped_column(String(40))
+    artifact_id: Mapped[int | None] = mapped_column(BigInteger)
+    compatibility_json: Mapped[dict | None] = mapped_column(JSONB)
     verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -300,6 +306,7 @@ class ReleaseSpecificationRecord(Base):
     merged_sha: Mapped[str] = mapped_column(String(40))
     image_reference: Mapped[str] = mapped_column(String(330))
     validation_json: Mapped[dict] = mapped_column(JSONB)
+    source_sha: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -373,6 +380,7 @@ class DeploymentPolicy(Base):
     application_id: Mapped[UUID] = mapped_column(ForeignKey("applications.id"), index=True)
     environment_profile_id: Mapped[str] = mapped_column(String(128))
     enabled: Mapped[bool] = mapped_column(default=False)
+    allowed_source_sha: Mapped[str | None] = mapped_column(String(40))
     actor_id: Mapped[str] = mapped_column(String(128))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -6,7 +6,12 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.deployments.state import transition
-from app.persistence.models import DeploymentPolicy, DeploymentRun, ExecutionJob
+from app.persistence.models import (
+    DeploymentPolicy,
+    DeploymentRun,
+    ExecutionJob,
+    ReleaseSpecificationRecord,
+)
 
 
 def queue_execution(db, run: DeploymentRun) -> ExecutionJob | None:
@@ -18,6 +23,9 @@ def queue_execution(db, run: DeploymentRun) -> ExecutionJob | None:
         DeploymentPolicy.enabled.is_(True),
     ))
     if policy is None or not run.preflight_validation_json or run.preflight_validation_json.get("status") != "passed":
+        return None
+    release = db.get(ReleaseSpecificationRecord, run.release_id)
+    if policy.allowed_source_sha and policy.allowed_source_sha != (release.source_sha or release.merged_sha):
         return None
     existing = db.scalar(select(ExecutionJob).where(ExecutionJob.deployment_run_id == run.id))
     if existing:

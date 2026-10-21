@@ -113,6 +113,8 @@ def list_observations() -> dict:
         service_rows.append(
             {
                 "name": service["metadata"]["name"],
+                "uid": service["metadata"].get("uid"),
+                "application_id": (service["metadata"].get("labels") or {}).get("app.kubernetes.io/instance"),
                 "type": spec.get("type"),
                 "ports": [
                     {"name": p.get("name"), "port": p.get("port"), "target_port": p.get("targetPort")}
@@ -142,6 +144,12 @@ def list_observations() -> dict:
                 {
                     "id": f"{NAMESPACE}:{kind}:{name}",
                     "namespace": NAMESPACE,
+                    "uid": meta.get("uid"),
+                    "application_id": (meta.get("labels") or {}).get("app.kubernetes.io/instance"),
+                    "generation": meta.get("generation"),
+                    "observed_generation": status.get("observedGeneration", 0),
+                    "updated_replicas": status.get("updatedReplicas", 0),
+                    "available_replicas": status.get("availableReplicas", 0),
                     "kind": kind,
                     "name": name,
                     "desired_replicas": spec.get("replicas", 1) if kind != "Job" else None,

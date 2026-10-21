@@ -1,5 +1,5 @@
 export type Identity = { actor_id: string; organization_id: string; roles: string[]; authentication: string }
-export type Application = { id: string; name: string; repository_url: string; revision: string }
+export type Application = { id: string; name: string; repository_url: string; revision: string; deployment_policy_enabled?: boolean; latest_deployment?: { status: string; source_sha: string; image_reference: string; error_code?: string } | null }
 export type Finding = { value: string | number | null; source: 'mock' | 'unknown' | 'user' | 'explicit' | 'inferred'; command?: string | null }
 export type FakeAssessment = {
   mode: 'fake'; runtime: Finding; port: Finding; health_path: Finding
@@ -24,17 +24,18 @@ export type Analysis = {
   progress: number; revision: string; commit_sha?: string | null; analysis_mode?: string; attempts: number; assessment_version: number
   assessment: Assessment | null; error_code: string | null; error_message?: string | null
 }
-export type ApplicationDetail = Application & { latest_analysis: Analysis | null }
+export type ApplicationDetail = Application & { lifecycle_version?: number; latest_analysis: Analysis | null }
 export type QueuedAnalysis = { run_id: string; events_url: string; status: 'queued' }
 export type DeploymentRun = {
   id: string; application_id: string; environment_profile_id: string
   release_id: string; release_digest: string; image_reference: string
+  source_sha?: string; baseline_sha?: string; updated_at?: string
   kind: 'standard' | 'rollback'; rollback_target_release_id: string | null
   status: string; error_code: string | null; event_sequence: number
   previous_release_id: string | null; created_at: string
   preflight_validation: { status: string; checks?: unknown[] } | null
-  rollout: { status?: string; desired_replicas: number; updated_replicas?: number; ready_replicas: number; available_replicas: number; reason?: string } | null
-  health: { status: string; service: string; path: string; code?: string } | null
+  rollout: { status?: string; desired_replicas?: number; updated_replicas?: number; ready_replicas?: number; available_replicas?: number; reason?: string; code?: string; observed_at?: string } | null
+  health: { status: string; service: string; path: string; code?: string; observed_at?: string } | null
   execution_job: { id: string; purpose: 'deploy' | 'cleanup'; status: string; error_code: string | null } | null
   resources: { kind: string; name: string; status: string; uid: string | null; generation: number | null; error_code: string | null }[]
 }

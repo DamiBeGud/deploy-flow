@@ -39,8 +39,13 @@ optional DeepSeek-assisted review, and Phase 4 delivery planning. After analysis
 DeployFlow produces a complete Kubernetes recommendation from repository evidence
 and Kubernetes policy defaults. You may override a recommendation when needed, then
 generate and approve a reviewable infrastructure bundle.
-Approval is an audit record only. This project does not create GitHub pull requests,
-run CI, push images, or access a Kubernetes cluster. Authentication uses a local
-development identity.
+Reviewed infrastructure PRs, verified CI images, immutable Kubernetes releases,
+guarded execution, and manual rollback are implemented. Subsequent compatible
+source releases and fresh lifecycle observations are active in the local backend.
+The baseline deployment now succeeds durably; automatic-update, rollback and
+replay acceptance remain pending. Authentication supports
+OIDC or an explicitly configured development identity. See the current
+[Phase 7 evidence and approval boundaries](backend/ops/phase7-operational-closure.md)
+before running migrations, restarting an existing stack, or enabling execution.
 
 See the [frontend guide](frontend/README.md) and [backend guide](backend/README.md).

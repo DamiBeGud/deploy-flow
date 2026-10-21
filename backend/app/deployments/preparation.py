@@ -56,6 +56,9 @@ class _Source:
     head_branch: str
     head_sha: str
     merged_sha: str
+    source_sha: str
+    artifact_id: int | None
+    compatibility: dict | None
     bundle_digest: str
     image_repository: str
     image_digest: str
@@ -83,7 +86,7 @@ def _source(db, pr_id: UUID, build_id: UUID, profile: dict, *, lock: bool = Fals
     latest_build = db.scalar(select(VerifiedBuild).where(
         VerifiedBuild.pull_request_id == pr.id,
         VerifiedBuild.merged_sha == pr.merged_sha,
-    ).order_by(VerifiedBuild.run_id.desc(), VerifiedBuild.run_attempt.desc()))
+    ).order_by(VerifiedBuild.verified_at.desc(), VerifiedBuild.run_id.desc(), VerifiedBuild.run_attempt.desc()))
     rows = db.scalars(select(InfrastructurePlanFile).where(InfrastructurePlanFile.plan_id == plan.id)).all()
     files = {row.path: row.content for row in rows}
     if (
@@ -106,7 +109,8 @@ def _source(db, pr_id: UUID, build_id: UUID, profile: dict, *, lock: bool = Fals
         pr.id, plan.id, application.id, approval.id, build.id,
         build.run_id, build.run_attempt,
         pr.owner, pr.repository, pr.repository_id, pr.number, pr.base_branch,
-        pr.head_branch, pr.head_sha, pr.merged_sha, plan.bundle_digest,
+        pr.head_branch, pr.head_sha, pr.merged_sha, build.source_sha or build.merged_sha,
+        build.artifact_id, build.compatibility_json, plan.bundle_digest,
         build.image_repository, build.image_digest,
         plan.validation_json["image_binding"], files,
     )
@@ -125,14 +129,32 @@ def _check_github(source: _Source) -> None:
             or pull.get("head", {}).get("ref") != source.head_branch
             or pull.get("head", {}).get("sha") != source.head_sha
             or merge_sha != source.merged_sha
-            or api.branch_sha(source.base_branch) != source.merged_sha
+            or api.branch_sha(source.base_branch) != source.source_sha
             or not checked_workflow_run(
                 workflow, repository_id=source.repository_id,
-                merged_sha=source.merged_sha, base_branch=source.base_branch,
+                merged_sha=source.source_sha, base_branch=source.base_branch,
             )
             or workflow.get("run_attempt") != source.ci_run_attempt
         ):
             raise ReleasePreparationError("verified_revision_not_target_head")
+        if source.source_sha != source.merged_sha:
+            from app.integrations.github.compatibility import checked_source_compatibility
+            from app.integrations.github.verification import (
+                checked_artifact,
+                verify_registry_digest,
+            )
+            compatibility = checked_source_compatibility(api, baseline=source.merged_sha, source=source.source_sha, files=source.files)
+            if not source.compatibility or any(source.compatibility.get(key) != value for key, value in compatibility.items()):
+                raise ReleasePreparationError("source_compatibility_changed")
+            artifacts = [row for row in api.run_artifacts(source.ci_run_id) if row.get("name") == "deployflow-build" and not row.get("expired")]
+            if len(artifacts) != 1 or artifacts[0].get("id") != source.artifact_id:
+                raise ReleasePreparationError("build_artifact_changed")
+            digest = checked_artifact(api.artifact_zip(source.artifact_id), repository_id=source.repository_id,
+                                      commit_sha=source.source_sha, run_id=source.ci_run_id,
+                                      run_attempt=source.ci_run_attempt, image_repository=source.image_repository)
+            if digest != source.image_digest:
+                raise ReleasePreparationError("build_artifact_changed")
+            verify_registry_digest(source.image_repository, digest)
 
 
 async def prepare_release_candidate(
@@ -198,7 +220,7 @@ async def prepare_release_candidate(
                 verified_build_id=source.build_id, approval_id=source.approval_id,
                 environment_profile_id=profile["id"], environment_profile_hash=profile["hash"],
                 source_bundle_digest=source.bundle_digest, manifest_digest=release.digest,
-                merged_sha=source.merged_sha, image_reference=release.image_reference,
+                merged_sha=source.merged_sha, source_sha=source.source_sha, image_reference=release.image_reference,
                 validation_json=validation,
             )
             db.add(record)

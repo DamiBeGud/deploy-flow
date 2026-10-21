@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import yaml
@@ -114,6 +114,7 @@ def _context(db, run: DeploymentRun, *, observe_only: bool = False):
             or target.approval_id != record.approval_id
             or target.source_bundle_digest != record.source_bundle_digest
             or target.merged_sha != record.merged_sha
+            or (target.source_sha or target.merged_sha) != (record.source_sha or record.merged_sha)
             or run.previous_release_id != record.rollback_from_release_id
             or release_files(db, target) != files
         ):
@@ -131,6 +132,7 @@ def _context(db, run: DeploymentRun, *, observe_only: bool = False):
                 or record.plan_id != source.plan_id or record.approval_id != source.approval_id
                 or record.source_bundle_digest != source.bundle_digest
                 or record.merged_sha != source.merged_sha
+                or (record.source_sha or record.merged_sha) != source.source_sha
             ):
                 raise ExecutionError("release_record_corrupt")
             expected = bind_verified_image(
@@ -162,9 +164,11 @@ def _context(db, run: DeploymentRun, *, observe_only: bool = False):
         DeploymentPolicy.application_id == run.application_id,
         DeploymentPolicy.environment_profile_id == run.environment_profile_id,
         DeploymentPolicy.enabled.is_(True),
-    ))
+    ).with_for_update())
     if not observe_only and (policy is None or not settings().deployment_execution_enabled or settings().auth_mode != "oidc"):
         raise ExecutionError("deployment_not_authorized")
+    if not observe_only and record.kind == "standard" and policy.allowed_source_sha and policy.allowed_source_sha != (record.source_sha or record.merged_sha):
+        raise ExecutionError("source_not_authorized_by_policy")
     manifests = checked_manifests(
         files, digest=record.manifest_digest, namespace=profile["namespace"],
         application_id=str(record.application_id), registry=profile["registry"],
@@ -216,7 +220,9 @@ def _apply(job_id: UUID, token: UUID, run_id: UUID, item: dict) -> None:
         transition(db, run, "applying")
     with Session.begin() as db:
         _, run = _fenced(db, job_id, token, run_id)
-        _context(db, run)
+        source = _context(db, run)[0]
+        if source is not None:
+            _check_github(source)
         journal = db.scalar(select(DeploymentResource).where(
             DeploymentResource.deployment_run_id == run_id,
             DeploymentResource.kind == kind,
@@ -241,9 +247,15 @@ def _observe(job_id: UUID, token: UUID, run_id: UUID, deployment: dict, image: s
         ))
         if not row or not row.uid:
             raise ExecutionError("deployment_inventory_missing")
-        status = rollout_status(row.name, str(run.application_id), row.uid, image, row.generation)
+        try:
+            status = rollout_status(row.name, str(run.application_id), row.uid, image, row.generation)
+        except ClusterError as exc:
+            status = {"status": "unavailable", "code": exc.code}
+        status["observed_at"] = datetime.now(timezone.utc).isoformat()
         run.rollout_json = status
         transition(db, run, "monitoring")
+    if status["status"] == "unavailable":
+        raise ExecutionError(status["code"], transient=status["code"] in {"cluster_unavailable", "cluster_access_expired"})
     if status["status"] == "failed":
         reason = status.get("reason")
         failure = {
@@ -282,6 +294,7 @@ def _health(job_id: UUID, token: UUID, run_id: UUID, service: dict, deployment: 
                 **result, "status": external["status"],
                 "code": external.get("code"), "external": external,
             }
+        result["observed_at"] = datetime.now(timezone.utc).isoformat()
         run.health_json = result
         transition(db, run, "checking_health")
         if result["status"] == "passed":
@@ -295,7 +308,7 @@ async def _execute(job_id: UUID, token: UUID, run_id: UUID) -> None:
         run = db.get(DeploymentRun, run_id)
         if not run:
             raise ExecutionError("deployment_missing")
-        candidate_observation = run.status in {"monitoring", "checking_health"}
+        candidate_observation = bool(db.scalar(select(DeploymentResource.id).where(DeploymentResource.deployment_run_id == run_id, DeploymentResource.status == "applied")))
         source, record, files, manifests = _context(db, run, observe_only=candidate_observation)
         applied = {(row.kind, row.name) for row in db.scalars(select(DeploymentResource).where(
             DeploymentResource.deployment_run_id == run_id,

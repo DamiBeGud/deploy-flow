@@ -12,6 +12,7 @@ from app.config import settings
 from app.deployments import execution as executor
 from app.deployments.jobs import execute as execute_delivery
 from app.deployments.queue import queue_execution
+from app.dispatcher import dispatch_execution_once
 from app.kubernetes.client import ClusterError
 from app.main import app
 from app.persistence.database import Session
@@ -164,6 +165,9 @@ def test_pending_rollout_retries_and_reuses_owned_resources(client, monkeypatch)
     # read-only rollout observation or trigger another mutation.
     monkeypatch.setattr(executor, "_source", lambda *_: pytest.fail("source was rechecked during observation"))
     monkeypatch.setattr(executor, "_check_github", lambda *_: pytest.fail("GitHub was rechecked during observation"))
+    published = []
+    assert dispatch_execution_once(published.append) == 1
+    assert published == [str(job_id)]
     executor.execute(str(job_id))
     with Session() as db:
         assert db.get(DeploymentRun, run_id).status == "succeeded"
@@ -193,11 +197,37 @@ def test_pending_health_resumes_without_reapplying_resources(client, monkeypatch
         job = db.get(ExecutionJob, job_id)
         assert job.status == "retry_wait"
         job.next_dispatch_at = db.scalar(select(func.now())) - timedelta(seconds=1)
+    published = []
+    assert dispatch_execution_once(published.append) == 1
+    assert published == [str(job_id)]
     executor.execute(str(job_id))
     with Session() as db:
         assert db.get(DeploymentRun, run_id).status == "succeeded"
         assert db.get(ExecutionJob, job_id).attempts == 2
     assert applied == ["ConfigMap", "Service", "Deployment"]
+
+
+@pytest.mark.parametrize("mode", ["not_due", "publish_failed"])
+def test_dispatch_does_not_release_retry_before_due_or_after_publish_failure(client, monkeypatch, mode):
+    run_id = prepared_run(client, monkeypatch)
+    job_id = opted_in_job(run_id, monkeypatch)
+    with Session.begin() as db:
+        job = db.get(ExecutionJob, job_id)
+        job.status = "retry_wait"
+        deadline = db.scalar(select(func.now())) + timedelta(seconds=60 if mode == "not_due" else -1)
+        job.next_dispatch_at = deadline
+
+    def fail_publish(_):
+        if mode == "not_due":
+            pytest.fail("future retry must not be published")
+        raise ConnectionError("broker unavailable")
+
+    assert dispatch_execution_once(fail_publish) == 0
+    with Session() as db:
+        job = db.get(ExecutionJob, job_id)
+        assert job.status == "retry_wait"
+        assert job.next_dispatch_at == deadline
+        assert job.attempts == 0
 
 
 def test_expired_execution_lease_cannot_finish(client, monkeypatch):
@@ -270,3 +300,63 @@ def test_external_release_requires_internal_and_external_health(client, monkeypa
     assert executor._health(job_id, token, run_id, service, deployment, ingress) is True
     with Session() as db:
         assert db.get(DeploymentRun, run_id).status == "succeeded"
+
+
+def test_worker_published_before_dispatch_commit_waits_then_claims_and_observes(client, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    run_id = prepared_run(client, monkeypatch)
+    job_id = opted_in_job(run_id, monkeypatch)
+    applied = []
+    monkeypatch.setattr(executor, "apply_owned", lambda item, *_: (
+        applied.append(item["kind"]) or {"uid": f"uid-{item['kind']}", "generation": 1}
+    ))
+    statuses = iter([0, 0, 0, 1])
+    def observed(*_):
+        ready = next(statuses)
+        return {"status": "ready" if ready else "pending", "desired_replicas": 1,
+                "ready_replicas": ready, "available_replicas": ready}
+    monkeypatch.setattr(executor, "rollout_status", observed)
+    monkeypatch.setattr(executor, "service_health", lambda *_: {"status": "passed"})
+    executor.execute(str(job_id))
+    for attempt in range(3):
+        with Session.begin() as db:
+            db.get(ExecutionJob, job_id).next_dispatch_at = db.scalar(select(func.now())) - timedelta(seconds=1)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            futures = []
+            started = Event()
+            def worker(identifier):
+                started.set()
+                executor.execute(identifier)
+            def publish(identifier):
+                futures.append(pool.submit(worker, identifier))
+                assert started.wait(2)
+                # Dispatcher still holds the DB row lock here. The worker's
+                # actual SELECT FOR UPDATE claim must wait for transaction commit.
+                assert not futures[0].done()
+            assert dispatch_execution_once(publish) == 1
+            futures[0].result(timeout=10)
+        with Session() as db:
+            run = db.get(DeploymentRun, run_id)
+            assert run.rollout_json['ready_replicas'] == (1 if attempt == 2 else 0)
+            assert run.status == ('succeeded' if attempt == 2 else 'monitoring')
+    assert applied == ['ConfigMap', 'Service', 'Deployment']
+    with Session() as db:
+        assert db.get(ExecutionJob, job_id).attempts == 4
+
+
+def test_expired_lease_reclaimed_via_dispatcher_fences_previous_owner(client, monkeypatch):
+    run_id = prepared_run(client, monkeypatch)
+    job_id = opted_in_job(run_id, monkeypatch)
+    old_token, _ = executor._claim(job_id)
+    with Session.begin() as db:
+        db.get(ExecutionJob, job_id).lease_expires_at = db.scalar(select(func.now())) - timedelta(seconds=1)
+    published = []
+    assert dispatch_execution_once(published.append) == 1
+    new_token, _ = executor._claim(job_id)
+    assert new_token != old_token
+    executor._finish(job_id, old_token, None)
+    with Session() as db:
+        assert db.get(ExecutionJob, job_id).lease_token == new_token
+    executor._finish(job_id, new_token, executor.ExecutionError('rollout_pending', transient=True))

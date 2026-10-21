@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.identity import Identity, get_identity
@@ -30,6 +30,7 @@ from app.persistence.models import (
     DeploymentResource,
     DeploymentRun,
     ExecutionJob,
+    GitHubJob,
     InfrastructurePlan,
     InfrastructurePullRequest,
     ReleaseSpecificationRecord,
@@ -43,6 +44,7 @@ Key = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=12
 
 class DeploymentPolicyWrite(BaseModel):
     enabled: bool
+    allowed_source_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
 
 
 class CleanupResource(BaseModel):
@@ -76,6 +78,8 @@ def _run_document(db, run: DeploymentRun) -> dict:
         "id": str(run.id), "application_id": str(run.application_id),
         "environment_profile_id": run.environment_profile_id,
         "release_id": str(run.release_id), "release_digest": release.manifest_digest,
+        "source_sha": release.source_sha or release.merged_sha,
+        "baseline_sha": release.merged_sha,
         "kind": release.kind,
         "rollback_target_release_id": str(release.rollback_target_release_id) if release.rollback_target_release_id else None,
         "image_reference": release.image_reference, "status": run.status,
@@ -88,6 +92,7 @@ def _run_document(db, run: DeploymentRun) -> dict:
                        "uid": row.uid, "generation": row.generation,
                        "error_code": row.error_code} for row in resources],
         "created_at": run.created_at.isoformat(),
+        "updated_at": run.updated_at.isoformat(),
     }
 
 
@@ -105,6 +110,8 @@ def get_release(release_id: UUID, identity: Actor):
             "rollback_from_release_id": str(release.rollback_from_release_id) if release.rollback_from_release_id else None,
             "plan_id": str(release.plan_id), "verified_build_id": str(release.verified_build_id),
             "environment_profile_id": release.environment_profile_id,
+            "source_sha": release.source_sha or release.merged_sha,
+            "baseline_sha": release.merged_sha,
             "source_bundle_digest": release.source_bundle_digest,
             "manifest_digest": release.manifest_digest,
             "image_reference": release.image_reference,
@@ -121,6 +128,68 @@ def list_deployments(application_id: UUID, identity: Actor):
             DeploymentRun.application_id == application_id,
         ).order_by(DeploymentRun.created_at.desc(), DeploymentRun.id.desc()).limit(50)).all()
         return {"deployments": [_run_document(db, run) for run in runs]}
+
+
+
+@router.get("/applications/{application_id}/observation")
+async def current_observation(application_id: UUID, identity: Actor):
+    from app.deployments.observations import application_observation, cluster_snapshot
+    with Session() as db:
+        application_for(db, application_id, identity)
+        row = db.execute(select(DeploymentResource, ReleaseSpecificationRecord).join(
+            DeploymentRun, DeploymentResource.deployment_run_id == DeploymentRun.id,
+        ).join(ReleaseSpecificationRecord, DeploymentRun.release_id == ReleaseSpecificationRecord.id).where(
+            DeploymentRun.application_id == application_id, DeploymentResource.kind == "Deployment",
+            DeploymentResource.uid.is_not(None),
+        ).order_by(DeploymentRun.created_at.desc()).limit(1)).first()
+        resource, release = row if row else (None, None)
+        service = db.scalar(select(DeploymentResource).where(DeploymentResource.deployment_run_id == resource.deployment_run_id,
+                            DeploymentResource.kind == "Service")) if resource else None
+    snapshot = await cluster_snapshot()
+    return application_observation(snapshot, application_id=application_id, resource=resource, release=release, service=service)
+
+
+@router.get("/applications/{application_id}/release-status")
+def release_status(application_id: UUID, identity: Actor):
+    with Session() as db:
+        application_for(db, application_id, identity)
+        pr = db.scalar(select(InfrastructurePullRequest).join(InfrastructurePlan).where(
+            InfrastructurePlan.application_id == application_id,
+        ).order_by(InfrastructurePullRequest.created_at.desc()).limit(1))
+        if not pr:
+            return {"status": "awaiting_infrastructure_review", "build": None}
+        build = db.scalar(select(VerifiedBuild).where(VerifiedBuild.pull_request_id == pr.id).order_by(
+            VerifiedBuild.verified_at.desc(), VerifiedBuild.run_id.desc(), VerifiedBuild.run_attempt.desc(),
+        ).limit(1))
+        job = db.scalar(select(DeliveryJob).where(DeliveryJob.verified_build_id == build.id, DeliveryJob.kind == "prepare")) if build else None
+        return {"pull_request_id": str(pr.id), "baseline_sha": pr.merged_sha,
+                "source_sha": pr.source_head_sha, "status": pr.source_status or pr.status,
+                "error_code": pr.source_error_code or pr.error_code,
+                "preparation": _job_document(job) if job else None,
+                "build": {"id": str(build.id), "source_sha": build.source_sha or build.merged_sha,
+                          "run_id": build.run_id, "run_attempt": build.run_attempt, "artifact_id": build.artifact_id,
+                          "image_reference": f"{build.image_repository}@{build.image_digest}",
+                          "compatibility": build.compatibility_json} if build else None}
+
+
+@router.post("/applications/{application_id}/reconcile-source", status_code=202)
+def reconcile_source(application_id: UUID, identity: Actor, key: Key):
+    identity.require_write()
+    with Session.begin() as db:
+        application_for(db, application_id, identity)
+        db.get(Application, application_id, with_for_update=True)
+        pr = db.scalar(select(InfrastructurePullRequest).join(InfrastructurePlan).where(
+            InfrastructurePlan.application_id == application_id, InfrastructurePullRequest.status == "verified",
+        ).order_by(InfrastructurePullRequest.created_at.desc()).limit(1))
+        if not pr:
+            raise HTTPException(409, "A verified infrastructure baseline is required")
+        def operation():
+            job = GitHubJob(kind="source_reconcile", pull_request_id=pr.id, status="queued", attempts=0)
+            db.add(job)
+            db.flush()
+            return {"job_id": str(job.id), "status": "queued"}, 202
+        response, code = idempotent(db, identity, f"applications/{application_id}/reconcile-source", key, {}, operation)
+    return JSONResponse(response, status_code=code)
 
 
 @router.get("/deployments/{deployment_id}")
@@ -161,6 +230,7 @@ def get_deployment_policy(application_id: UUID, identity: Actor):
             DeploymentPolicy.environment_profile_id == "local-k3s",
         ))
         return {"enabled": bool(policy and policy.enabled),
+                "allowed_source_sha": policy.allowed_source_sha if policy else None,
                 "execution_available": settings().deployment_execution_enabled,
                 "cleanup_available": settings().deployment_cleanup_enabled,
                 "actor_id": policy.actor_id if policy else None}
@@ -189,7 +259,10 @@ def set_deployment_policy(application_id: UUID, body: DeploymentPolicyWrite, ide
             else:
                 policy.enabled = body.enabled
                 policy.actor_id = identity.actor_id
-            return {"enabled": body.enabled, "actor_id": identity.actor_id}, 200
+            if "allowed_source_sha" in body.model_fields_set:
+                policy.allowed_source_sha = body.allowed_source_sha
+            return {"enabled": body.enabled, "actor_id": identity.actor_id,
+                    "allowed_source_sha": policy.allowed_source_sha}, 200
 
         response, code = idempotent(
             db, identity, f"applications/{application_id}/deployment-policy",

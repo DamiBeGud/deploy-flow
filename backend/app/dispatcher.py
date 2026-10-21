@@ -107,6 +107,11 @@ def dispatch_delivery_once(publish=delivery_job.send) -> int:
             except Exception:
                 log.warning("delivery_job_publish_unavailable job_id=%s", job.id)
                 break
+            # The retry is due and published. Queue it before advancing the
+            # publication throttle, otherwise the worker mistakes that new
+            # timestamp for an unexpired retry backoff and refuses the claim.
+            if job.status == "retry_wait":
+                job.status = "queued"
             job.next_dispatch_at = now + timedelta(seconds=settings().redispatch_seconds)
             dispatched += 1
     return dispatched
@@ -130,6 +135,8 @@ def dispatch_execution_once(publish=execution_job.send, cleanup_publish=cleanup_
             except Exception:
                 log.warning("execution_job_publish_unavailable job_id=%s", job.id)
                 break
+            if job.status == "retry_wait":
+                job.status = "queued"
             job.next_dispatch_at = now + timedelta(seconds=settings().redispatch_seconds)
             dispatched += 1
     return dispatched

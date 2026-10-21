@@ -15,6 +15,7 @@ export function DeploymentProgress({ applicationId, pullRequest, canDeploy }: {
   const [deployment, setDeployment] = useState<DeploymentRun | null>(null)
   const [policy, setPolicy] = useState<Policy | null>(null)
   const [events, setEvents] = useState<Events['events']>([])
+  const [observedNow, setObservedNow] = useState(() => Date.now())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const deploymentId = pullRequest.deployment?.id ?? null
@@ -45,7 +46,7 @@ export function DeploymentProgress({ applicationId, pullRequest, canDeploy }: {
           }
           if (batch.events.length < 100) break
         }
-        if (!abort.signal.aborted) { setDeployment(run); setEvents(history) }
+        if (!abort.signal.aborted) { setDeployment(run); setEvents(history); setObservedNow(Date.now()) }
       } catch (reason) { if (!abort.signal.aborted) setError(errorMessage(reason)) }
       finally { inFlight = false }
     }
@@ -89,7 +90,7 @@ export function DeploymentProgress({ applicationId, pullRequest, canDeploy }: {
   }
 
   return <section className="deployment-progress" aria-label="Deployment progress">
-    <b>Deployment</b>
+    <b>Reviewed infrastructure deployment</b><p><Link to={`/applications/${applicationId}`}>Open current application state and all releases</Link></p>
     {error && <p role="alert">{error}</p>}
     {!deploymentId ? <p role="status">{pullRequest.release_preparation
       ? `Release preparation: ${pullRequest.release_preparation.status}${pullRequest.release_preparation.error_code ? ` · ${pullRequest.release_preparation.error_code}` : ''}`
@@ -97,7 +98,8 @@ export function DeploymentProgress({ applicationId, pullRequest, canDeploy }: {
       <p role="status">Status: {deployment?.status ?? pullRequest.deployment?.status}{deployment?.error_code ? ` · ${deployment.error_code}` : ''}</p>
       <p className="section-note">Deployment ID: <code>{deploymentId}</code> · Target: deployflow-test</p>
       {deployment && <p>Image: <code>{deployment.image_reference}</code></p>}
-      {deployment?.rollout && <p>Replicas: {deployment.rollout.ready_replicas}/{deployment.rollout.desired_replicas} ready · {deployment.rollout.available_replicas} available{deployment.rollout.reason ? ` · ${deployment.rollout.reason}` : ''}</p>}
+      {deployment?.rollout?.ready_replicas != null && <p>Recorded replicas: {deployment.rollout.ready_replicas}/{deployment.rollout.desired_replicas} ready · {deployment.rollout.available_replicas} available{deployment.rollout.reason ? ` · ${deployment.rollout.reason}` : ''}</p>}
+      {deployment?.rollout && <p>Rollout observation: {deployment.rollout.observed_at ? new Date(deployment.rollout.observed_at).toLocaleString() : 'time not recorded'}{!deployment.rollout.observed_at || observedNow - Date.parse(deployment.rollout.observed_at) > 60000 ? ' · historical / stale' : ''}{deployment.rollout.code ? ` · ${deployment.rollout.code}` : ''}</p>}
       {deployment?.health && <p>Internal service health: {deployment.health.status} · {deployment.health.service}{deployment.health.path}</p>}
       {deployment?.resources.length ? <ul>{deployment.resources.map(row => <li key={`${row.kind}:${row.name}`}>{row.kind}/{row.name}: {row.status}{row.error_code ? ` · ${row.error_code}` : ''}</li>)}</ul> : null}
       {events.length > 0 && <div className="deployment-events"><b>Recent progress</b><ul>{events.slice(-8).map(event => <li key={event.sequence}>{event.type.replace('deployment.', '')}{event.error_code ? ` · ${event.error_code}` : ''}</li>)}</ul></div>}

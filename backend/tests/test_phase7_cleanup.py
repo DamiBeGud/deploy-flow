@@ -86,6 +86,8 @@ def test_cleanup_requires_exact_inventory_and_confirms_absence(client, monkeypat
         assert job.status == "retry_wait"
         assert db.get(DeploymentRun, run_id).status == "cleaning"
         job.next_dispatch_at = db.scalar(select(func.now())) - timedelta(seconds=1)
+    assert dispatch_execution_once(cleanup_publish=cleaned.append) == 1
+    assert cleaned == [str(job_id), str(job_id)]
     cleanup.execute(str(job_id))
     with Session() as db:
         assert db.get(DeploymentRun, run_id).status == "cleaned"

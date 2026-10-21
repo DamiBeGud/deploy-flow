@@ -127,6 +127,9 @@ def test_preflight_retries_unavailable_admission_then_waits(client, monkeypatch)
     with Session.begin() as db:
         db.get(DeliveryJob, preflight_id).next_dispatch_at = db.scalar(select(func.now())) - timedelta(seconds=1)
     monkeypatch.setattr("app.deployments.jobs.call_kubernetes", passed)
+    published = []
+    assert dispatch_delivery_once(published.append) == 1
+    assert published == [str(preflight_id)]
     execute(str(preflight_id))
     with Session() as db:
         assert db.get(DeploymentRun, run_id).status == "waiting_for_executor"

@@ -60,4 +60,5 @@ async def github_webhook(request: Request):
         ).scalar_one_or_none()
         if inserted:
             db.add(GitHubJob(kind="reconcile", delivery_id=delivery_id, status="queued", attempts=0))
+            db.add(GitHubJob(kind="source_reconcile", delivery_id=delivery_id, status="queued", attempts=0))
     return {"accepted": True, "duplicate": inserted is None}

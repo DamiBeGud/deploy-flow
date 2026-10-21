@@ -21,7 +21,7 @@ x-source-watch: &source-watch
 
 x-backend: &backend
   build: .
-  image: deployflow-backend:local
+  image: ${DF_BACKEND_IMAGE:-deployflow-backend:local}
   environment: &environment
     DF_DATABASE_URL: postgresql+psycopg://deployflow:local-only@postgres:5432/deployflow
     DF_REDIS_URL: redis://redis:6379/0
@@ -103,7 +103,7 @@ services:
 
   migrate:
     build: .
-    image: deployflow-backend:local
+    image: ${DF_BACKEND_IMAGE:-deployflow-backend:local}
     environment:
       DF_DATABASE_URL: postgresql+psycopg://deployflow:local-only@postgres:5432/deployflow
     command: ["alembic", "upgrade", "head"]
@@ -202,7 +202,7 @@ services:
   external-probe:
     profiles: ["phase7-executor"]
     build: .
-    image: deployflow-backend:local
+    image: ${DF_BACKEND_IMAGE:-deployflow-backend:local}
     user: "10001:10001"
     networks: [external-health]
     read_only: true

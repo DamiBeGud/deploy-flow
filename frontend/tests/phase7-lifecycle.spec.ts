@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-const application = { id: '11111111-1111-4111-8111-111111111111', name: 'fixture', repository_url: 'https://github.com/example/fixture', revision: 'main', latest_analysis: null }
+const application = { id: '11111111-1111-4111-8111-111111111111', name: 'fixture', repository_url: 'https://github.com/example/fixture', revision: 'main', lifecycle_version: 2, latest_analysis: null }
 
 function run(id: string, status: string, previous: string | null, kind: 'standard' | 'rollback' = 'standard') {
   return {
@@ -34,6 +34,8 @@ test('shows history and queues an explicit rollback after review', async ({ page
     if (path === `/api/v1/applications/${application.id}`) return route.fulfill({ json: application })
     if (path === `/api/v1/applications/${application.id}/deployments`) return route.fulfill({ json: { deployments: history } })
     if (path === `/api/v1/applications/${application.id}/deployment-policy`) return route.fulfill({ json: { enabled: true, execution_available: true, cleanup_available: true, actor_id: 'operator' } })
+    if (path.endsWith('/observation')) return route.fulfill({ json: { status: 'ready', observed_at: new Date().toISOString(), desired_replicas: 1, ready_replicas: 1, available_replicas: 1 } })
+    if (path.endsWith('/release-status')) return route.fulfill({ json: { status: 'verified' } })
     if (path.endsWith('/events')) return route.fulfill({ json: { events: [{ sequence: 1, type: 'deployment.succeeded', occurred_at: '2026-10-14T10:00:00Z' }], last_sequence: 1 } })
     if (path === `/api/v1/deployments/${current.id}/rollback` && route.request().method() === 'POST') {
       expect(route.request().headers()['idempotency-key']).toBeTruthy()
@@ -75,6 +77,8 @@ test('requires review of exact first-deployment inventory before cleanup', async
     if (path === `/api/v1/applications/${application.id}`) return route.fulfill({ json: application })
     if (path === `/api/v1/applications/${application.id}/deployments`) return route.fulfill({ json: { deployments: [first] } })
     if (path === `/api/v1/applications/${application.id}/deployment-policy`) return route.fulfill({ json: { enabled: true, execution_available: true, cleanup_available: true, actor_id: 'operator' } })
+    if (path.endsWith('/observation')) return route.fulfill({ json: { status: 'ready', observed_at: new Date().toISOString(), desired_replicas: 1, ready_replicas: 1, available_replicas: 1 } })
+    if (path.endsWith('/release-status')) return route.fulfill({ json: { status: 'verified' } })
     if (path.endsWith('/events')) return route.fulfill({ json: { events: [], last_sequence: 0 } })
     if (path === `/api/v1/deployments/${first.id}/cleanup`) {
       posted = route.request().postDataJSON()
@@ -90,3 +94,60 @@ test('requires review of exact first-deployment inventory before cleanup', async
   await page.getByRole('button', { name: 'Confirm inventory cleanup' }).click()
   expect(posted).toEqual({ expected_release_digest: first.release_digest, resources: [{ kind: 'ConfigMap', name: 'fixture-config', uid: 'owned-uid' }] })
 })
+
+for (const scenario of ['ready', 'failed', 'unavailable', 'missing', 'stale', 'zero']) {
+  test(`fresh lifecycle observations: ${scenario}, retries and session restoration`, async ({ page }) => {
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+    let observed = 0
+    const first = run('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'monitoring', null)
+    let history = [first]
+    await page.route('**/api/v1/**', async route => {
+      const path = new URL(route.request().url()).pathname
+      if (path === '/api/v1/auth/config') return route.fulfill({ json: { mode: 'development' } })
+      if (path === '/api/v1/me') return route.fulfill({ json: { actor_id: 'operator', organization_id: 'org', roles: ['deployer'], authentication: 'oidc' } })
+      if (path === `/api/v1/applications/${application.id}`) return route.fulfill({ json: application })
+      if (path.endsWith('/deployments')) return route.fulfill({ json: { deployments: history } })
+      if (path.endsWith('/deployment-policy')) return route.fulfill({ json: { enabled: false, execution_available: true, actor_id: 'operator' } })
+      if (path.endsWith('/release-status')) return route.fulfill({ json: { status: 'verified', baseline_sha: 'b'.repeat(40), source_sha: 'c'.repeat(40), build: { source_sha: 'c'.repeat(40), image_reference: first.image_reference, run_id: 20, run_attempt: 1, artifact_id: 80 } } })
+      if (path.endsWith('/events')) return route.fulfill({ json: { events: [] } })
+      if (path.endsWith('/observation')) {
+        observed++
+        const status = observed < 3 ? 'pending' : scenario
+        const counts = status === 'unavailable' || status === 'missing' ? {} : { desired_replicas: scenario === 'zero' ? 0 : 1, ready_replicas: status === 'ready' ? 1 : 0, available_replicas: status === 'ready' ? 1 : 0 }
+        return route.fulfill({ json: { status: status === 'stale' ? 'pending' : status, ...counts, observed_at: scenario === 'stale' ? '2020-01-01T00:00:00Z' : status === 'unavailable' ? null : new Date().toISOString(), code: status === 'unavailable' ? 'cluster_access_expired' : status === 'missing' ? 'deployment_absent' : undefined } })
+      }
+      return route.fulfill({ status: 404, json: { detail: `Unexpected mock route: ${path}` } })
+    })
+    await page.goto(`/applications/${application.id}`)
+    await page.getByRole('button', { name: 'Connect to local backend' }).click()
+    await expect(page).toHaveTitle(/DeployFlow/)
+    await expect(page).toHaveURL(new RegExp(`/applications/${application.id}$`))
+    const live = page.getByRole('region', { name: 'Current application state' })
+    await expect(live.getByText(scenario === 'zero' ? /Replicas: 0\/0 ready/ : /Replicas: 0\/1 ready/)).toBeVisible()
+    // The real polling loop performs multiple cycles before the observation changes.
+    await expect.poll(() => observed, { timeout: 18000 }).toBeGreaterThanOrEqual(3)
+    if (scenario === 'ready') await expect(live.getByText(/Replicas: 1\/1 ready · 1 available/)).toBeVisible()
+    if (scenario === 'unavailable') {
+      await expect(live.getByText(/cluster_access_expired/)).toBeVisible()
+      await expect(live.getByText(/Replicas:/)).toHaveCount(0)
+    }
+    if (scenario === 'missing') await expect(live.getByText(/deployment_absent/)).toBeVisible()
+    if (scenario === 'failed') await expect(live.getByText(/Current cluster observation: failed/)).toBeVisible()
+    if (scenario === 'stale') await expect(live.getByText(/Last observed:.*stale/)).toBeVisible()
+    await page.screenshot({ path: `/tmp/deployflow-phase7-${scenario}.png`, fullPage: false })
+    // A later release must become the default details selection, not remain
+    // pinned to the bootstrap PR. Explicit history selection is still available.
+    const next = run('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'checking', first.release_id)
+    history = [next, first]
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    await expect(page.getByRole('region', { name: 'Selected deployment' }).getByText(next.id, { exact: false }).first()).toBeVisible()
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Current application state' })).toBeVisible()
+    await expect(page.getByText('2 stored releases')).toBeVisible()
+    await expect(live.getByText(/Automatic deployment: disabled/)).toBeVisible()
+    await expect(page.locator('vite-error-overlay')).toHaveCount(0)
+    expect(errors).toEqual([])
+  })
+}

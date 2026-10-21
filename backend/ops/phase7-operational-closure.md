@@ -1,5 +1,477 @@
 # Phase 7 operational closure
 
+## Latest live checkpoint — 2026-10-21, 14:55 UTC
+
+**Backend activation and first-release operational acceptance passed. Phase 7
+remains open for automatic update, rollback and replay evidence.** This section
+supersedes earlier same-day preparation snapshots below.
+
+The user explicitly approved continuation after the six-step activation and
+acceptance summary. Executed the concrete local activation proposal and scoped
+baseline recovery. No k3s resources were applied, patched, deleted, restarted,
+scaled or adopted; no Kubernetes token was requested. Cleanup remains disabled.
+
+### Local runtime refresh — 2026-10-21, 17:23 UTC
+
+At the user's request to run the latest local backend/frontend, compared all
+**86** runtime source/configuration files against the running API: no differences.
+API readiness passed. Updated the two remaining older helper containers,
+`kube-validator` and `external-probe`, to image `59fb4d9…`; all ten backend
+services now use the same verified runtime image. Validator MCP initialization/
+tool discovery and external-probe HTTP responsiveness passed, without validation,
+probe or deployment operations against a target application.
+
+Vite was already serving the correct frontend checkout on `127.0.0.1:5174`.
+Fresh `npm run build` and `npm run lint` passed. No staging or commit occurred;
+a proposed commit message is available in `/tmp/deployflow-commit-message.txt`.
+
+Read-only SSH confirmed target app still ready/available 1/1. A browser smoke
+check initially reported unavailable observation. Diagnosed a local networking
+issue: reader and deployer containers still shared the *old* network namespaces
+of their automatically restarted SSH-tunnel containers. Validator, just recreated,
+matched its tunnel. Recreated only `kube-reader` and `kube-deployer` against their
+current tunnel namespaces with the same image/configuration. Tunnels, policies,
+flags, credentials and cluster resources were not changed by this refresh.
+
+Final read-only checks passed: all three identity services share their current
+tunnel network namespace; 10/10 backend services run the verified image; API
+`/health/ready` returns ready. Real desktop Playwright sign-in, lifecycle refresh
+and reload passed with current 1/1 ready/available, durable succeeded, no browser
+runtime/console errors and no Vite overlay. Evidence is outside the repository:
+`/tmp/deployflow-latest-local-smoke.json` and `/tmp/deployflow-latest-local.png`.
+Browser plugin was unavailable, so the existing Playwright installation was used.
+
+Operational follow-up: tunnel container restart/resume may require recreation
+of its dependent reader/validator/deployer container because shared network
+namespace attachment can become stale. This is a local Compose recovery issue;
+record and diagnose it explicitly rather than widening RBAC or changing cluster
+resources. It does not establish automatic-release/rollback/replay acceptance.
+
+### What changed and what is running
+
+1. Authenticated `PUT /api/v1/applications/{id}/deployment-policy` disabled only
+   app3213214 (`ad7c395b-836d-4874-a5a6-e35ba836f366`) and app31312
+   (`36ae77de-39eb-45bb-9a33-07971d08a955`). All four existing policies were
+   then verified disabled. Other policies were not enabled.
+2. Stopped exactly `api worker github-worker delivery-worker dispatcher webhook
+   kube-deployer kube-reader`. PostgreSQL, Redis, Keycloak, validator, external
+   probe and tunnels were not recreated. Source/image hashes were rechecked.
+3. Took a fresh private custom-format backup after writer stop. Full isolated
+   restore matched revision/counts: `91d2e0a7b534`, 104 applications, 5 runs,
+   5 releases and zero enabled policies. No live DB restore was performed.
+4. Updated ignored `.env` only for the approved image and execution/cleanup
+   selectors (0600). Ran:
+
+   ```bash
+   DF_BACKEND_IMAGE=deployflow-backend:phase7-source-lifecycle-20261021 docker compose run --rm --no-deps migrate alembic upgrade c3a71d9e4208
+   DF_BACKEND_IMAGE=deployflow-backend:phase7-source-lifecycle-20261021 DF_DEPLOYMENT_EXECUTION_ENABLED=false DF_DEPLOYMENT_CLEANUP_ENABLED=false docker compose --profile phase5 --profile phase7-delivery --profile phase7-executor up -d --no-deps --no-build --force-recreate api worker github-worker delivery-worker dispatcher webhook kube-deployer kube-reader
+   ```
+
+   Live schema is **`c3a71d9e4208`**; original application/run/release counts
+   were preserved. All eight services now run image
+   `sha256:59fb4d9a76995c7d8b9cba6f185f1081ce5dfffcdef9bcb07d4bc12e16b72232`.
+   Running dispatcher hash is
+   `57b86518771b810a9fcfe85ded5ca985f81a8e8f2a1c2c0a312172ed3fd38b8c`.
+5. Real OIDC sign-in and browser reload passed. Fresh reader observation showed
+   ready/available 1/1. Broker replay naturally blocked both expired jobs with
+   `execution_deadline_exceeded` and moved their runs to reconciliation; no
+   database status/deadline reset was used.
+6. For the approved baseline recovery, enabled execution in `.env` and recreated
+   only `api dispatcher delivery-worker kube-deployer` with the same image,
+   execution true, cleanup false. Through the normal authenticated API enabled
+   **only** app3213214 with `allowed_source_sha` restricted to
+   `5ee02c99f312269f95854b3c26d0301d6088df00`, then called
+   `POST /api/v1/deployments/1a326ed7-c5e4-43ef-8443-fb4c1e36c7b0/retry-execution`
+   with a distinct idempotency key. Inventory was verified fully applied before
+   retry; the executor followed its observe-only path, with no reapply.
+7. Deployment reached **`succeeded`**, execution job **`completed`**. Fresh
+   rollout timestamp `2026-10-21T14:51:08.136978Z`: desired/updated/ready/available
+   **1/1/1/1**, generation/observedGeneration 1. Internal `/healthz` passed at
+   `14:51:08.504867Z`. Browser details and page reload displayed success correctly.
+
+Current authorization is intentionally restricted to that baseline SHA; it
+**does not authorize marker-2, marker-3 or arbitrary future source revisions**.
+Other application policies remain disabled. Global execution is enabled in the
+four relevant services above; the GitHub/analysis/webhook processes retained
+execution false. Cleaner remains disabled/unprovisioned locally.
+
+### Durable baseline and resource evidence
+
+Application `ad7c395b-836d-4874-a5a6-e35ba836f366`, deployment
+`1a326ed7-c5e4-43ef-8443-fb4c1e36c7b0`, release
+`2feab925-c237-4651-aebe-d495e580195b` now form the successful baseline.
+Image remains
+`ghcr.io/damibegud/deployflow-node-express-fixture@sha256:f1b3a237d1baa8e1391ccfa20f3e41859c3132c0af3dd57a0fa2797a47416fd9`.
+No new application release or rollback lineage was manufactured during recovery.
+
+- [Persisted/API baseline and current observation](evidence/phase7-20261021/baseline.json)
+- [Real authenticated lifecycle screenshot](evidence/phase7-20261021/baseline-succeeded.png)
+- [Namespace identities/spec hashes before recovery](evidence/phase7-20261021/namespace-before-recovery.json)
+- [Namespace identities/spec hashes after recovery](evidence/phase7-20261021/namespace-after-recovery.json)
+
+The two namespace snapshots compare exactly equal across all **10** Deployment,
+Service, ConfigMap and Pod resources, including unrelated workloads. Only
+identity/labels and spec/data digests are retained; no ConfigMap/secret values.
+The application resource UIDs remain those in the earlier identity table below.
+No RBAC, namespace, checker, token or Kubernetes resources were changed.
+
+Fresh backup: private directory
+`/Users/damibegud/.config/deployflow/backups/phase7-activation-otc0ohcf` (0700),
+`deployflow.dump` 476168 bytes, SHA256
+`a6c71f1b291e2a5f4ba4d2e294422fe0878ecf0353a59f6347882ad0f46fc993`.
+Includes 0600 `.env` snapshot, archive index, restore log and verification JSON.
+Only the isolated backup-check container/network were removed afterward.
+Fallback image remains `deployflow-backend:phase7-recovery-7f3d74b`, with additive
+schema retained and execution disabled if fallback is required. Database restore
+is a separate operational proposal, never an automatic downgrade.
+
+### Source PR prepared; automatic release remains blocked
+
+Under the approved source-change scope, created draft
+[fixture PR #14](https://github.com/DamiBeGud/deployflow-node-express-fixture/pull/14):
+branch `phase7/automatic-release-3`, head
+`fc6e750d64c32e62de2eb3887eb8b2af39149a44`, base main
+`43d762ecf74d86d331bcca4bb34f8395e30dc648`. It changes only `src/app.js` and
+`test/app.test.js`, marking `/` and `/api/info` as `phase7-release-3`.
+`/healthz`, Dockerfile, workflow and Kubernetes files are unchanged.
+Fresh fixture `npm test`: **3 passed**; `git diff --check`: passed.
+PR CI [run 39621047976](https://github.com/DamiBeGud/deployflow-node-express-fixture/actions/runs/39621047976),
+attempt 1, completed successfully for `pull_request` at the exact PR head. This
+run tests/builds but does not publish the deployable push/main image.
+PR is draft and **not merged**; main remains unchanged. The remote commit was
+created through repository-scoped GitHub App operations; local fixture edits
+remain uncommitted/unstaged and were preserved. Main project work is also
+uncommitted/unstaged. Do not confuse source-branch CI with deployable push/main CI.
+
+Fresh GitHub read-only audit confirmed App `4957845`, installation `162024583`,
+events `pull_request`, `push`, `workflow_run`; required existing permissions are
+present. Endpoint remains `https://wh.damibegud.cloud/webhooks/github`, JSON,
+TLS validation enabled. DNS is still **NXDOMAIN**, including via public resolver
+1.1.1.1. Nameservers are `launch1.spaceship.net` / `launch2.spaceship.net`.
+No configured local Cloudflare/ngrok tunnel or DNS access was found; the k3s host
+has no active cloudflared/nginx/caddy service. Local nginx serves another project
+and was left untouched. The webhook receiver still lacks its signing secret.
+
+The operator has been asked which endpoint to prepare: restore the stable
+hostname using DNS/proxy access, or explicitly select a temporary Cloudflare
+Quick Tunnel for the bounded acceptance test. No endpoint was published, no
+GitHub App hook settings changed and no signing secret rotated while that
+configuration decision is pending. Do not treat general approval as a choice
+of a new public endpoint/provider or silently substitute manual reconciliation.
+
+### Updated acceptance matrix
+
+| Criterion | Status |
+| --- | --- |
+| Reviewed infrastructure PR → verified immutable baseline image | Passed |
+| New backend/schema and retry correction actually running | Passed |
+| Authorized baseline retry → ready → internal health → durable success | Passed |
+| Real desktop lifecycle, fresh 1/1 observation, success after reload | Passed |
+| Unrelated namespace resources unchanged by recovery | Passed |
+| Signed real webhook ingestion | Failed/unconfigured; endpoint decision pending |
+| Eligible later source → automatic deployed new digest/version | Unproven; draft PR ready |
+| New rollback release restoring previous healthy version | Unproven |
+| Worker replay after intentional rollback | Unproven |
+| Credential renewal | Not required yet; expiries still October 21, 18:50 / 19:54 UTC |
+| Cleanup | Disabled and unproven |
+| External application ingress/TLS | Not applicable for this internal-only fixture |
+
+After endpoint configuration, obtain/verify exact final merge SHA authorization
+before a fresh completed CI event; do not race source policy against ingestion.
+Pending marker-2 remains outside the current source bound. Complete the genuine
+automatic update, then exact rollback and relevant-worker replay evidence.
+Removing the SHA bound for standing future automation remains a distinct explicit
+policy scope. Phase 7 is **not complete**.
+
+## Earlier preparation checkpoint — 2026-10-21 (superseded by live checkpoint above)
+
+**Local implementation prepared and tested; operational acceptance incomplete.**
+Phase 7 remains open. No live migration, normal-stack restart, policy change,
+GitHub write, token request, or k3s mutation was performed during this work.
+Historical approvals below do not authorize the proposals in this section.
+
+The focused [automatic-releases agent handoff](automatic-releases-handoff.md)
+documents the missing activation/configuration/evidence, approval boundaries,
+and a suggested prompt for resuming this work later.
+
+### Acceptance matrix
+
+| Criterion | Status | Evidence / remaining work |
+| --- | --- | --- |
+| Reviewed bootstrap PR → merge → verified immutable image | Passed | Fixture PR #12, baseline/build/image below; GitHub and registry queried read-only |
+| Due retry publication → worker claim → persisted observations | Passed locally; live unproven | Real PostgreSQL transaction/row-lock test, multiple observation retries, expired lease fencing; old dispatcher still running |
+| Current replica/freshness UI, errors, missing resources, reload | Passed locally; live activation unproven | Desktop browser scenarios and reader/API comparison; mocked scenarios do not establish deployment success |
+| Subsequent source provenance, compatibility, ordering, policy gates | Passed locally; not activated | New migration, source reconciliation, preflight/executor tests; conservative Node response-data policy |
+| Real ready workload and internal reachability | Passed | Target 3213214 is ready/available 1/1; independent internal `/healthz` returns `{"status":"ok"}` |
+| Durable succeeded result and matching normal lifecycle UI | Failed currently | Target remains monitoring with stale 0/1; expired execution deadline; no fabricated DB success |
+| GitHub event delivery to local receiver | Failed currently | Latest completed delivery 502; current public DNS NXDOMAIN; local receiver lacks signing secret |
+| Eligible later commit → genuinely automatic update → new visible version | Unproven | Marker-2 image exists but is not deployed; marker-3 patch is local only |
+| Manual rollback → new release → previous healthy version | Unproven live | Local release lineage/replay tests pass; no successful live baseline/rollback target yet |
+| Relevant worker restart/replay without unauthorized effects | Unproven live | Isolated regression tests pass; live restart needs separate approval |
+| Namespace/ownership and reader/validator/deployer separation | Passed for read-only audit/local tests | Namespace UID verified; no permissions widened; live mutation revalidation still pending |
+| External DNS/HTTP/TLS for application | Not applicable | Fixture is internal-only; webhook reachability is a separate required integration |
+| Destructive first-deployment cleanup | Unproven | Remains disabled; separate approval/test if requested |
+
+### Current audit, identities, and discrepancy from historical notes
+
+- Main HEAD remains `7f3d74b`. Preserved the preexisting dispatcher correction,
+  cleanup/delivery/execution tests, and closure-record edits. All new work is
+  uncommitted; nothing staged or pushed. Fixture checkout is
+  `/Users/damibegud/uni/BA/deployflow-node-express-fixture`; older checkout untouched.
+- Live database is still `91d2e0a7b534`: 104 applications, 5 deployment runs,
+  5 releases. No queued/running analysis or GitHub jobs and no pending delivery
+  jobs at the last audit. There are two expired `retry_wait` execution jobs:
+  `5f8a5f05-9158-49a2-a94d-bdc24d7b77af` (3213214, deadline
+  `2026-10-20T21:24:46.979283Z`) and
+  `1702bc45-bd5b-420e-95b9-665dcf74bad3` (31312, deadline
+  `2026-10-20T20:33:08Z`). Recheck immediately before any activation.
+- Both applications' policies remain enabled. Global execution is true in
+  API/dispatcher/delivery-worker/kube-deployer; cleanup is false. This contradicts
+  earlier disabled-state snapshots. No policies or runtime flags were changed.
+- API, dispatcher, delivery-worker, kube-deployer and github-worker use image
+  `sha256:a8a3364e93961ce7936767608e38fc3c6a89654a102bbf7bbdc446933e4163bc`.
+  Reader, validator, analysis worker, webhook and external probe use older image
+  `sha256:7c33ac24a1bc7571ced09da59ef3115a272c4a6a3df3daf5eb9e365f3042a617`.
+  The running dispatcher does not contain the retry fix. Edited files do not
+  establish runtime activation. OIDC works through local Keycloak; real browser
+  sign-in, reload, and authenticated read-only lifecycle requests succeeded.
+- Read-only SSH confirmed `connectops@homeserver1` at `91.89.185.146`.
+  Namespace `deployflow-test` UID is
+  `84a720fd-dc36-4592-a2bb-12c8f54ddc7c`; restricted Pod Security is pinned to
+  v1.36. Ingress class is nginx; no Ingress was introduced.
+- Private reader/validator tokens expire respectively
+  `2026-10-21T18:50:23Z` / `18:50:25Z`; deployer expires
+  `2026-10-21T19:54:38Z`. Files are 0600. Renewal requires a separate exact
+  ServiceAccount/duration/destination proposal; no token values were printed.
+
+### Selected live application (not the older deleted application)
+
+| Identity | Value |
+| --- | --- |
+| Application | `node-express-service3213214` |
+| Application ID | `ad7c395b-836d-4874-a5a6-e35ba836f366` |
+| Infrastructure PR | #12; DB `95ecb4d7-1eb4-4953-a77a-5c627b6f22aa` |
+| Approved merge/source baseline | `5ee02c99f312269f95854b3c26d0301d6088df00` |
+| Verified build | `09cfbad5-6647-4176-b539-640200fe8797`, run `39498021958`, attempt 1 |
+| Deployment | `1a326ed7-c5e4-43ef-8443-fb4c1e36c7b0` |
+| Release | `2feab925-c237-4651-aebe-d495e580195b` |
+| Release digest | `80be449f819212832ceee59ee386a09c7035f6b68f76c841b22ef88f83c7c08b` |
+| Image | `ghcr.io/damibegud/deployflow-node-express-fixture@sha256:f1b3a237d1baa8e1391ccfa20f3e41859c3132c0af3dd57a0fa2797a47416fd9` |
+| Deployment UID | `a4e5a93a-75a9-4339-91f4-5da8a4693f79` |
+| Service UID | `d4a13c5f-adf7-4f57-8922-4baf83649f1e` |
+| ConfigMap UID | `64fae1ec-088e-41a3-b6f8-9135e71271a8` |
+| Pod | `node-express-service3213214-8477f6db49-6ltg4`, UID `ffaddc40-5c8b-427f-b645-3da20384f5c4` |
+
+Deployment and Service names are `node-express-service3213214`; ConfigMap is
+`node-express-service3213214-config`. Ownership matches this application.
+Live desired/updated/ready/available counts are **1/1/1/1**, generation and
+observedGeneration both 1; Pod Ready is true, no restarts. Persisted/API snapshot
+is desired 1, updated 1, ready 0, available 0; health is null. The defect is stale
+worker observation, not evidence that a Running Pod alone means readiness.
+Read-only server curl to Service `10.43.136.112:4587/healthz` passed;
+`/api/info` has no release marker. This is not marker-2 or marker-3.
+
+Older app `node-express-service31312`, ID
+`36ae77de-39eb-45bb-9a33-07971d08a955`, deployment
+`ce60fd15-9fe1-4e69-98a1-81af27105f45`, release
+`f8b75cb9-8aed-430f-b87c-777e6bf1e032`, has no Deployment, Service, or ConfigMap
+remaining. Its old healthy observation cannot establish a current baseline.
+The older `node-express-service` partial inventory and unrelated checker were
+left untouched. No new live rollback lineage exists.
+
+### Later source build and webhook reachability
+
+GitHub repository ID `1372078565`, App ID `4957845`, installation `162024583`.
+Remote main and fixture checkout HEAD both equal
+`43d762ecf74d86d331bcca4bb34f8395e30dc648`. Run `39499725243`, attempt 1,
+completed successfully for push/main at `.github/workflows/deployflow.yml`.
+Artifact `12298414767` (`deployflow-build`, 364 bytes) resolves to verified
+registry digest
+`sha256:98b2579ed0f2409280a79e57e38d425407efbb97b3a05b95825547f8e4690d3e`
+in `ghcr.io/damibegud/deployflow-node-express-fixture`. This image is published,
+not deployed. It contains `phase7-release-2` in `/` and `/api/info`.
+
+App webhook URL is `https://wh.damibegud.cloud/webhooks/github`, JSON, TLS
+validation enabled. Latest completed delivery `3849431776327909376` at
+`2026-10-20T21:22:36.341Z` returned 502; other audited deliveries also failed.
+Current DNS inspection gives NXDOMAIN, and public curl cannot connect. The
+local receiver has no signing secret configured and returns 503; webhook inbox
+has zero rows. Neither a successful build nor a local source refresh proves an
+automatic release path.
+
+Configuration choices requiring separate approval:
+
+1. Restore the named public HTTPS endpoint and explicitly route only
+   `/webhooks/github` to local receiver port 8002 through a persistent reverse
+   tunnel/proxy. Keep the API, Keycloak, Docker, and databases private. Provision
+   one matching high-entropy HMAC secret privately for this App/receiver, retain
+   TLS validation, and verify signed deliveries. DNS/proxy/tunnel ownership and
+   credentials must be confirmed first; laptop/tunnel uptime limits delivery.
+2. Use an approved hosted HTTPS tunnel with an exact stable URL and the same
+   path/HMAC restrictions. This requires an App webhook URL change and introduces
+   a tunnel provider/availability dependency. Do not publish a random endpoint
+   or change App settings without approval.
+3. Until reachable, authenticated `POST /api/v1/applications/{id}/reconcile-source`
+   with an idempotency key provides a manual fallback. First disable execution
+   and/or bound the policy through an approved operation. Reconciliation can
+   prepare and deploy under enabled policy; it is not a harmless read or evidence
+   of automatic webhook ingestion.
+
+### Local implementation and test evidence
+
+- Retained due-retry dispatcher fix; publication failure/backoff, transaction
+  ordering, worker claims, slow observation, lease recovery/fencing covered.
+- Separate source/baseline provenance and immutable release lineage; exact
+  workflow/run/attempt/artifact/registry verification; current-head forward-only
+  admission, serialized per app, duplicate/rerun/replay suppression. Old admitted
+  sources cannot automatically undo a manual rollback. Optional exact
+  `allowed_source_sha` bounds a policy. Authorization is rechecked before apply.
+- Conservative Node compatibility accepts response-data/marker changes and
+  docs/tests. Approved infrastructure/workflow, dependency/runtime/startup/port/
+  health/configuration changes and ambiguous executable edits require review.
+  This intentionally does not establish general JavaScript semantic equivalence.
+- Separate current read-only observation and historical results; honest missing,
+  drifted, unavailable, stale and zero values; bounded/coalesced server reads and
+  nonoverlapping browser polling; newest release selection and session restore.
+- Prepared additive migration `91d2e0a7b534 → c3a71d9e4208`; SQL in
+  [phase7-source-lifecycle-migration.sql](phase7-source-lifecycle-migration.sql).
+  Source columns backfill historical merge SHAs. No policy is enabled by migration.
+  Downgrade refuses provenance loss. Compose now supports `DF_BACKEND_IMAGE`.
+- Fixture patch changes only response marker `phase7-release-2` to
+  `phase7-release-3` and matching tests. It is uncommitted/unpushed; `/healthz`
+  unchanged. A later exact commit and bounded auto-test need separate approval.
+
+Actual final commands/results (2026-10-21):
+
+| Working directory | Command | Result |
+| --- | --- | --- |
+| `deploy-flow/backend` | `DF_TEST_IMAGE=deployflow-backend:phase7-source-lifecycle-20261021 sh scripts/test_phase7_isolated.sh` | **166 passed**, 24.35s; one existing Starlette/AnyIO warning |
+| `deploy-flow/frontend` | `npm run build` | Passed (TypeScript + Vite) |
+| `deploy-flow/frontend` | `npm run lint` | Passed, no warnings |
+| `deploy-flow/frontend` | `npm run test:e2e -- tests/phase7-lifecycle.spec.ts tests/oidc-callback.spec.ts --workers=2` | **9 passed**, about 1.2 min; mocked lifecycle APIs |
+| `deployflow-node-express-fixture` | `npm test` | **3 passed** |
+| Backend isolated image with final worktree mounted | `ruff check app tests scripts migrations` | Failed only on existing `I001` extra blank line in untouched `tests/test_local_oidc.py`; unrelated formatter edit was restored |
+| Same isolated check | `ruff check app tests scripts migrations --exclude tests/test_local_oidc.py` | Passed |
+| `deploy-flow/backend` | `docker compose config --quiet` | Passed |
+| Project and fixture | `git diff --check` | Passed |
+
+The backend runner creates its own PostgreSQL/network, uses no normal Compose
+.env, and mounts no live GitHub/Kubernetes credentials. It exercises actual DB
+claims/observations, migration preservation, negative provenance, concurrent
+notifications, source supersession, revoked/disabled/bounded policy and rollback
+replay. No test reset/truncate touched the live database. Local tests do not prove
+live deployment or rollback. Existing test-local-OIDC whitespace was restored
+rather than keeping an unrelated formatter edit.
+That preexisting import-format issue is recorded as an out-of-scope lint item.
+
+Desktop screenshots in `/tmp`: `deployflow-phase7-ready.png`, `-failed.png`,
+`-unavailable.png`, `-missing.png`, `-stale.png`, `-zero.png`, and
+`deployflow-phase7-rollback-review.png`. The real old-backend read-only session is
+`deployflow-phase7-live-before-activation.png`. `/tmp` artifacts are ephemeral;
+this record and committed test sources (once separately approved) retain the
+reproducible evidence. Final ready screenshot was inspected for history wrapping.
+
+### Prepared activation artifacts (not activated)
+
+Prepared local image: `deployflow-backend:phase7-source-lifecycle-20261021`, ID
+`sha256:59fb4d9a76995c7d8b9cba6f185f1081ce5dfffcdef9bcb07d4bc12e16b72232`.
+It passed the final isolated suite. Runtime source bytes match the local worktree;
+`app/dispatcher.py` SHA256 is
+`57b86518771b810a9fcfe85ded5ca985f81a8e8f2a1c2c0a312172ed3fd38b8c`.
+No image was published or substituted into running services.
+
+Private backup directory:
+`/Users/damibegud/.config/deployflow/backups/phase7-source-lifecycle-bah3zoh0`
+(0700; files 0600). `deployflow.dump` is 476000 bytes, SHA256
+`24a58ebffed672720f34f0a206b9cf8eb2ad465e6b29ccc0a6cc8f83c47b0bc4`.
+Includes private `backend.env.before`, archive index, restore log, verification
+JSON. Never print that environment copy. The full dump restored successfully via
+`pg_restore --exit-on-error` into isolated `phase7_restore_check`, with original
+revision/counts. The pending migration then applied to that copy; fallback ORM
+could read all 28 mapped tables and preserved 104 apps/5 runs/5 releases. This
+backup predates a final approved writer stop; take and verify a fresh backup
+before live migration.
+After verification, only the task-created isolated PostgreSQL container
+`d2316d26971a5459323e1012cf657eae1562c3e9634340e3e7d07fe9036bc50d`
+and network `deployflow-phase7-tests` were removed. Private backup files remain.
+
+For restore, stop the exact DB-writing services with separate approval, retain
+the current DB, restore the reviewed dump into a **new** explicitly named recovery
+database using `pg_restore --no-owner --no-acl --exit-on-error`, verify schema and
+counts, then approve switching the service DB URL. Do not overwrite/truncate the
+live DB or assume restoring a database reverses cluster changes. A restore loses
+changes after the dump and requires a reconciled cluster/job inventory.
+
+### Next approval proposal: local activation with deployment disabled
+
+**Proposed only.** Scope is this local DeployFlow stack/database; no k3s mutation,
+token request, GitHub write, source reconciliation, application deployment,
+rollback, cleanup, tunnel, DNS or App setting change is included.
+
+1. Recheck pending jobs, image identities and policies. If new actionable work
+   changes this inventory, stop and revise the proposal. Through the existing
+   authenticated API, use `PUT /api/v1/applications/{id}/deployment-policy` with
+   `{"enabled":false}` for exactly app `ad7c395b-836d-4874-a5a6-e35ba836f366`
+   (3213214) and `36ae77de-39eb-45bb-9a33-07971d08a955` (31312). Other policies
+   are not enabled or changed. These policies remain disabled after activation.
+2. Stop only `api worker github-worker delivery-worker dispatcher webhook
+   kube-deployer kube-reader`; keep PostgreSQL, Redis, Keycloak, validator,
+   external probe and existing tunnels running. Preserve ignored `.env` privately;
+   set `DF_BACKEND_IMAGE=deployflow-backend:phase7-source-lifecycle-20261021`,
+   `DF_DEPLOYMENT_EXECUTION_ENABLED=false`, and
+   `DF_DEPLOYMENT_CLEANUP_ENABLED=false`. Preserve all credentials/other settings.
+3. Take a fresh private custom-format pg_dump after stopping writers; verify a
+   full restore in an isolated database. Apply only the reviewed additive
+   migration below, then recreate only those eight services. From `backend/`:
+
+   ```bash
+   docker compose --profile phase5 --profile phase7-delivery --profile phase7-executor stop api worker github-worker delivery-worker dispatcher webhook kube-deployer kube-reader
+   # After the private backup/restore verification and the exact .env edits above:
+   DF_BACKEND_IMAGE=deployflow-backend:phase7-source-lifecycle-20261021 docker compose run --rm --no-deps migrate alembic upgrade c3a71d9e4208
+   DF_BACKEND_IMAGE=deployflow-backend:phase7-source-lifecycle-20261021 DF_DEPLOYMENT_EXECUTION_ENABLED=false DF_DEPLOYMENT_CLEANUP_ENABLED=false docker compose --profile phase5 --profile phase7-delivery --profile phase7-executor up -d --no-deps --no-build --force-recreate api worker github-worker delivery-worker dispatcher webhook kube-deployer kube-reader
+   ```
+
+4. Expect roughly 1–3 minutes of API/worker interruption plus backup verification
+   time. Recheck image IDs, dispatcher hash, schema, flags, both disabled policies,
+   OIDC and reader-only lifecycle state. The two expired jobs may undergo normal
+   guarded deadline transitions into reconciliation; no retry API is included,
+   no journal is reset, and disabled flags/policies prevent resource apply.
+5. Fallback: recreate those same services with available tested image
+   `deployflow-backend:phase7-recovery-7f3d74b` (ID `a8a3364…`) while keeping
+   execution/cleanup false and both policies disabled. Retain the additive schema;
+   do not run downgrade or restore automatically. New lifecycle/source features
+   would be unavailable. A live DB restore or re-enabling execution requires a
+   separate proposal/approval.
+
+This boundary comes from the user's explicit restrictions on live migrations,
+service interruption, and policy/flag changes. Generic “continue” is not approval.
+
+### Subsequent boundaries and acceptance sequence
+
+After the non-deploying activation, select only app3213214. Inspect its normal
+expired-deadline outcome; propose the exact `retry-execution` API operation and
+scoped authorization to finish fully journaled read-only rollout/health through
+the intended state machine. If resources no longer exist or ownership changed,
+stop and propose a new baseline deployment rather than calling it an upgrade.
+Require durable `succeeded` and matching fresh UI before choosing it as rollback
+baseline. Never directly edit deployment status/deadlines to manufacture success.
+
+Separately restore approved signed webhook reachability. Review/approve the
+marker-3 patch, exact GitHub commit/push and a bounded automatic test for only
+3213214. Bind policy to the exact resulting SHA; existing marker-2/pending releases
+must not execute outside that bound. Observe real delivery, verification,
+preflight, policy and execution with no hidden manual reconciliation. Verify a
+different running digest, marker-3, internal health, ready/available replicas,
+durable success, UI, and unchanged unrelated resource UIDs/specs.
+
+Then propose rollback to the previously succeeded baseline image/configuration,
+create a new rollback release through DeployFlow, verify previous version/health
+and preserved lineage, and separately approve only relevant worker restarts for
+replay acceptance. Replay must not undo intentional rollback. Cleanup remains
+disabled and unproven. Phase 7 cannot close until these live criteria pass.
+
+## Historical evidence (retained; current state is above)
+
 ## Preflight observed on 2026-10-19
 
 Phase 7 remains open. This record does not authorize a database migration,
@@ -642,6 +1114,249 @@ No workload or RBAC change, deployment, merge, database migration, or cleanup
 was performed. The deployer token was deliberately left unchanged and remains
 expired; it needs separate renewal approval before a live deployment attempt.
 
+### Phase 7 recovery preparation — 2026-10-20, subsequently approved
+
+The user requested continued Phase 7 work after the new service did not deploy.
+Read-only inspection found repository HEAD `7f3d74b` with the numeric-user fix
+committed, but the normal API still loads `node-web-v3` from image
+`sha256:7c33ac24a1bc7571ced09da59ef3115a272c4a6a3df3daf5eb9e365f3042a617`.
+The running API, dispatcher, and deployer still enable execution and disable
+cleanup. Reader/validator access is valid after the renewal above; the separate
+deployer token is expired, and its worker remains attached to an old tunnel
+network namespace.
+
+Current target is application `slaven-test`, ID
+`708446f7-8487-4baf-9b71-1716ab18befd`. Its PR #8 is verified; deployment
+`d1a5c288-ae99-4018-af28-4b48634c4756` is `checking`, with a queued execution
+job at zero attempts and **no resource inventory**. Its application policy is
+enabled. The execution deadline is `2026-10-20T19:06:29Z`. Thus simply renewing
+the deployer credential and restarting it could resume already-authorized
+queued work; continued Phase 7 work is not blanket approval to deploy it.
+
+Fresh SSH reads confirmed `homeserver1`, the expected namespace UID, the
+healthy checker, and the previously approved port-qualified Role. No
+`slaven-test` workload exists. The older failed application's Deployment and
+Pod are no longer present, while Service `node-express-service` remains. Its
+old database inventory was not changed to hide that drift. That application
+and its remaining resources are outside this new service's recovery scope.
+
+A fresh image was built locally from committed HEAD as
+`deployflow-backend:phase7-recovery-7f3d74b`, ID
+`sha256:a8a3364e93961ce7936767608e38fc3c6a89654a102bbf7bbdc446933e4163bc`.
+It has not been selected as the normal backend image, published, or activated.
+No container interruption or Kubernetes mutation occurred during preparation.
+The fresh image passed all **125 backend tests** in the dedicated test database
+already at schema head, with the existing third-party deprecation warning.
+Targeted Ruff checks and `git diff --check` passed. No live migration was run.
+
+The next approval proposal is strictly a **non-deploying activation**:
+
+1. Through the normal authenticated, audited API, disable only `slaven-test`'s
+   deployment policy. Preserve existing run, release, and journal history.
+2. Privately back up the ignored local configuration. Set global execution
+   to `false`, retaining OIDC and cleanup `false`, so the replacement is not a
+   deployment-enabling action.
+3. Request only `deployflow-deployer`'s new 24-hour token using
+   `sudo -n k3s kubectl -n deployflow-test create token deployflow-deployer --duration=24h`.
+   Back up the expired token and atomically store the replacement as `0600`
+   outside Git. No reader/validator renewal, RBAC, workload, or SSH-key change
+   is included.
+4. Preserve the previous local image and select the tested recovery image.
+   Recreate only `api`, `github-worker`, `delivery-worker`, `dispatcher`, and
+   `kube-deployer`, using `--no-deps --no-build --force-recreate` with the
+   delivery/executor profiles. This briefly interrupts those five local
+   services and reconnects the deployer to its existing tunnel. Database,
+   Redis, Keycloak, other workers, reader/validator, and all tunnels stay up.
+5. Verify `node-web-v4`, OIDC, disabled execution/cleanup and target policy,
+   worker readiness and credential/RBAC boundaries. Existing queued obsolete
+   releases may be marked failed by the normal worker's deadline/source/
+   authorization guards; do not directly edit job or deployment state. No
+   existing inventory is deleted. Keep execution disabled afterward.
+
+Only after that approval and verification should a fresh `node-web-v4` bundle
+be prepared for review. PR approval/creation, merge, policy re-enablement, and
+deployment remain later explicit boundaries. This proposal contains no live
+deployment, rollback, cleanup, migration, or server resource modification.
+
+### Phase 7 non-deploying recovery — approved and completed on 2026-10-20
+
+The user approved the complete non-deploying recovery scope above. The normal
+OIDC-authenticated policy API disabled only `slaven-test` automatic deployment
+before executor credential renewal. The policy actor and successful idempotent
+command receipt were verified. The policy route does not emit a separate
+`AuditEvent` row; the authenticated command/actor records, not a nonexistent
+event, are the evidence for this operation.
+
+The expected server identity, namespace UID, and restricted enforcement pinned
+to `v1.36` were checked again before requesting only the new
+`deployflow-deployer` 24-hour token. Its actual expiry is
+`2026-10-21T19:54:38Z` (21:54:38 Berlin time). It was stored atomically as
+`0600` outside Git. The unchanged reader/validator tokens still expire around
+20:50 Berlin time on 2026-10-21 and therefore become the first credential
+renewal boundary if testing continues past that time.
+
+Private recovery backup:
+`/Users/damibegud/.config/deployflow/phase7/recovery-20261020-Yvex7t` (`0700`).
+It contains the prior ignored `.env`, expired deployer token, and non-secret
+container/namespace verification records (`0600` files). No credential value
+was printed or copied into Git. The previous selected image was preserved as
+`deployflow-backend:phase7-before-recovery-7f3d74b`, ID
+`sha256:7c33ac24a1bc7571ced09da59ef3115a272c4a6a3df3daf5eb9e365f3042a617`.
+
+The approved recovery image, ID
+`sha256:a8a3364e93961ce7936767608e38fc3c6a89654a102bbf7bbdc446933e4163bc`,
+is now selected by `deployflow-backend:local`. Only `api`, `github-worker`,
+`delivery-worker`, `dispatcher`, and `kube-deployer` were recreated. The other
+12 container identities and start times are unchanged; no tunnel, database,
+Redis, Keycloak, reader/validator, analysis worker, webhook, or external probe
+was restarted. All five replacements run the tested image with OIDC,
+execution **false**, cleanup **false**, and zero container restarts. The GitHub,
+delivery, and execution workers report ready without startup tracebacks or
+error-level logs. The normal API readiness check passes.
+
+Verification evidence:
+
+- The normal API and UID-10001 deployer load `node-web-v4`. An in-memory preview
+  from the current saved assessment/intent emits `USER 1000:1000`. That preview
+  was not saved, approved, pushed, or deployed; the previous bundle/release
+  bytes remain unchanged.
+- The real deployer credential reaches `deployflow-health-checker:http` and
+  reads `status: ready`. Real calls still deny Secret listing, other namespace
+  workloads, and other Service proxies with HTTP 403. No kube apply/delete or
+  RBAC operation was performed.
+- Reader observations and the existing bundle's server-side admission dry-run
+  pass through the normal API gateways. Validation saved no cluster resources.
+- The old expired `slaven-test` deployment
+  `d1a5c288-ae99-4018-af28-4b48634c4756` now reports `failed` with
+  `execution_deadline_exceeded`; its job is blocked and its inventory is empty.
+  The worker's normal deadline guard made this transition. No deployment row
+  was edited directly and no old image was deployed.
+- The older application's run `17bd1499-c80c-47c2-9c9a-3d3b27419499` now reports
+  `reconciling` with the same deadline error, retaining all three journal rows.
+  Its drifted/missing workload was not recreated and its remaining Service was
+  not deleted. Resolving that unrelated historical inventory needs its own
+  reviewed recovery/cleanup decision.
+- All application deployment policies are disabled. Execution and cleanup
+  remain disabled globally; the old `slaven-test` command is not automatically
+  retried or replaced by a new deployment.
+- All 16 observed namespace resources retained the same UIDs and substantive
+  configuration across recovery. The only server-side mutation was the
+  approved temporary TokenRequest. No workload, Role, binding, ServiceAccount,
+  ConfigMap, or Service was modified. No PR creation/merge, live deployment,
+  rollback, cleanup, database migration, or restore occurred.
+
+Frontend testing used Playwright because the Browser plugin is not available.
+The initial probe overlapped the approved API interruption and failed while
+that container was being recreated. After readiness, a fresh real Keycloak
+sign-in and the `slaven-test` lifecycle/Refresh interaction passed with no
+runtime or console errors and no framework overlay. URL:
+`http://127.0.0.1:5174/applications/708446f7-8487-4baf-9b71-1716ab18befd`.
+The 1600 × 1100 screenshot `/tmp/deployflow-phase7-recovery-auth.png` was
+visually inspected: it shows the historical deadline failure and that execution
+controls are unavailable, as intended. No deployment or policy-enable button
+was invoked. The temporary script is
+`/tmp/deployflow-phase7-recovery-auth.mjs`; it contains no credential values.
+
+The recovery activation is complete. Phase 7 remains open: prepare a fresh
+reviewed `node-web-v4` bundle and infrastructure PR, verify its merged CI image,
+then separately approve global execution/application-policy enablement and
+deployment. Preserve the expired attempt as history. Second-release, rollback,
+and durable restart/replay proof still require real approved runs. Restoring
+the old image or re-enabling execution is not an automatic fallback; either
+needs renewed approval and must not resurrect the obsolete bundle.
+
+### Approved deployment ce60fd15 — application healthy, durable completion blocked
+
+The user explicitly approved global execution activation, enabling only
+application `node-express-service31312` (`36ae77de-39eb-45bb-9a33-07971d08a955`),
+and execution of deployment `ce60fd15-9fe1-4e69-98a1-81af27105f45` in
+`deployflow-test`. The exact approved release is
+`f8b75cb9-8aed-430f-b87c-777e6bf1e032`, digest
+`49dc66efca873bc2ac4729857d2ad312ce98a67ed7b9b1ab05f51828f1ccaa22`, image
+`ghcr.io/damibegud/deployflow-node-express-fixture@sha256:c5fb47152a8c574ae5432bddf264b49b5c334ef9c7af3db82a6de82236ff55c4`.
+
+Before activation, read-only checks confirmed the exact host/namespace UID,
+restricted enforcement pinned to `v1.36`, valid credentials, and absence of the
+three target resources. PR #10's merge SHA
+`874bf0669706ab4ad63d8f08eb4a81791e19c01e` is the target branch head; all six
+merged files match the approved bundle. CI run `39489383460`, attempt 1, and
+artifact `12293824803` pass repository/commit/run/image identity checks. The
+public registry digest exists, and its actual image config is `linux/amd64`
+with `User: 1000:1000`. Stored release hashes and deterministic image binding
+match. A fresh server-side admission dry-run passes all three resources.
+
+Execution was enabled in the ignored `.env`, retaining cleanup disabled.
+Only local `api`, `delivery-worker`, `dispatcher`, and `kube-deployer` were
+recreated with the already-tested recovery image; all other 13 containers and
+start times are unchanged. Private pre-activation configuration and namespace
+inventory backup:
+`/Users/damibegud/.config/deployflow/phase7/deploy-ce60fd15-0Sy1SZ`.
+
+A real Keycloak administrator session enabled only this application's policy
+through the API, then clicked **Deploy this prepared release** in its normal
+lifecycle UI. The command returned HTTP 202 and execution job
+`1702bc45-bd5b-420e-95b9-665dcf74bad3`. The user was informed that this policy
+also permits future verified releases to queue automatically. All other
+application policies remain disabled.
+
+The normal executor recorded these three applied resources, all generation 1:
+
+| Kind | Name | UID |
+| --- | --- | --- |
+| ConfigMap | `node-express-service31312-config` | `6e2ae07c-23ff-45e8-8324-d2a890aa8bd8` |
+| Service | `node-express-service31312` | `aa62ad4d-1565-4c27-b161-4b6c2ff48940` |
+| Deployment | `node-express-service31312` | `3f122274-9e19-4bad-b319-01d9b1af2ca5` |
+
+Controller-created Pod `node-express-service31312-6f66bfbdfc-znh4m`, UID
+`9add2fd4-4abe-4e10-8162-dfb45bf9fe29`, is Running and ready with zero restarts,
+using the exact approved image digest. The Deployment has one ready and one
+available replica at generation 1. Using the real UID-10001 executor's
+`service_health` path and the recorded Service UID/owner/port, an independent
+checker request returns `passed` for `/healthz`. Exposure is internal; there is
+no Ingress or external DNS/TLS claim. Comparison of all 16 pre-existing
+namespace resources shows unchanged UIDs and substantive configuration. Only
+the three approved top-level resources and their controller-owned Pod were
+added in the observed resource kinds. No unrelated resource was modified.
+
+**Blocking retry defect:** the first observation legitimately returned
+`rollout_pending`, leaving the run `monitoring` and job `retry_wait` after one
+attempt. The dispatcher publishes the due retry but immediately advances the
+same `next_dispatch_at` used by the worker's retry-backoff guard. The worker
+then sees a future timestamp and refuses the claim, so the durable state/UI
+does not advance despite a healthy application. The job deadline is
+`2026-10-20T20:33:08Z`; it must not be silently extended or marked successful.
+The Playwright observation ended after 180 seconds still at `monitoring`, with
+evidence in `/tmp/deployflow-ce60fd15-observation.png`. No framework failure or
+database success override was used. The temporary UI script is
+`/tmp/deployflow-ce60fd15-execute.mjs` and contains no credential values.
+
+A local dispatcher correction now changes a due, successfully published retry
+from `retry_wait` to `queued` before advancing publication throttling. Backoff
+is still checked before publication; failed publication preserves retry state
+and time. Existing claim leases and authorization/UID fences remain unchanged.
+The same defect affects delivery and cleanup retry publication, so both common
+dispatcher paths were corrected without enabling cleanup. Four strengthened
+dispatcher-to-worker tests (rollout, health, preflight, cleanup) reproduce the
+failure against the old code and pass with the fix. Additional checks retain
+future-backoff and failed-publication behavior. Full suite: **127 passed**,
+one existing third-party warning; targeted Ruff checks pass. Only the dedicated
+test database was used, with no live migration.
+
+Prepared image `deployflow-backend:phase7-retry-dispatch-7f3d74b`, ID
+`sha256:6c8cdaeb5aaca8e70ba7b02b86c53648d45d18a992bcb5470a69cb67f040c7b4`,
+is built but **not activated**. The runtime worker code is unchanged by this
+dispatcher-only fix. Further local dispatcher recreation requires explicit
+approval. If the deadline has elapsed by then, a separately approved normal
+retry-reconciliation command for this exact deployment is needed; do not reset
+the database directly or reapply an unrelated release. Already-applied journal
+entries must remain intact and not be applied a second time.
+
+The live application is healthy, but Stage 3's durable/UI completion remains
+unverified until that correction is activated and normal observation completes.
+Global execution and this application's policy remain enabled as approved;
+cleanup remains disabled. No second release, rollback, cleanup, additional PR
+merge, or further service restart occurred after encountering this boundary.
+
 ## Pre-activation verification
 
 - Replacement image: 119 backend tests passed against the dedicated
@@ -663,7 +1378,7 @@ expired; it needs separate renewal approval before a live deployment attempt.
 | --- | --- |
 | Normal local stack uses OIDC and current schema | Passed on 2026-10-19 |
 | Approved scoped deployer and working in-cluster checker | Passed on 2026-10-19; short-lived credential expiry recorded above |
-| Merged fixture reaches healthy deployed state | Unproven |
+| Merged fixture reaches healthy deployed state | Approved ce60fd15 Pod/internal health passed; durable completion/UI blocked on staged dispatcher retry fix |
 | Second release deploys and manually rolls back | Unproven |
 | Worker restart/replay preserves authorization and avoids duplicate effects | Unproven |
 | First-deployment cleanup on reviewed inventory | Deferred; separate destructive-test approval |

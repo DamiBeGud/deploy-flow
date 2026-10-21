@@ -1,0 +1,125 @@
+{
+  "application_id": "ad7c395b-836d-4874-a5a6-e35ba836f366",
+  "policy": {
+    "enabled": true,
+    "actor_id": "0e113e4c-a184-42c8-a685-97bcb40a2243",
+    "allowed_source_sha": "5ee02c99f312269f95854b3c26d0301d6088df00"
+  },
+  "deployment": {
+    "id": "1a326ed7-c5e4-43ef-8443-fb4c1e36c7b0",
+    "application_id": "ad7c395b-836d-4874-a5a6-e35ba836f366",
+    "environment_profile_id": "local-k3s",
+    "release_id": "2feab925-c237-4651-aebe-d495e580195b",
+    "release_digest": "80be449f819212832ceee59ee386a09c7035f6b68f76c841b22ef88f83c7c08b",
+    "source_sha": "5ee02c99f312269f95854b3c26d0301d6088df00",
+    "baseline_sha": "5ee02c99f312269f95854b3c26d0301d6088df00",
+    "kind": "standard",
+    "rollback_target_release_id": null,
+    "image_reference": "ghcr.io/damibegud/deployflow-node-express-fixture@sha256:f1b3a237d1baa8e1391ccfa20f3e41859c3132c0af3dd57a0fa2797a47416fd9",
+    "status": "succeeded",
+    "error_code": null,
+    "event_sequence": 11,
+    "preflight_validation": {
+      "checks": [
+        {
+          "code": "admission_passed",
+          "kind": "ConfigMap",
+          "name": "node-express-service3213214-config",
+          "details": []
+        },
+        {
+          "code": "admission_passed",
+          "kind": "Deployment",
+          "name": "node-express-service3213214",
+          "details": []
+        },
+        {
+          "code": "admission_passed",
+          "kind": "Service",
+          "name": "node-express-service3213214",
+          "details": []
+        }
+      ],
+      "status": "passed",
+      "observed_at": "2026-10-20T21:14:43.733073+00:00"
+    },
+    "rollout": {
+      "name": "node-express-service3213214",
+      "status": "ready",
+      "generation": 1,
+      "observed_at": "2026-10-21T14:51:08.136978+00:00",
+      "ready_replicas": 1,
+      "desired_replicas": 1,
+      "updated_replicas": 1,
+      "available_replicas": 1,
+      "observed_generation": 1
+    },
+    "health": {
+      "path": "/healthz",
+      "status": "passed",
+      "service": "node-express-service3213214",
+      "observed_at": "2026-10-21T14:51:08.504867+00:00"
+    },
+    "previous_release_id": null,
+    "execution_job": {
+      "id": "5f8a5f05-9158-49a2-a94d-bdc24d7b77af",
+      "purpose": "deploy",
+      "status": "completed",
+      "error_code": null
+    },
+    "resources": [
+      {
+        "kind": "ConfigMap",
+        "name": "node-express-service3213214-config",
+        "status": "applied",
+        "uid": "64fae1ec-088e-41a3-b6f8-9135e71271a8",
+        "generation": 1,
+        "error_code": null
+      },
+      {
+        "kind": "Deployment",
+        "name": "node-express-service3213214",
+        "status": "applied",
+        "uid": "a4e5a93a-75a9-4339-91f4-5da8a4693f79",
+        "generation": 1,
+        "error_code": null
+      },
+      {
+        "kind": "Service",
+        "name": "node-express-service3213214",
+        "status": "applied",
+        "uid": "d4a13c5f-adf7-4f57-8922-4baf83649f1e",
+        "generation": 1,
+        "error_code": null
+      }
+    ],
+    "created_at": "2026-10-20T21:14:39.024558+00:00",
+    "updated_at": "2026-10-21T14:51:08.145624+00:00"
+  },
+  "observation": {
+    "observed_at": "2026-10-21T14:51:12.556653+00:00",
+    "attempted_at": "2026-10-21T14:51:11.858013+00:00",
+    "health": "not_checked",
+    "status": "ready",
+    "image": "ghcr.io/damibegud/deployflow-node-express-fixture@sha256:f1b3a237d1baa8e1391ccfa20f3e41859c3132c0af3dd57a0fa2797a47416fd9",
+    "generation": 1,
+    "observed_generation": 1,
+    "desired_replicas": 1,
+    "updated_replicas": 1,
+    "ready_replicas": 1,
+    "available_replicas": 1,
+    "conditions": [
+      {
+        "type": "Available",
+        "status": "True",
+        "reason": "MinimumReplicasAvailable"
+      },
+      {
+        "type": "Progressing",
+        "status": "True",
+        "reason": "NewReplicaSetAvailable"
+      }
+    ]
+  },
+  "runtime_errors": []
+}

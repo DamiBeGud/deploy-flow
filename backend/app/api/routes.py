@@ -40,6 +40,7 @@ from app.persistence.models import (
     AssessmentVersion,
     DeliveryJob,
     DeploymentIntentVersion,
+    DeploymentPolicy,
     DeploymentRun,
     Event,
     GitHubJob,
@@ -167,7 +168,7 @@ def _plan_document(db, plan: InfrastructurePlan) -> dict:
 def _pull_request_document(db, pull_request: InfrastructurePullRequest) -> dict:
     build = db.scalar(select(VerifiedBuild).where(
         VerifiedBuild.pull_request_id == pull_request.id,
-    ).order_by(VerifiedBuild.run_id.desc(), VerifiedBuild.run_attempt.desc()))
+    ).order_by(VerifiedBuild.verified_at.desc(), VerifiedBuild.run_id.desc(), VerifiedBuild.run_attempt.desc()))
     preparation = db.scalar(select(DeliveryJob).where(
         DeliveryJob.kind == "prepare", DeliveryJob.verified_build_id == build.id,
     )) if build else None
@@ -188,6 +189,9 @@ def _pull_request_document(db, pull_request: InfrastructurePullRequest) -> dict:
         "error_code": pull_request.error_code,
         "verified_build": {
             "id": str(build.id),
+            "source_sha": build.source_sha or build.merged_sha,
+            "baseline_sha": build.merged_sha,
+            "artifact_id": build.artifact_id,
             "run_id": build.run_id,
             "run_attempt": build.run_attempt,
             "image_repository": build.image_repository,
@@ -343,8 +347,18 @@ def list_applications(identity: Actor, limit: int = Query(default=50, ge=1, le=1
         if "administrator" not in identity.roles:
             query = query.where(Application.owner_id == identity.actor_id)
         apps = db.scalars(query.order_by(Application.created_at.desc()).limit(limit)).all()
+        ids = [app.id for app in apps]
+        policies = {row.application_id: row.enabled for row in db.scalars(select(DeploymentPolicy).where(DeploymentPolicy.application_id.in_(ids)))}
+        recent = {}
+        for run, release in db.execute(select(DeploymentRun, ReleaseSpecificationRecord).join(
+            ReleaseSpecificationRecord, DeploymentRun.release_id == ReleaseSpecificationRecord.id,
+        ).where(DeploymentRun.application_id.in_(ids)).order_by(DeploymentRun.created_at.desc())):
+            recent.setdefault(run.application_id, {"status": run.status, "source_sha": release.source_sha or release.merged_sha,
+                                                   "image_reference": release.image_reference, "error_code": run.error_code})
         return [
             {
+                "deployment_policy_enabled": policies.get(app.id, False),
+                "latest_deployment": recent.get(app.id),
                 "id": str(app.id),
                 "name": app.name,
                 "repository_url": app.repository_url,
@@ -369,6 +383,7 @@ def get_application(app_id: UUID, identity: Actor):
             "name": app.name,
             "repository_url": app.repository_url,
             "revision": app.revision,
+            "lifecycle_version": 2,
             "latest_analysis": run_document(db, latest) if latest else None,
         }
 

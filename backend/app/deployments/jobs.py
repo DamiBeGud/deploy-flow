@@ -102,6 +102,7 @@ async def _preflight(job_id: UUID, token: UUID, build_id: UUID, run_id: UUID) ->
             or record.environment_profile_id != profile["id"]
             or record.environment_profile_hash != profile["hash"]
             or record.merged_sha != source.merged_sha
+            or (record.source_sha or record.merged_sha) != source.source_sha
         ):
             raise DeliveryError("release_record_corrupt")
         expected = bind_verified_image(

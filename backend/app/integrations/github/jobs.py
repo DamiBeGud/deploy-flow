@@ -150,6 +150,8 @@ def _reconcile_one(pr_id: UUID) -> None:
         repository_id, owner, repository, number = pr.repository_id, pr.owner, pr.repository, pr.number
         base_branch, base_sha, head_branch, head_sha = pr.base_branch, pr.base_sha, pr.head_branch, pr.head_sha
         image_repository = plan.validation_json["image_binding"]["repository"]
+        if pr.status == "verified" and db.scalar(select(VerifiedBuild.id).where(VerifiedBuild.pull_request_id == pr.id)):
+            return  # Approved bootstrap history is immutable; source reconciliation follows.
     with GitHubAPI(settings(), owner, repository) as api:
         pull = api.pull_request(number)
         if (
@@ -212,7 +214,8 @@ def _reconcile_one(pr_id: UUID) -> None:
         if not existing:
             existing = VerifiedBuild(
                 pull_request_id=pr_id, run_id=run["id"], run_attempt=run["run_attempt"],
-                merged_sha=merged_sha, image_repository=image_repository, image_digest=digest,
+                merged_sha=merged_sha, source_sha=merged_sha, artifact_id=artifacts[0]["id"],
+                image_repository=image_repository, image_digest=digest,
             )
             db.add(existing)
             db.flush()
@@ -241,7 +244,8 @@ def _reconcile(job: GitHubJob) -> None:
                     pr.error_code = exc.code
                     if exc.code not in NONBLOCKING_VERIFICATION_ERRORS:
                         pr.status = "blocked"
-            raise
+            if exc.transient:
+                raise
 
 
 def execute(job_id: str) -> None:
@@ -260,9 +264,15 @@ def execute(job_id: str) -> None:
     try:
         if kind == "create" and pr_id:
             _create(pr_id)
+        elif kind == "source_reconcile" and (pr_id or delivery_id):
+            from app.integrations.github.source_updates import reconcile_sources
+            reconcile_sources(pr_id, delivery_id)
         elif kind == "reconcile" and (pr_id or delivery_id):
             with Session() as db:
                 _reconcile(db.get(GitHubJob, identifier))
+            with Session.begin() as db:
+                db.add(GitHubJob(kind="source_reconcile", pull_request_id=pr_id,
+                                 delivery_id=delivery_id, status="queued", attempts=0))
         else:
             raise GitHubPhase6Error("github_job_invalid")
     except GitHubPhase6Error as exc:
@@ -275,7 +285,7 @@ def execute(job_id: str) -> None:
                 job.next_dispatch_at = db.scalar(select(func.now())) + timedelta(seconds=min(30 * 2 ** (job.attempts - 1), 300))
             else:
                 job.status = "failed"
-                if pr_id:
+                if pr_id and kind != "source_reconcile":
                     pr = db.get(InfrastructurePullRequest, pr_id, with_for_update=True)
                     pr.error_code = exc.code
                     if kind == "create":
@@ -290,7 +300,7 @@ def execute(job_id: str) -> None:
             job.error_code = "github_job_unexpected"
             job.status = "queued" if job.attempts < 5 else "failed"
             job.next_dispatch_at = db.scalar(select(func.now())) + timedelta(seconds=30)
-            if job.status == "failed" and pr_id:
+            if job.status == "failed" and pr_id and kind != "source_reconcile":
                 pr = db.get(InfrastructurePullRequest, pr_id, with_for_update=True)
                 pr.error_code = "github_job_unexpected"
                 pr.status = "failed" if kind == "create" else "blocked"

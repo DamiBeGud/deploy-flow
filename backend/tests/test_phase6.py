@@ -97,7 +97,7 @@ def test_webhook_requires_raw_body_signature_and_deduplicates(client, monkeypatc
     assert second.json()["duplicate"] is True
     with Session() as db:
         assert len(db.scalars(select(GitHubWebhookDelivery)).all()) == 1
-        assert len(db.scalars(select(GitHubJob)).all()) == 1
+        assert {job.kind for job in db.scalars(select(GitHubJob))} == {"reconcile", "source_reconcile"}
 
 
 def test_github_worker_records_one_pr_after_external_success(client, monkeypatch):

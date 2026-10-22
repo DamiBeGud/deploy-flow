@@ -110,6 +110,20 @@ class HostingPolicyTests(unittest.TestCase):
         self.assertIn("location /webhooks/ { return 404; }", nginx)
         self.assertIn("proxy_buffering off;", nginx)
 
+    def test_acme_solver_is_reachable_only_from_ingress_controller_on_http01_port(self):
+        rule = by_name("ingress", "NetworkPolicy", "allow-acme-http01")["spec"]
+        self.assertEqual(rule, {
+            "podSelector": {"matchLabels": {"acme.cert-manager.io/http01-solver": "true"}},
+            "policyTypes": ["Ingress"],
+            "ingress": [{"from": [{
+                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ingress-nginx"}},
+                "podSelector": {"matchLabels": {"app.kubernetes.io/component": "controller"}},
+            }], "ports": [{"protocol": "TCP", "port": 8089}]}],
+        })
+        for item in render("workloads", IMAGES)["items"]:
+            labels = item["spec"]["template"]["metadata"]["labels"]
+            self.assertNotEqual(labels.get("acme.cert-manager.io/http01-solver"), "true")
+
     def test_account_import_is_separate_private_and_never_bootstraps_empty_users(self):
         job = render("identity-import", IMAGES)["items"][0]
         spec = job["spec"]["template"]["spec"]

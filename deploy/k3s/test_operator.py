@@ -122,7 +122,7 @@ class RemoteTests(unittest.TestCase):
         apply.assert_not_called()
 
     def test_secret_retry_does_not_rotate_or_reapply_existing_values(self):
-        secret = {"kind": "Secret", "metadata": {"name": "synthetic", "namespace": NAMESPACE,
+        secret = {"kind": "Secret", "metadata": {"name": "deployflow-ghcr", "namespace": NAMESPACE,
                   "labels": {"app.kubernetes.io/part-of": "deployflow-platform"}}, "type": "Opaque", "data": {"x": "eA=="}}
         with patch.object(remote, "ensure_fresh"), patch.object(remote, "get", return_value=secret), \
                 patch.object(remote, "kubectl") as kube, contextlib.redirect_stdout(io.StringIO()):
@@ -195,10 +195,41 @@ class RemoteTests(unittest.TestCase):
         deletion = next(value for args, value in calls if args[0] == "delete")
         self.assertEqual(deletion["preconditions"], {"uid": "old-uid", "resourceVersion": "42"})
         self.assertEqual([args[0] for args, value in calls].count("delete"), 1)
+        writes = [(args[0], value) for args, value in calls if args[0] in {"apply", "delete"}]
+        self.assertEqual([verb for verb, value in writes], ["apply", "delete", "apply"])
+        self.assertEqual(writes[0][1], new["items"][0])
+        self.assertEqual(writes[-1][1], new["items"][1])
         with patch.object(remote, "capture_host", return_value=old | {"uid": "replaced"}), \
                 patch.object(remote, "kubectl") as kube, self.assertRaises(ValueError):
             remote.switch_host(request, namespace=True)
         kube.assert_not_called()
+
+    def test_cutover_does_not_interrupt_old_route_if_solver_policy_fails(self):
+        old = {"uid": "old-uid", "resourceVersion": "42"}
+        request = render("ingress", IMAGES) | {"previous": old}
+        calls = []
+
+        def kube(*args, value=None):
+            calls.append(args)
+            if args[0] == "get":
+                return json.dumps({"items": []})
+            if args[0] == "apply":
+                raise ValueError("Synthetic policy apply failure")
+            return ""
+
+        with patch.object(remote, "capture_host", return_value=old), patch.object(remote, "check_collisions"), \
+                patch.object(remote, "kubectl", side_effect=kube), self.assertRaises(ValueError):
+            remote.switch_host(request, namespace=True)
+        self.assertFalse(any(args[0] == "delete" for args in calls))
+
+    def test_cutover_refuses_missing_or_reordered_solver_policy_before_writes(self):
+        old = {"uid": "old-uid", "resourceVersion": "42"}
+        document = render("ingress", IMAGES)
+        for items in (document["items"][1:], list(reversed(document["items"]))):
+            with patch.object(remote, "capture_host", return_value=old), \
+                    patch.object(remote, "kubectl") as kube, self.assertRaises(ValueError):
+                remote.switch_host({"items": items, "previous": old}, namespace=True)
+            kube.assert_not_called()
 
     def test_restore_fences_only_platform_ingress_and_recreates_saved_mockup(self):
         saved = {"kind": "Ingress", "metadata": {"name": "deployflow-mockup", "namespace": "deployflow-mockup"},

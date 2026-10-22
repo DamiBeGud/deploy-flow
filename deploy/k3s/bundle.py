@@ -13,6 +13,14 @@ from render import HOST, NAMESPACE, REVISION, render
 STAGES = ("foundation", "migration", "identity-setup", "workloads", "ingress")
 
 
+def keycloak_version():
+    dockerfile = Path(__file__).with_name("Dockerfile.keycloak").read_text()
+    versions = re.findall(r"^FROM quay.io/keycloak/keycloak:([0-9]+\.[0-9]+\.[0-9]+)(?: AS \w+)?$", dockerfile, re.MULTILINE)
+    if len(versions) != 2 or len(set(versions)) != 1:
+        raise ValueError("Identity upgrade needs an explicit matching Keycloak base version")
+    return versions[0]
+
+
 def encoded(value):
     return (json.dumps(value, sort_keys=True, indent=2) + "\n").encode()
 
@@ -25,8 +33,8 @@ def create(images, source_sha):
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
         raise ValueError("source_sha must be a full Git commit SHA")
     stages = {stage: render(stage, images) for stage in STAGES}
-    return {"format": 1, "source_sha": source_sha, "namespace": NAMESPACE,
-            "host": HOST, "schema_revision": REVISION, "images": images,
+    return {"format": 2, "source_sha": source_sha, "namespace": NAMESPACE,
+            "host": HOST, "schema_revision": REVISION, "keycloak_version": keycloak_version(), "images": images,
             "stages": stages, "sha256": {stage: digest(value) for stage, value in stages.items()}}
 
 

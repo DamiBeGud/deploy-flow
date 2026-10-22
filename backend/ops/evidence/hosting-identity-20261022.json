@@ -1,0 +1,108 @@
+{
+  "scope": "Approved fresh identity setup Job only",
+  "manifest_sha256": "d93f86c683cf11fdb93edbc0906c56be9a4efb82de3b97e69ffabbce28fb4179",
+  "started_at": "2026-10-22T16:56:46.618495+00:00",
+  "finished_at": "2026-10-22T16:58:04.225848+00:00",
+  "observed_at": "2026-10-22T17:00:09.870835+00:00",
+  "namespace": "deployflow-system",
+  "namespace_uid": "d611539e-df7d-4826-b76d-2bd0c4d97225",
+  "job": "deployflow-identity-setup",
+  "job_uid": "4a4f880f-b6ac-4482-a150-5516e2028b37",
+  "job_status": {
+    "completionTime": "2026-10-22T16:58:04Z",
+    "conditions": [
+      {
+        "lastProbeTime": "2026-10-22T16:58:04Z",
+        "lastTransitionTime": "2026-10-22T16:58:04Z",
+        "message": "Reached expected number of succeeded pods",
+        "reason": "CompletionsReached",
+        "status": "True",
+        "type": "SuccessCriteriaMet"
+      },
+      {
+        "lastProbeTime": "2026-10-22T16:58:04Z",
+        "lastTransitionTime": "2026-10-22T16:58:04Z",
+        "message": "Reached expected number of succeeded pods",
+        "reason": "CompletionsReached",
+        "status": "True",
+        "type": "Complete"
+      }
+    ],
+    "ready": 0,
+    "startTime": "2026-10-22T16:56:51Z",
+    "succeeded": 1,
+    "terminating": 0,
+    "uncountedTerminatedPods": {}
+  },
+  "job_pods": [
+    {
+      "name": "deployflow-identity-setup-5b94x",
+      "uid": "f5751d1f-fcc5-401b-af57-9bc62eab51bc",
+      "token_automount": false,
+      "containers": [
+        {
+          "name": "identity-database-empty",
+          "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+          "exit_code": 0,
+          "restarts": 0
+        },
+        {
+          "name": "bootstrap-admin",
+          "image_id": "ghcr.io/damibegud/deployflow-keycloak@sha256:91fbecdd9f5ac089492f0905463a884d291b165b347d2da243c66b5add96de75",
+          "exit_code": 0,
+          "restarts": 0
+        },
+        {
+          "name": "identity-setup",
+          "image_id": "ghcr.io/damibegud/deployflow-keycloak@sha256:91fbecdd9f5ac089492f0905463a884d291b165b347d2da243c66b5add96de75",
+          "exit_code": 0,
+          "restarts": 0
+        }
+      ]
+    }
+  ],
+  "verified_identity_metadata": [
+    "BEGIN",
+    "account|deployflow-local|deployflow-local|90251a31-47af-444a-8e13-9d1a407c996c",
+    "account|master|deployflow-bootstrap-admin|e7b414b0-9983-4192-afd9-c3e66c4b51b6",
+    "required_action|deployflow-local|UPDATE_PASSWORD",
+    "role|deployflow-local|administrator",
+    "client|deployflow-local-ui|t|t|f",
+    "pkce|deployflow-local-ui|S256",
+    "redirect|deployflow-local-ui|https://deployflow.damibegud.cloud/auth/callback",
+    "COMMIT"
+  ],
+  "credential_inspection": "No password or credential-hash fields queried; no values printed",
+  "login_acceptance": "Not tested; identity server Deployment and public route not active",
+  "application_metadata": [
+    "BEGIN",
+    "c3a71d9e4208",
+    "applications|0",
+    "analysis_pending|0",
+    "github_jobs|0",
+    "delivery_jobs|0",
+    "execution_jobs|0",
+    "enabled_policies|0",
+    "COMMIT"
+  ],
+  "execution_flags": {
+    "DF_DEPLOYMENT_EXECUTION_ENABLED": "false",
+    "DF_DEPLOYMENT_CLEANUP_ENABLED": "false"
+  },
+  "platform_deployments": 0,
+  "unrelated_comparison": {
+    "count": 111,
+    "changes": [],
+    "fields": [
+      "uid",
+      "generation",
+      "replica spec"
+    ]
+  },
+  "next_approval": {
+    "scope": "Twelve platform Deployments only",
+    "manifest_sha256": "d68e82a48c62d3284872d9daeb73e414dea566b3ecfb72ff7907c9dbc9d97efa"
+  },
+  "public_host_changed": false,
+  "phase7_complete": false
+}

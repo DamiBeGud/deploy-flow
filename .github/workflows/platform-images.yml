@@ -24,6 +24,8 @@ jobs:
           persist-credentials: false
       - name: Offline installation checks
         run: python3 -m unittest discover -s deploy/k3s -p 'test_*.py' -v
+      - name: Upgrade database write fence with disposable PostgreSQL
+        run: DF_UPGRADE_TEST_POSTGRES=1 python3 -m unittest discover -s deploy/k3s -p 'test_upgrade_fence.py' -v
       - name: Backend tests with disposable database and no live credentials
         working-directory: backend
         run: |
@@ -88,6 +90,16 @@ jobs:
           python3 deploy/k3s/bundle.py --output platform-release --source-sha "$GITHUB_SHA" \
             --backend-image "$BACKEND_IMAGE" --frontend-image "$FRONTEND_IMAGE" \
             --keycloak-image "$KEYCLOAK_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
+          docker run --rm --network none "$KEYCLOAK_IMAGE" --version > "$RUNNER_TEMP/keycloak-version.txt"
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          value = json.loads(Path('platform-release/release.json').read_text())
+          text = (Path(os.environ['RUNNER_TEMP']) / 'keycloak-version.txt').read_text()
+          match = re.search(r'\bKeycloak ([0-9]+\.[0-9]+\.[0-9]+)\b', text)
+          if not match or match[1] != value['keycloak_version']:
+              raise SystemExit('Published identity image version differs from reviewed bundle')
+          PY
           printf '\nImages published; no cluster operation performed.\n' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

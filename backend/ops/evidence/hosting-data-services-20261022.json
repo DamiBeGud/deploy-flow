@@ -1,0 +1,136 @@
+{
+  "scope": "Seven approved runtime/bootstrap Secrets only; allow three existing fresh data services to start",
+  "started_at": "2026-10-22T16:39:01.109395+00:00",
+  "finished_at": "2026-10-22T16:39:05.247166+00:00",
+  "observed_at": "2026-10-22T16:45:19.042902+00:00",
+  "manifest_sha256": "b99426d4052a0198b04754731d3a9df9af21d88f87c5cadb2c1771403c6428d6",
+  "operation": "Guarded SSH operator, kubectl create -f - for exactly seven approved Secrets",
+  "acknowledgements": [
+    "Created credential: deployflow-postgres",
+    "Created credential: deployflow-identity-postgres",
+    "Created credential: deployflow-redis",
+    "Created credential: deployflow-runtime",
+    "Created credential: deployflow-github-key",
+    "Created credential: deployflow-webhook",
+    "Created credential: deployflow-identity-bootstrap"
+  ],
+  "pods": [
+    {
+      "name": "identity-postgres-0",
+      "uid": "15d5d5f8-d3db-45f9-a893-05ec47999fb2",
+      "phase": "Running",
+      "ready": true,
+      "token_automount": false,
+      "containers": [
+        {
+          "name": "identity-postgres",
+          "ready": true,
+          "restarts": 0,
+          "image_id": "docker.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24"
+        }
+      ]
+    },
+    {
+      "name": "postgres-0",
+      "uid": "39ecab50-e965-474f-9b7c-98f651b3f2f1",
+      "phase": "Running",
+      "ready": true,
+      "token_automount": false,
+      "containers": [
+        {
+          "name": "postgres",
+          "ready": true,
+          "restarts": 0,
+          "image_id": "docker.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24"
+        }
+      ]
+    },
+    {
+      "name": "redis-0",
+      "uid": "706d1732-7796-48b5-924d-f31a5dafd903",
+      "phase": "Running",
+      "ready": true,
+      "token_automount": false,
+      "containers": [
+        {
+          "name": "redis",
+          "ready": true,
+          "restarts": 0,
+          "image_id": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        }
+      ]
+    }
+  ],
+  "authenticated_checks": {
+    "postgres": [
+      "BEGIN",
+      "deployflow|deployflow",
+      "0",
+      "COMMIT"
+    ],
+    "identity-postgres": [
+      "BEGIN",
+      "keycloak|keycloak",
+      "0",
+      "COMMIT"
+    ],
+    "redis": "PONG",
+    "flags": {
+      "DF_DEPLOYMENT_EXECUTION_ENABLED": "false",
+      "DF_DEPLOYMENT_CLEANUP_ENABLED": "false"
+    }
+  },
+  "platform_deployment_count": 0,
+  "job_count": 0,
+  "unrelated_comparison": {
+    "objects": 111,
+    "changes": [],
+    "fields": [
+      "uid",
+      "generation",
+      "replica spec"
+    ]
+  },
+  "backup_checksums": [
+    {
+      "source_pod": "postgres-0",
+      "file": "postgres.dump",
+      "bytes": 851,
+      "sha256": "440ec6da2483d81b86d5fd9afdaaa255e4072941fbce85286d10ba374dd07430",
+      "source_user_relations": 0
+    },
+    {
+      "source_pod": "identity-postgres-0",
+      "file": "identity-postgres.dump",
+      "bytes": 841,
+      "sha256": "effe67a9368e89fd0a2327bbd230d41b05e5a2a35a7e179ca735ce10849a18cb",
+      "source_user_relations": 0
+    }
+  ],
+  "isolated_restore": {
+    "result": "passed",
+    "at": "2026-10-22T16:43:16.953790+00:00",
+    "postgres_index": "sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24",
+    "network": "none",
+    "credentials": "synthetic trust access only; no live passwords, GitHub or Kubernetes credentials",
+    "results": [
+      {
+        "file": "postgres.dump",
+        "archive_list": "passed",
+        "restore": "passed",
+        "user_relations": 0
+      },
+      {
+        "file": "identity-postgres.dump",
+        "archive_list": "passed",
+        "restore": "passed",
+        "user_relations": 0
+      }
+    ]
+  },
+  "backup_storage": "Private directory outside Git, directory 0700/files 0600; values and archive contents not published",
+  "migration": "not authorized or executed",
+  "identity_setup": "not authorized or executed",
+  "public_host": "mockup remains; no cutover",
+  "phase7_complete": false
+}

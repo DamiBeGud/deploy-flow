@@ -1,0 +1,417 @@
+{
+  "reviewed_at": "2026-10-22T19:44:57.919809+00:00",
+  "git_head": "54f04988e21f03bda6800bb6b7c74604e5a428e4",
+  "remote_main": "54f04988e21f03bda6800bb6b7c74604e5a428e4",
+  "current_state": {
+    "observed_at": "2026-10-22T19:32:57.862719+00:00",
+    "applications": [
+      {
+        "id": "366315a0-2ec4-4819-9715-5dcfb090376f",
+        "name": "node-express-service",
+        "revision": "main"
+      },
+      {
+        "id": "2202caf2-759b-4fd2-84c2-58f8fac226ba",
+        "name": "node-express-service2",
+        "revision": "main"
+      }
+    ],
+    "runs": [
+      {
+        "id": "607c97a6-2b6f-4a31-b70d-fbf70ac7c01b",
+        "application_id": "2202caf2-759b-4fd2-84c2-58f8fac226ba",
+        "status": "waiting_for_executor",
+        "release_id": "4a949ede-3412-42ed-a12b-d6b6b9f86aca",
+        "preflight_status": "passed",
+        "source_sha": "6a31e8a015dfb181101b53625be344705c483d0e",
+        "merged_sha": "6a31e8a015dfb181101b53625be344705c483d0e",
+        "image": "ghcr.io/damibegud/deployflow-node-express-fixture@sha256:d6b121b81541cf4b69e3388f51c2615ba3613ee2654926db4a90d1adaa867946",
+        "release_digest": "2b6c76c3779ec74b0437f92502bfda0c3941155c61966b875073b5db4b9cd690"
+      }
+    ],
+    "policies": [],
+    "jobs": [
+      {
+        "kind": "delivery",
+        "status": "completed",
+        "count": 2
+      },
+      {
+        "kind": "github",
+        "status": "completed",
+        "count": 13
+      },
+      {
+        "kind": "analysis_pending",
+        "count": 0
+      }
+    ],
+    "release_resources": [
+      {
+        "release_id": "4a949ede-3412-42ed-a12b-d6b6b9f86aca",
+        "kind": "ConfigMap",
+        "name": "node-express-service2-config",
+        "namespace": "deployflow-test",
+        "exists": false,
+        "uid": null,
+        "ownership": null
+      },
+      {
+        "release_id": "4a949ede-3412-42ed-a12b-d6b6b9f86aca",
+        "kind": "Deployment",
+        "name": "node-express-service2",
+        "namespace": "deployflow-test",
+        "exists": false,
+        "uid": null,
+        "ownership": null
+      },
+      {
+        "release_id": "4a949ede-3412-42ed-a12b-d6b6b9f86aca",
+        "kind": "Service",
+        "name": "node-express-service2",
+        "namespace": "deployflow-test",
+        "exists": false,
+        "uid": null,
+        "ownership": null
+      }
+    ],
+    "runtime": {
+      "api": {
+        "execution": false,
+        "cleanup": false,
+        "analysis_mode": "deterministic",
+        "agent_key_configured": false
+      },
+      "dispatcher": {
+        "execution": false,
+        "cleanup": false,
+        "analysis_mode": "deterministic",
+        "agent_key_configured": false
+      },
+      "delivery-worker": {
+        "execution": false,
+        "cleanup": false,
+        "analysis_mode": "deterministic",
+        "agent_key_configured": false
+      },
+      "kube-deployer": {
+        "execution": false,
+        "cleanup": false,
+        "analysis_mode": "deterministic",
+        "agent_key_configured": false
+      }
+    }
+  },
+  "webhook_readonly": {
+    "app_id": "4957845",
+    "operations": "GET /app, GET /app/hook/config and GET /app/hook/deliveries only; no token request or settings change",
+    "/app": {
+      "http_status": 200,
+      "slug": "deploy-flow-2",
+      "subscribed_events": [
+        "pull_request",
+        "push",
+        "workflow_run"
+      ]
+    },
+    "/app/hook/config": {
+      "http_status": 200,
+      "url_origin": "https://wh.damibegud.cloud",
+      "url_path": "/webhooks/github",
+      "content_type": "json",
+      "insecure_ssl": "0"
+    },
+    "/app/hook/deliveries?per_page=5": {
+      "http_status": 200,
+      "recent_deliveries": [
+        {
+          "id": 3849784075604721664,
+          "event": "workflow_run",
+          "action": "completed",
+          "delivered_at": "2026-10-22T18:56:48.541Z",
+          "status": "failed to connect to host",
+          "status_code": 502,
+          "redelivery": false
+        },
+        {
+          "id": 3849784025839345664,
+          "event": "workflow_run",
+          "action": "in_progress",
+          "delivered_at": "2026-10-22T18:56:25.354Z",
+          "status": "failed to connect to host",
+          "status_code": 502,
+          "redelivery": false
+        },
+        {
+          "id": 3849783983216820224,
+          "event": "pull_request",
+          "action": "opened",
+          "delivered_at": "2026-10-22T18:56:05.518Z",
+          "status": "failed to connect to host",
+          "status_code": 502,
+          "redelivery": false
+        },
+        {
+          "id": 3849783974559744000,
+          "event": "push",
+          "action": null,
+          "delivered_at": "2026-10-22T18:56:01.333Z",
+          "status": "failed to connect to host",
+          "status_code": 502,
+          "redelivery": false
+        },
+        {
+          "id": 3849783973253226496,
+          "event": "workflow_run",
+          "action": "in_progress",
+          "delivered_at": "2026-10-22T18:56:00.904Z",
+          "status": "failed to connect to host",
+          "status_code": 502,
+          "redelivery": false
+        }
+      ]
+    }
+  },
+  "signed_inbox_deliveries": 0,
+  "completed_github_jobs": {
+    "count": 13,
+    "linked_to_notification": 0
+  },
+  "prepared_activation": {
+    "plan_sha256": "8fa93b14e4aca59e2a6c0d29dacafa44d6c6f673ebed6a414dfdfae51a9a756a",
+    "steps": [
+      {
+        "operation": "create-only",
+        "resources": [
+          {
+            "kind": "ServiceAccount",
+            "namespace": "deployflow-system",
+            "name": "kube-cleaner"
+          },
+          {
+            "kind": "Role",
+            "namespace": "deployflow-test",
+            "name": "deployflow-cleaner"
+          },
+          {
+            "kind": "RoleBinding",
+            "namespace": "deployflow-test",
+            "name": "deployflow-platform-cleaner"
+          }
+        ]
+      },
+      {
+        "operation": "json-patch",
+        "resources": [
+          {
+            "kind": "NetworkPolicy",
+            "namespace": "deployflow-system",
+            "name": "allow-postgres"
+          },
+          {
+            "kind": "NetworkPolicy",
+            "namespace": "deployflow-system",
+            "name": "allow-redis"
+          }
+        ]
+      },
+      {
+        "operation": "json-patch",
+        "resources": [
+          {
+            "kind": "ConfigMap",
+            "namespace": "deployflow-system",
+            "name": "deployflow-config"
+          }
+        ]
+      },
+      {
+        "operation": "create-only",
+        "resources": [
+          {
+            "kind": "Deployment",
+            "namespace": "deployflow-system",
+            "name": "kube-cleaner"
+          }
+        ]
+      },
+      {
+        "operation": "json-patch",
+        "resources": [
+          {
+            "kind": "Deployment",
+            "namespace": "deployflow-system",
+            "name": "api"
+          },
+          {
+            "kind": "Deployment",
+            "namespace": "deployflow-system",
+            "name": "dispatcher"
+          },
+          {
+            "kind": "Deployment",
+            "namespace": "deployflow-system",
+            "name": "delivery-worker"
+          },
+          {
+            "kind": "Deployment",
+            "namespace": "deployflow-system",
+            "name": "kube-deployer"
+          }
+        ]
+      }
+    ],
+    "authorization": "pending explicit scoped confirmation",
+    "live_flags_changed": false,
+    "application_policy_changes": false,
+    "application_execution_or_cleanup_requested": false,
+    "backend_image": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+    "backup_validation": {
+      "created_at": "2026-10-22T19:38:47.317353+00:00",
+      "source": "Read-only pg_dump from existing application and identity PostgreSQL Pods",
+      "server_files_written": false,
+      "live_restore": false,
+      "archives": [
+        {
+          "database": "deployflow",
+          "file": "deployflow.dump",
+          "bytes": 103207,
+          "sha256": "1dd7c13dddc6a1c4210efa81f26e79452b9badb6a4d85a59dbe59aaa5d758821",
+          "mode": "0600",
+          "catalog": "passed",
+          "full_archive_read": "passed"
+        },
+        {
+          "database": "keycloak",
+          "file": "keycloak.dump",
+          "bytes": 255930,
+          "sha256": "30cc4462390aacaca0eb23512930373b4a036a8f1f57c82d00b1910dbb7da221",
+          "mode": "0600",
+          "catalog": "passed",
+          "full_archive_read": "passed"
+        }
+      ],
+      "verification_limit": "Catalog and every archive entry successfully parsed to SQL discarded in /dev/null; no database restore performed and current identity hashes not used as credentials or printed. No full current-state restore rehearsal claimed."
+    },
+    "actual_current_state_restore_tested": false
+  },
+  "local_checks": [
+    {
+      "command": "DF_TEST_IMAGE=sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24 sh scripts/test_phase7_isolated.sh",
+      "cwd": "backend",
+      "result": "176 passed, 1 dependency deprecation warning, 24.61s; disposable deployflow_test PostgreSQL, no live auth/config/credentials"
+    },
+    {
+      "command": "python3 -m unittest discover -s deploy/k3s -p 'test_*.py' -q",
+      "cwd": "repository root",
+      "result": "52 passed"
+    },
+    {
+      "command": "<existing private verification venv>/bin/ruff check deploy/k3s",
+      "cwd": "repository root",
+      "result": "passed"
+    },
+    {
+      "command": "npm run lint; npm run build (executed sequentially)",
+      "cwd": "frontend",
+      "result": "passed"
+    },
+    {
+      "command": "actionlint -shellcheck= .github/workflows/platform-images.yml .github/workflows/platform-k3s.yml",
+      "cwd": "repository root",
+      "result": "passed; ShellCheck unavailable and explicitly disabled"
+    },
+    {
+      "command": "relative Markdown link/anchor checks across six guides",
+      "cwd": "repository root",
+      "result": "74 passed"
+    },
+    {
+      "command": "exact activation plan regenerated from saved snapshot and compared with reviewed SHA256",
+      "cwd": "repository root",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "repository root",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --name-only -- backend/skills backend/app frontend/src backend/migrations",
+      "cwd": "repository root",
+      "result": "empty; runtime skills, application source and migrations unchanged"
+    }
+  ],
+  "secret_review": {
+    "tool": "gitleaks 8.30.1, redaction 100%, decode depth 3",
+    "raw_history_findings": 7,
+    "raw_working_findings_before_new_planner": 8,
+    "triage": "Four recorded file digests, three synthetic test idempotency keys; working files also contain one pinned image digest",
+    "real_credentials_identified": 0,
+    "known_private_representations": 21,
+    "known_private_value_matches": 0,
+    "scope_limits": "Pattern/exact scans do not cover unknown encodings, deleted/unadvertised refs, Actions logs/artifacts or package layers. Development/example passwords remain intentionally committed. No live credential values in this record.",
+    "final_files_scanned": 223,
+    "final_raw_working_findings": 8,
+    "final_triage": [
+      {
+        "file": "deploy/k3s/reuse_registry_secret.py",
+        "line": 25,
+        "classification": "immutable image digest"
+      },
+      {
+        "file": "backend/tests/test_phase5.py",
+        "line": 130,
+        "classification": "synthetic test idempotency key"
+      },
+      {
+        "file": "backend/tests/test_phase5.py",
+        "line": 139,
+        "classification": "synthetic test idempotency key"
+      },
+      {
+        "file": "backend/tests/test_phase4.py",
+        "line": 24,
+        "classification": "synthetic test idempotency key"
+      },
+      {
+        "file": "backend/ops/evidence/hosting-preparation-20261021.json",
+        "line": 11,
+        "classification": "historical file digest"
+      },
+      {
+        "file": "backend/ops/evidence/hosting-preparation-20261021.json",
+        "line": 13,
+        "classification": "historical file digest"
+      },
+      {
+        "file": "backend/ops/evidence/hosting-preparation-20261021.json",
+        "line": 98,
+        "classification": "historical file digest"
+      },
+      {
+        "file": "backend/ops/evidence/hosting-preparation-20261021.json",
+        "line": 202,
+        "classification": "historical file digest"
+      }
+    ]
+  },
+  "push_and_deploy_verdict": {
+    "local_changes": "No blocking defect identified in reviewed changes; isolated tests, lint/build, workflow syntax, secret triage, exact-plan, relative-link and whitespace checks passed. Safe commit/push candidate within scan/test limits; no Git write authorized/performed. This does not establish existing-platform upgrade readiness or live application deployment success.",
+    "push_triggers": "Checks only; publication is manual; no main-push platform deployment",
+    "existing_stack_upgrade": "Fresh-install workflow refuses populated stack. Reviewed upgrade procedure/pipeline required before replacing platform images; preserve live flags/Secrets/data/policies and audit jobs/backups.",
+    "schema_changes": false,
+    "new_application_runtime_logic_in_this_change": false,
+    "fresh_install_defaults": "Remain false; live activation uses exact reviewed patches instead",
+    "git_writes_performed": false
+  },
+  "remaining_configuration": [
+    "Scoped capability activation approval including cleaner RBAC/worker and four restarts",
+    "Separately approved GitHub App URL/signing-secret alignment; no old-event redelivery or policy enabling implied",
+    "Agent analysis requires private provider key/configuration; deterministic mode is working configuration, not a boolean gate",
+    "Per-application authorization and bounded real execution/automatic upgrade/rollback/replay acceptance",
+    "Reviewed existing-platform upgrade path; a main push does not deploy DeployFlow"
+  ],
+  "k3s_changes_this_review": [],
+  "phase7_complete": false
+}

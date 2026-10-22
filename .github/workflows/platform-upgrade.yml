@@ -1,0 +1,128 @@
+name: Upgrade DeployFlow platform
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Preview first; applying requires exact plan approval. No migrations or feature changes.'
+        type: choice
+        options: [preview, apply, rollback-preview, rollback-apply]
+        default: preview
+      release_run_id:
+        description: 'Successful manual Platform checks and images publication run ID (upgrade only)'
+        type: string
+      release_attempt:
+        description: 'Publication run attempt (upgrade only)'
+        type: string
+        default: '1'
+      receipt_id:
+        description: 'Original server upgrade receipt SHA256 (rollback only)'
+        type: string
+      approve_plan_sha256:
+        description: 'Exact preview plan SHA256; leave blank for preview'
+        type: string
+      confirmation:
+        description: 'After scoped approval: UPGRADE <full source SHA> or ROLLBACK <full receipt ID>'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deployflow-platform-k3s
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    if: github.ref == 'refs/heads/main' && github.repository == 'DamiBeGud/deploy-flow'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: k3s
+    env:
+      OPERATION: ${{ inputs.operation }}
+      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+      RELEASE_ATTEMPT: ${{ inputs.release_attempt }}
+      RECEIPT_ID: ${{ inputs.receipt_id }}
+      APPROVAL: ${{ inputs.approve_plan_sha256 }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate exact publication provenance
+        if: inputs.operation == 'preview' || inputs.operation == 'apply'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RELEASE_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID/attempts/$RELEASE_ATTEMPT" \
+            > "$RUNNER_TEMP/publication.json"
+          python3 deploy/k3s/check_publication.py "$RUNNER_TEMP/publication.json" "$GITHUB_SHA" "$RELEASE_ATTEMPT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.operation == 'preview' || inputs.operation == 'apply'
+        with:
+          name: platform-release-${{ inputs.release_attempt }}
+          path: platform-release
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare temporary SSH files without logging credentials
+        env:
+          SSH_KEY: ${{ secrets.K3S_SSH_PRIVATE_KEY }}
+          SSH_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          folder = Path(os.environ['RUNNER_TEMP']) / 'deployflow-upgrade-ssh'
+          folder.mkdir(mode=0o700)
+          for name, variable in [('key', 'SSH_KEY'), ('known_hosts', 'SSH_HOSTS')]:
+              value = os.environ[variable]
+              if not value.strip():
+                  raise SystemExit(f'Missing {variable}; configure the k3s environment')
+              fd = os.open(folder / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+              with os.fdopen(fd, 'w') as stream:
+                  stream.write(value.rstrip() + '\n')
+          PY
+      - name: Reject an old workflow rerun after main moves
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          python3 deploy/k3s/check_publication.py --main "$GITHUB_SHA" "$current"
+      - name: Preview or execute exactly the reviewed upgrade
+        env:
+          SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
+          SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+          SSH_USER: ${{ secrets.K3S_SSH_USER }}
+        run: |
+          set -euo pipefail
+          mkdir -p upgrade-review
+          args=(--operation "$OPERATION" --source-sha "$GITHUB_SHA"
+                --output upgrade-review/result.json --host "$SSH_HOST" --port "$SSH_PORT" --user "$SSH_USER"
+                --key "$RUNNER_TEMP/deployflow-upgrade-ssh/key"
+                --known-hosts "$RUNNER_TEMP/deployflow-upgrade-ssh/known_hosts")
+          case "$OPERATION" in
+            preview|apply) args+=(--bundle platform-release/release.json) ;;
+            rollback-preview|rollback-apply) args+=(--receipt-id "$RECEIPT_ID") ;;
+            *) exit 1 ;;
+          esac
+          if [[ "$OPERATION" == *apply ]]; then
+            args+=(--approve-plan-sha256 "$APPROVAL" --confirmation "$CONFIRMATION")
+          else
+            [[ -z "$APPROVAL" && -z "$CONFIRMATION" ]]
+          fi
+          python3 deploy/k3s/upgrade.py "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: platform-upgrade-${{ github.run_id }}-${{ github.run_attempt }}
+          path: upgrade-review/
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Remove only this job's temporary SSH credentials
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/deployflow-upgrade-ssh"

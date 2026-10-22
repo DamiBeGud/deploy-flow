@@ -376,7 +376,18 @@ def ingress():
         "nginx.ingress.kubernetes.io/proxy-buffering": "off",
         "nginx.ingress.kubernetes.io/proxy-body-size": "1m",
     }
-    return [value]
+    # The namespace's default-deny policy also selects cert-manager's temporary
+    # HTTP-01 Pods. Permit the ingress controller to reach only those responders;
+    # keep this rule for future renewals without exposing any platform Pod.
+    solver = resource("NetworkPolicy", "allow-acme-http01", api_version="networking.k8s.io/v1", spec={
+        "podSelector": {"matchLabels": {"acme.cert-manager.io/http01-solver": "true"}},
+        "policyTypes": ["Ingress"],
+        "ingress": [{"from": [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ingress-nginx"}},
+            "podSelector": {"matchLabels": {"app.kubernetes.io/component": "controller"}},
+        }], "ports": [{"protocol": "TCP", "port": 8089}]}],
+    })
+    return [solver, value]
 
 
 def render(stage, images):

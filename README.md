@@ -20,6 +20,11 @@ source-compatibility policy currently focus on Node web applications.
 A published image is not a deployment. Automatic updates require working signed
 webhooks, eligible CI, compatible source changes, and deployment authorization.
 
+To update DeployFlow itself after merging main, follow the protected
+[platform upgrade flow](deploy/k3s/automation.md#7-upgrade-the-installed-platform-after-merging-main):
+publish images, preview exact changes, approve, then apply. A main push runs checks;
+it does not deploy or enable application execution automatically.
+
 ## Fresh local development
 
 Requires Docker with Compose and Node.js/npm compatible with the
@@ -60,7 +65,7 @@ deliberately configure the desired mode in the ignored `backend/.env`.
 | [Frontend guide](frontend/README.md) | UI development, authentication, lifecycle, browser tests |
 | [Operational guide](backend/ops/README.md) | Access, activation, backups, recovery, approval boundaries |
 | [Operational status and evidence](backend/ops/phase7-operational-closure.md) | Dated acceptance results, identifiers, blockers, next steps |
-| [k3s hosting preparation](deploy/k3s/README.md) | Proposed fresh hosted installation, rendering tools, activation gates |
+| [k3s hosting](deploy/k3s/README.md) | Hosted topology, installation tools, current evidence and operating gates |
 | `backend/skills/` | Reviewed runtime instruction bundles; these are application assets |
 
 ## Maturity

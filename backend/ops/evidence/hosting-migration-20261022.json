@@ -1,0 +1,94 @@
+{
+  "scope": "Approved application database migration Job only",
+  "started_at": "2026-10-22T16:47:31.438840+00:00",
+  "finished_at": "2026-10-22T16:48:01.242813+00:00",
+  "observed_at": "2026-10-22T16:49:19.540442+00:00",
+  "manifest_sha256": "50fcb800f7cb7c21fcb1efaeff72ac99d8fb0ed60138974fa47e566b6162b840",
+  "offline_sql_sha256": "363a7af7dd3547a85a5f1aae940c9973e40a7cb6976c58ae282805960ea207b6",
+  "namespace": "deployflow-system",
+  "namespace_uid": "d611539e-df7d-4826-b76d-2bd0c4d97225",
+  "job": "deployflow-migrate-c3a71d9e4208",
+  "job_uid": "f5924cf4-2e7f-453f-98ce-e5a281131df3",
+  "job_status": {
+    "completionTime": "2026-10-22T16:48:01Z",
+    "conditions": [
+      {
+        "lastProbeTime": "2026-10-22T16:48:01Z",
+        "lastTransitionTime": "2026-10-22T16:48:01Z",
+        "message": "Reached expected number of succeeded pods",
+        "reason": "CompletionsReached",
+        "status": "True",
+        "type": "SuccessCriteriaMet"
+      },
+      {
+        "lastProbeTime": "2026-10-22T16:48:01Z",
+        "lastTransitionTime": "2026-10-22T16:48:01Z",
+        "message": "Reached expected number of succeeded pods",
+        "reason": "CompletionsReached",
+        "status": "True",
+        "type": "Complete"
+      }
+    ],
+    "ready": 0,
+    "startTime": "2026-10-22T16:47:34Z",
+    "succeeded": 1,
+    "terminating": 0,
+    "uncountedTerminatedPods": {}
+  },
+  "job_pods": [
+    {
+      "name": "deployflow-migrate-c3a71d9e4208-nzsv6",
+      "uid": "42682995-6429-44a7-b26d-8a9a64ab63f4",
+      "requested_image": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+      "token_automount": false,
+      "containers": [
+        {
+          "name": "migrate",
+          "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+          "exit_code": 0,
+          "restarts": 0
+        }
+      ]
+    }
+  ],
+  "database": "postgres/deployflow",
+  "schema_revision": "c3a71d9e4208",
+  "public_schema_tables": 29,
+  "applications_jobs_enabled_policies": {
+    "applications": 0,
+    "analysis_pending": 0,
+    "github_jobs": 0,
+    "delivery_jobs": 0,
+    "execution_jobs": 0,
+    "enabled_policies": 0
+  },
+  "identity_database_user_relations": 0,
+  "execution_flags": {
+    "DF_DEPLOYMENT_EXECUTION_ENABLED": "false",
+    "DF_DEPLOYMENT_CLEANUP_ENABLED": "false"
+  },
+  "platform_deployments": 0,
+  "unrelated_comparison": {
+    "count": 111,
+    "changes": [],
+    "fields": [
+      "uid",
+      "generation",
+      "replica spec"
+    ]
+  },
+  "backup_checksums": {
+    "identity-postgres.dump": "effe67a9368e89fd0a2327bbd230d41b05e5a2a35a7e179ca735ce10849a18cb",
+    "postgres.dump": "440ec6da2483d81b86d5fd9afdaaa255e4072941fbce85286d10ba374dd07430"
+  },
+  "pre_migration_isolated_restore": "passed",
+  "reversal": "No automatic downgrade. Restore to new recovery DB and connection change require separate approval.",
+  "next_approval": {
+    "scope": "One fresh identity setup Job",
+    "job": "deployflow-identity-setup",
+    "manifest_sha256": "d93f86c683cf11fdb93edbc0906c56be9a4efb82de3b97e69ffabbce28fb4179"
+  },
+  "identity_setup_executed": false,
+  "public_host_changed": false,
+  "phase7_complete": false
+}

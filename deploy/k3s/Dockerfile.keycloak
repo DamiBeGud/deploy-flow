@@ -3,6 +3,10 @@ ENV KC_DB=postgres KC_HEALTH_ENABLED=true KC_HTTP_RELATIVE_PATH=/identity KC_HTT
 RUN /opt/keycloak/bin/kc.sh build
 
 FROM quay.io/keycloak/keycloak:26.8.0
+# Clear upstream repository/revision metadata on this DeployFlow-derived image.
+LABEL org.opencontainers.image.source="https://github.com/DamiBeGud/deploy-flow" \
+      org.opencontainers.image.url="https://github.com/DamiBeGud/deploy-flow" \
+      org.opencontainers.image.revision=""
 COPY --from=builder /opt/keycloak/ /opt/keycloak/
 USER 1000:1000
 ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]

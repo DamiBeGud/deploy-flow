@@ -1,0 +1,80 @@
+{
+  "date": "2026-10-22",
+  "scope": "Local DeployFlow platform installation automation; not live acceptance",
+  "source_base": "8d79ed569dbf9f884c1674b8e5501e7269081e51",
+  "changes_are_uncommitted": true,
+  "checks": [
+    {
+      "working_directory": "repository root",
+      "command": "python3 -m unittest discover -s deploy/k3s -p 'test_*.py' -v",
+      "result": "34 passed",
+      "limits": "Offline tests use synthetic credentials and mocked Kubernetes operations; no live apply evidence"
+    },
+    {
+      "working_directory": "backend",
+      "command": "DF_TEST_IMAGE=deployflow-backend:hosted-prep-20261021 sh scripts/test_phase7_isolated.sh",
+      "result": "176 passed, 1 dependency deprecation warning, 19.76 seconds",
+      "isolation": "Disposable Docker network and deployflow_test database; no Compose environment or live credentials; own resources removed"
+    },
+    {
+      "working_directory": "repository root",
+      "command": "ruff check deploy/k3s",
+      "result": "passed using the existing disposable Python 3.12 validation environment"
+    },
+    {
+      "working_directory": "repository root",
+      "command": "actionlint -shellcheck= .github/workflows/platform-images.yml .github/workflows/platform-k3s.yml",
+      "result": "passed",
+      "tool": "actionlint v1.7.12, Darwin arm64 archive",
+      "verified_archive_sha256": "aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f",
+      "limits": "Workflow syntax/context validation; ShellCheck unavailable and explicitly disabled; no GitHub workflow run"
+    },
+    {
+      "command": "Disposable pinned PostgreSQL, real backend alembic upgrade c3a71d9e4208, exact operator read-only fresh-state/pending-job SQL",
+      "result": "passed; BEGIN/0/COMMIT and zero pending work/policies observed",
+      "isolation": "New internal Docker network and new database; synthetic trust authentication only inside that network; own containers/network removed"
+    },
+    {
+      "command": "operate.py --stage inspect using existing trusted local SSH access",
+      "result": "passed read-only against homeserver1",
+      "target_namespace_uid": "84a720fd-dc36-4592-a2bb-12c8f54ddc7c",
+      "platform_namespace_exists": false,
+      "hostname_ingress": "deployflow-mockup/deployflow-mockup",
+      "hostname_ingress_uid": "8adb1de3-8d69-4c54-9e15-51b34d72fe67",
+      "limits": "Does not prove the dedicated Actions key is installed or GitHub-runner connectivity"
+    },
+    {
+      "command": "Read-only registry inspection of pinned PostgreSQL and Redis indexes",
+      "result": "both registry digests match the previously rehearsed images"
+    },
+    {
+      "command": "Relative documentation link/anchor validation and git diff --check",
+      "result": "20 relative links/anchors passed; whitespace check passed"
+    }
+  ],
+  "preserved": {
+    "preexisting_staged_files": [
+      "backend/ops/evidence/hosting-preparation-20261021.json",
+      "backend/ops/phase7-operational-closure.md",
+      "deploy/k3s/Dockerfile.keycloak",
+      "deploy/k3s/README.md",
+      "frontend/Dockerfile"
+    ],
+    "index_writes": false,
+    "runtime_skill_changes": false,
+    "cluster_mutations": false,
+    "github_setting_changes": false,
+    "image_publications_in_this_task": false
+  },
+  "remaining": [
+    "Scoped approval to install the dedicated Actions public key",
+    "Owner configuration of five GitHub k3s environment secrets and environment protections",
+    "Verify/approve Actions publication access for the three existing GHCR packages",
+    "Approved read-only GHCR credential and private pull Secret preparation",
+    "Review and approval for Git commit/push, then a real protected publication run",
+    "Separate approvals and live evidence for foundation, private Secrets, migration, identity setup and workloads",
+    "Separate hostname/certificate cutover approval and real HTTPS/login/API/webhook evidence",
+    "Permanent private Keycloak administration and off-host backup destination",
+    "Phase 7 automatic application update, rollback, replay and separately authorized cleanup remain unproven"
+  ]
+}

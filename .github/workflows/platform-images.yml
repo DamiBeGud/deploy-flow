@@ -1,0 +1,100 @@
+name: Platform checks and images
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish three platform images to GHCR (requires scoped approval)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Offline installation checks
+        run: python3 -m unittest discover -s deploy/k3s -p 'test_*.py' -v
+      - name: Backend tests with disposable database and no live credentials
+        working-directory: backend
+        run: |
+          docker build -t deployflow-backend:ci .
+          DF_TEST_IMAGE=deployflow-backend:ci sh scripts/test_phase7_isolated.sh
+      - name: Frontend lint and build
+        run: |
+          docker run --rm -v "$PWD/frontend:/app" -w /app node:22-alpine \
+            sh -ec 'npm ci && npm run lint && npm run build'
+      - name: Frontend and identity image builds
+        run: |
+          docker build -t deployflow-frontend:ci frontend
+          docker build -t deployflow-keycloak:ci -f deploy/k3s/Dockerfile.keycloak deploy/k3s
+      - run: git diff --check
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main' && github.repository == 'DamiBeGud/deploy-flow'
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: k3s
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: deployflow-platform-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Authenticate publisher
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and publish immutable candidates
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/platform-metadata"
+          for role in backend frontend keycloak; do
+            context="$role"
+            dockerfile="$context/Dockerfile"
+            if [ "$role" = keycloak ]; then
+              context=deploy/k3s
+              dockerfile=deploy/k3s/Dockerfile.keycloak
+            fi
+            image="ghcr.io/damibegud/deployflow-$role"
+            tag="sha-$GITHUB_SHA-run-$GITHUB_RUN_ID-attempt-$GITHUB_RUN_ATTEMPT"
+            metadata="$RUNNER_TEMP/platform-metadata/$role.json"
+            docker buildx build --platform linux/amd64 --push \
+              --file "$dockerfile" --tag "$image:$tag" \
+              --label "org.opencontainers.image.source=https://github.com/DamiBeGud/deploy-flow" \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --metadata-file "$metadata" "$context"
+            digest=$(jq -er '."containerimage.digest"' "$metadata")
+            docker buildx imagetools inspect "$image@$digest" >/dev/null
+            printf '%s_IMAGE=%s@%s\n' "${role^^}" "$image" "$digest" >> "$GITHUB_ENV"
+          done
+      - name: Render exact public installation bundle
+        run: |
+          python3 deploy/k3s/bundle.py --output platform-release --source-sha "$GITHUB_SHA" \
+            --backend-image "$BACKEND_IMAGE" --frontend-image "$FRONTEND_IMAGE" \
+            --keycloak-image "$KEYCLOAK_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
+          printf '\nImages published; no cluster operation performed.\n' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: platform-release-${{ github.run_attempt }}
+          path: platform-release/
+          retention-days: 30
+          if-no-files-found: error
+      - name: Remove publisher session
+        if: always()
+        run: docker logout ghcr.io

@@ -1,0 +1,117 @@
+name: Platform k3s operator
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'One fresh-install stage; empty approval digest means review only'
+        type: choice
+        options: [inspect, foundation, migration, identity-setup, workloads]
+        default: inspect
+      release_run_id:
+        description: 'Successful Platform checks and images publication run ID (except inspect)'
+        type: string
+      release_attempt:
+        description: 'Publication run attempt'
+        type: string
+        default: '1'
+      approve_stage_sha256:
+        description: 'Exact reviewed stage SHA256; leave empty to preview without mutation'
+        type: string
+      confirmation:
+        description: 'For mutation enter APPLY <stage> <full source SHA>, after scoped approval'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deployflow-platform-k3s
+  cancel-in-progress: false
+
+jobs:
+  operator:
+    if: github.ref == 'refs/heads/main' && github.repository == 'DamiBeGud/deploy-flow'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: k3s
+    env:
+      STAGE: ${{ inputs.stage }}
+      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+      RELEASE_ATTEMPT: ${{ inputs.release_attempt }}
+      APPROVAL: ${{ inputs.approve_stage_sha256 }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify publication provenance
+        if: inputs.stage != 'inspect'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RELEASE_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID/attempts/$RELEASE_ATTEMPT" \
+            > "$RUNNER_TEMP/publication.json"
+          python3 deploy/k3s/check_publication.py "$RUNNER_TEMP/publication.json" "$GITHUB_SHA" "$RELEASE_ATTEMPT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.stage != 'inspect'
+        with:
+          name: platform-release-${{ inputs.release_attempt }}
+          path: platform-release
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Bind downloaded bundle to the selected source
+        if: inputs.stage != 'inspect'
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'deploy/k3s')
+          from bundle import validate
+          value = validate(json.loads(Path('platform-release/release.json').read_text()))
+          if value['source_sha'] != os.environ['GITHUB_SHA']:
+              raise SystemExit('Artifact source differs from the approved workflow source')
+          PY
+      - name: Prepare temporary SSH files without logging secrets
+        env:
+          SSH_KEY: ${{ secrets.K3S_SSH_PRIVATE_KEY }}
+          SSH_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          folder = Path(os.environ['RUNNER_TEMP']) / 'deployflow-ssh'
+          folder.mkdir(mode=0o700)
+          for name, variable in [('key', 'SSH_KEY'), ('known_hosts', 'SSH_HOSTS')]:
+              value = os.environ[variable]
+              if not value.strip():
+                  raise SystemExit(f'Missing {variable}; configure the k3s environment')
+              fd = os.open(folder / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+              with os.fdopen(fd, 'w') as stream:
+                  stream.write(value.rstrip() + '\n')
+          PY
+      - name: Inspect, preview, or apply exactly one approved stage
+        env:
+          SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
+          SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+          SSH_USER: ${{ secrets.K3S_SSH_USER }}
+        run: |
+          set -euo pipefail
+          args=(--stage "$STAGE" --host "$SSH_HOST" --port "$SSH_PORT" --user "$SSH_USER"
+                --key "$RUNNER_TEMP/deployflow-ssh/key" --known-hosts "$RUNNER_TEMP/deployflow-ssh/known_hosts")
+          if [ "$STAGE" != inspect ]; then
+            args+=(--bundle platform-release/release.json)
+          fi
+          if [ -n "$APPROVAL" ]; then
+            [[ "$STAGE" != inspect ]]
+            [[ "$CONFIRMATION" = "APPLY $STAGE $GITHUB_SHA" ]]
+            args+=(--approve-sha256 "$APPROVAL")
+          fi
+          python3 deploy/k3s/operate.py "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary credentials
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/deployflow-ssh"

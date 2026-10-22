@@ -16,6 +16,29 @@ approval in this record authorizes a new operation.
 
 ## Hosted-platform preparation — not activated
 
+**2026-10-22 installation tooling update (local, not activated):**
+Two GitHub workflows now provide push/PR checks, separately approved manual GHCR
+publication and manual single-stage installation. The offline release bundle binds
+source SHA, image digests, schema and exact manifests. The SSH operator checks the
+server/namespace identity, resource ownership, fresh-install state and exact stage
+approval digest. Private credentials remain outside Git; a separate helper prepares
+the namespace GHCR pull Secret. PostgreSQL/Redis images are pinned. Hostname cutover
+and restoration use saved route data and UID/resourceVersion-fenced deletion.
+See the [installation guide](../../deploy/k3s/automation.md). These additions do not
+authorize Git writes, SSH key installation, publication, migrations or cluster
+changes. The five previously staged files were preserved in the index.
+
+The new operator's read-only SSH inspection reconfirmed `homeserver1`, target UID
+`84a720fd-dc36-4592-a2bb-12c8f54ddc7c`, no `deployflow-system`, and mockup Ingress UID
+`8adb1de3-8d69-4c54-9e15-51b34d72fe67`. No GitHub-hosted-runner connection or cluster
+mutation has been tested. Live hosting and Phase 7 acceptance remain incomplete.
+Current local checks: **34 hosting tests**, **176 isolated backend tests** (19.76s,
+one dependency warning), Ruff, actionlint and relative links/whitespace passed.
+The exact fresh-state/pending-job SQL also passed against disposable pinned
+PostgreSQL with the real backend migration. Full commands and limits are in
+[automation evidence](evidence/hosting-automation-20261022.json); mocked checks do
+not establish a successful live stage.
+
 The user selected `deployflow.damibegud.cloud`, fresh application data, the
 existing Keycloak configuration, and the existing GHCR publisher namespace.
 [Local hosting preparation](../../deploy/k3s/README.md) now includes a phased
@@ -86,8 +109,24 @@ and one ready/available replica each for `node-express-service3213214` and the
 health checker. The platform namespace is still absent. The reset affected local
 Docker state, not those observed cluster workloads. Real fresh-account creation,
 hosted login, and cluster activation remain unproven.
-No image publication or cluster activation occurred. The earlier
-baseline acceptance below does not establish acceptance of this fresh installation.
+After the user pushed `8d79ed5`, explicit approval covered three frozen platform
+images. The backend published successfully with authenticated remote index digest
+`47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24`;
+anonymous access returned 401. Frontend and Keycloak publication were denied after
+layer uploads. Inspection found inherited upstream repository labels. Two local
+Dockerfile metadata fixes now point at this repository and clear foreign revision
+claims. Rebuilt images have identical RootFS layer chains and runtime configuration
+to the tested originals. Following a second explicit approval, corrected frontend
+index `627f7561027ec24b475572fc54df9083d5b70b4488c556372cb07842e7bad5da`
+and Keycloak index `91fbecdd9f5ac089492f0905463a884d291b165b347d2da243c66b5add96de75`
+published successfully. Authenticated registry reads confirmed all three indexes
+and their `linux/amd64` manifests. Package permissions/visibility were not changed;
+anonymous reads returned 401 for all three. Evidence contains exact tags, full
+index/platform digests, old/new IDs, and filesystem/configuration comparisons.
+Private image pull access or separately approved public visibility remains a prerequisite
+for the proposed namespace. No GitHub Actions workflow exists in the pushed commit.
+No cluster activation occurred. The earlier baseline acceptance below does not
+establish acceptance of this fresh installation.
 
 ## Acceptance matrix
 

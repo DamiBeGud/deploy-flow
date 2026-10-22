@@ -24,6 +24,10 @@ IMAGE_REPOSITORIES = {
     "frontend": "ghcr.io/damibegud/deployflow-frontend",
     "keycloak": "ghcr.io/damibegud/deployflow-keycloak",
 }
+PULL_SECRET = "deployflow-ghcr"
+# Registry indexes verified read-only; these are the images rehearsed locally.
+POSTGRES_IMAGE = "docker.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24"
+REDIS_IMAGE = "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
 RUNTIME = ["api", "worker", "github-worker", "dispatcher", "webhook", "delivery-worker", "kube-deployer"]
 
 
@@ -69,6 +73,7 @@ def pod(name, main, *, uid=10001, gid=None, identity=False):
     return {
         "metadata": {"labels": {"app.kubernetes.io/name": name, "app.kubernetes.io/part-of": "deployflow-platform"}},
         "spec": {"serviceAccountName": name if identity else "deployflow-runtime",
+                 "imagePullSecrets": [{"name": PULL_SECRET}],
                  "automountServiceAccountToken": identity, "securityContext": security(uid, gid),
                  "terminationGracePeriodSeconds": 45,
                  "containers": [main], "volumes": [{"name": "tmp", "emptyDir": {"sizeLimit": "256Mi"}}]},
@@ -89,7 +94,7 @@ def service(name, port, target=None):
 
 
 def postgres(name, secret_name, database, storage):
-    main = container(name, "postgres:17-alpine", uid=70, memory="512Mi", port=5432, environment=[
+    main = container(name, POSTGRES_IMAGE, uid=70, memory="512Mi", port=5432, environment=[
         env("POSTGRES_DB", database), env("POSTGRES_USER", database),
         env("POSTGRES_PASSWORD", secret_name=secret_name, key="password"),
         env("PGDATA", "/var/lib/postgresql/data/pgdata"),
@@ -183,7 +188,7 @@ def foundation():
         result.append(policy(name, callers, port))
     result += [postgres("postgres", "deployflow-postgres", "deployflow", "5Gi"),
                postgres("identity-postgres", "deployflow-identity-postgres", "keycloak", "2Gi")]
-    main = container("redis", "redis:7-alpine", uid=999, memory="256Mi", port=6379,
+    main = container("redis", REDIS_IMAGE, uid=999, memory="256Mi", port=6379,
                      command=["sh", "-ec", 'exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"'],
                      environment=[env("REDIS_PASSWORD", secret_name="deployflow-redis", key="password")])
     main["ports"][0]["name"] = "redis"

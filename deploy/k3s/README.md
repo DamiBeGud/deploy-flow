@@ -4,6 +4,11 @@
 the platform itself. Managed applications remain in `deployflow-test`.
 All live actions require the [operational approval boundaries](../../backend/ops/README.md#approval-boundaries).
 
+For GitHub environment settings, CI/publication, stage-by-stage installation and
+the hostname reversal procedure, follow the [installation automation guide](automation.md).
+Pushes run checks; publication and cluster stages require manual runs and scoped
+approval. The new workflow/tooling remains local until reviewed and pushed.
+
 ## Selected installation
 
 | Setting | Selection |
@@ -75,8 +80,9 @@ Obtain separate approval before publishing those images. Verify their exact
 registry digests, architecture, and pull access. The renderer requires each exact
 approved GHCR repository followed by `@sha256:<64 lowercase hex characters>`.
 It does not verify registry existence; syntactically valid placeholder digests are
-not deployable evidence. Dependency images currently use version tags and also
-need digest resolution/review before live activation.
+not deployable evidence. PostgreSQL and Redis now use the immutable registry
+indexes rehearsed locally. Every Pod references `deployflow-ghcr`; privately
+prepare and approve this read-only pull Secret before installation.
 
 After setting `HOSTED_BACKEND_IMAGE`, `HOSTED_FRONTEND_IMAGE`, and
 `HOSTED_KEYCLOAK_IMAGE` to the verified immutable references, render one stage:
@@ -275,7 +281,39 @@ to 0600, and a hosted copy prepared outside the checkout. These files have not
 been applied; no real account exists yet. Keep their location private and never
 feed them to test runners.
 
-Real fresh-account setup/first login, image publication, cluster RBAC/network policies/projected
+### Publication checkpoint (2026-10-22)
+
+The user pushed the preparation as `8d79ed5` (`deployment setup`). There is no
+GitHub Actions workflow in that commit; a push does not build/deploy the platform.
+All three platform images are now published after explicit scoped approvals.
+Authenticated reads verified each registry index and its `linux/amd64` manifest:
+
+| GHCR repository (`ghcr.io/damibegud/`) | Verified tag |
+| --- | --- |
+| `deployflow-backend` | `hosted-20261022-47b2787a01f9` |
+| `deployflow-frontend` | `hosted-20261022-627f7561027e` |
+| `deployflow-keycloak` | `hosted-20261022-91fbecdd9f5a` |
+
+Full immutable index/platform digests are in the preparation evidence above.
+Anonymous manifest access returned 401 for all three. The renderer now references
+a namespace-scoped pull Secret, prepared separately by `prepare_registry_secret.py`;
+no real pull credential has been created/applied. Before installation, approve
+that read-only credential or explicitly select public visibility for the packages.
+Do not place the publisher's write credential in application Pods.
+
+Frontend and Keycloak pushes uploaded layers but were denied before successful
+tag/index publication. Their inherited source labels pointed to upstream Nginx
+and Keycloak repositories. The local Dockerfiles now override source/URL to
+`DamiBeGud/deploy-flow` and clear the unrelated upstream revision, following
+[GHCR repository-linking guidance](https://docs.github.com/en/packages/learn-github-packages/connecting-a-repository-to-a-package).
+The rebuilt images have byte-identical RootFS layer chains and identical runtime
+configuration to the tested originals; only image metadata changed. New image IDs
+and comparisons are in the preparation evidence. After a second explicit approval,
+both corrected images published successfully with the existing publisher identity.
+No registry permission or visibility setting was changed. These metadata repairs
+and the updated evidence remain local/uncommitted.
+
+Real fresh-account setup/first login, cluster image pulls, RBAC/network policies/projected
 identity operation, TLS/real browser login, signed webhook delivery, and live
 operational acceptance remain unproven. No normal Compose stack was recreated,
-image published, or cluster resource changed by this preparation.
+or cluster resource changed. Registry publication is not deployment evidence.

@@ -33,7 +33,7 @@
       "user": "1000:1000"
     }
   ],
-  "registry_publication_verified": false,
+  "registry_publication_verified": true,
   "backend_suite": {
     "working_directory": "backend",
     "command": "DF_TEST_IMAGE=deployflow-backend:hosted-prep-20261021 sh scripts/test_phase7_isolated.sh",
@@ -75,12 +75,12 @@
     "git_writes": false
   },
   "unproven": [
-    "Registry publication and cluster image pulls",
     "Live platform migration/import/startup",
     "Cluster RBAC, NetworkPolicy and projected-token operation",
     "Hosted HTTPS/PKCE login and signed webhook ingestion",
     "Real automatic update, rollback and worker replay acceptance",
-    "Real fresh-account setup and first login against hosted Keycloak"
+    "Real fresh-account setup and first login against hosted Keycloak",
+    "Cluster image pulls: anonymous access denied; approved private pull credentials or public visibility required"
   ],
   "identity_decision": {
     "selected": "recreate_accounts",
@@ -133,5 +133,78 @@
     "docker_containers_after_checks": 0,
     "limits": "No real account creation, TLS/DNS cutover, registry publication or Kubernetes mutation"
   },
-  "superseded_requirement": "Preserving original Keycloak accounts after the Docker reset; user selected recreation instead"
+  "superseded_requirement": "Preserving original Keycloak accounts after the Docker reset; user selected recreation instead",
+  "registry_publication": {
+    "recorded_date": "2026-10-22",
+    "user_pushed_source_commit": "8d79ed569dbf9f884c1674b8e5501e7269081e51",
+    "source_note": "User pushed deployment setup; existing built runtime inputs match. Two subsequent metadata repairs are uncommitted.",
+    "backend": {
+      "status": "published_and_authenticated_registry_read_verified",
+      "reference": "ghcr.io/damibegud/deployflow-backend:hosted-20261022-47b2787a01f9",
+      "registry_index_digest": "sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+      "linux_amd64_manifest_digest": "sha256:cbbfce43ffb8d02a637dbf33ab3ce65a6acb2420385f76b12bb418cd2c7f2b3b",
+      "anonymous_pull": {
+        "allowed": false,
+        "status": 401
+      }
+    },
+    "frontend": {
+      "status": "published_and_authenticated_registry_read_verified",
+      "approved_original_image_id": "sha256:e937deae28527b738e2f99f5291201aa61b9aabcd8f65fc6bfe6d40665adff22",
+      "inherited_source_repository": "https://github.com/nginx/docker-nginx-unprivileged",
+      "original_attempt_status": "original_push_denied_after_layer_upload",
+      "reference": "ghcr.io/damibegud/deployflow-frontend:hosted-20261022-627f7561027e",
+      "registry_index_digest": "sha256:627f7561027ec24b475572fc54df9083d5b70b4488c556372cb07842e7bad5da",
+      "linux_amd64_manifest_digest": "sha256:9d58dabd0d3bab78190b7eb33d7491febc0839e83ebfc84c68b6c4a2ee5eebe1",
+      "anonymous_pull": {
+        "allowed": false,
+        "status": 401
+      }
+    },
+    "keycloak": {
+      "status": "published_and_authenticated_registry_read_verified",
+      "approved_original_image_id": "sha256:4f88fd5187d543ed01be0a5998c58071b8212ca4d71420b363c0d7bc1e9f4e63",
+      "inherited_source_repository": "https://github.com/keycloak-rel/keycloak-rel",
+      "original_attempt_status": "original_push_denied_after_layer_upload",
+      "reference": "ghcr.io/damibegud/deployflow-keycloak:hosted-20261022-91fbecdd9f5a",
+      "registry_index_digest": "sha256:91fbecdd9f5ac089492f0905463a884d291b165b347d2da243c66b5add96de75",
+      "linux_amd64_manifest_digest": "sha256:30964647310274ca112750661d4d2dbcded0c84464a947b98eeffdff5c4cef00",
+      "anonymous_pull": {
+        "allowed": false,
+        "status": 401
+      }
+    },
+    "metadata_repairs": [
+      {
+        "role": "frontend",
+        "previous_image_id": "sha256:e937deae28527b738e2f99f5291201aa61b9aabcd8f65fc6bfe6d40665adff22",
+        "corrected_image_id": "sha256:627f7561027ec24b475572fc54df9083d5b70b4488c556372cb07842e7bad5da",
+        "rootfs_identical": true,
+        "runtime_configuration_identical": true,
+        "source_repository": "https://github.com/DamiBeGud/deploy-flow",
+        "upstream_revision_removed": true,
+        "architecture": "amd64"
+      },
+      {
+        "role": "keycloak",
+        "previous_image_id": "sha256:4f88fd5187d543ed01be0a5998c58071b8212ca4d71420b363c0d7bc1e9f4e63",
+        "corrected_image_id": "sha256:91fbecdd9f5ac089492f0905463a884d291b165b347d2da243c66b5add96de75",
+        "rootfs_identical": true,
+        "runtime_configuration_identical": true,
+        "source_repository": "https://github.com/DamiBeGud/deploy-flow",
+        "upstream_revision_removed": true,
+        "architecture": "amd64"
+      }
+    ],
+    "corrected_images_published": true,
+    "repair_materials_sha256": {
+      "frontend/Dockerfile": "9da290df71ef8743a932676715d7b35e4c00b52aefa9d3bf48392f304c684955",
+      "deploy/k3s/Dockerfile.keycloak": "bbff4220bc243f0a369694bd296454d175359cf74bf277702996ed7c94596b28"
+    },
+    "package_visibility_changed": false,
+    "cluster_mutations": false,
+    "git_stage_commit_push_by_agent": false,
+    "remaining": "Choose/approve image pull access, then separately approve foundation, migrations, identity setup, workloads and public hostname switch",
+    "corrected_publication_approval": "Explicit user confirmation on 2026-10-22 for the corrected frontend/Keycloak image IDs"
+  }
 }

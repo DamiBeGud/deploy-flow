@@ -1,0 +1,252 @@
+{
+  "scope": "DeployFlow platform foundation only; explicit user approval for exact reviewed manifest",
+  "started_at": "2026-10-22T16:34:12.425459+00:00",
+  "finished_at": "2026-10-22T16:34:21.231823+00:00",
+  "manifest_sha256": "3d78629ec1e0a52b2af902d0b8cb3ef130d096a1db127c89c9e5d48357c2163a",
+  "resource_acknowledgements": [
+    "Applied Namespace deployflow-system",
+    "Applied ServiceAccount deployflow-runtime",
+    "Applied ServiceAccount kube-reader",
+    "Applied ServiceAccount kube-validator",
+    "Applied ServiceAccount kube-deployer",
+    "Applied RoleBinding deployflow-platform-reader",
+    "Applied RoleBinding deployflow-platform-validator",
+    "Applied RoleBinding deployflow-platform-deployer",
+    "Applied ConfigMap deployflow-config",
+    "Applied ConfigMap deployflow-realm",
+    "Applied Service postgres",
+    "Applied Service identity-postgres",
+    "Applied Service redis",
+    "Applied Service api",
+    "Applied Service frontend",
+    "Applied Service webhook",
+    "Applied Service keycloak",
+    "Applied Service kube-reader",
+    "Applied Service kube-validator",
+    "Applied Service external-probe",
+    "Applied NetworkPolicy default-deny-ingress",
+    "Applied NetworkPolicy allow-postgres",
+    "Applied NetworkPolicy allow-identity-postgres",
+    "Applied NetworkPolicy allow-redis",
+    "Applied NetworkPolicy allow-api",
+    "Applied NetworkPolicy allow-frontend",
+    "Applied NetworkPolicy allow-webhook",
+    "Applied NetworkPolicy allow-keycloak",
+    "Applied NetworkPolicy allow-kube-reader",
+    "Applied NetworkPolicy allow-kube-validator",
+    "Applied NetworkPolicy allow-external-probe",
+    "Applied StatefulSet postgres",
+    "Applied StatefulSet identity-postgres",
+    "Applied StatefulSet redis"
+  ],
+  "operation": "SSH guarded foundation operator: kubectl apply -f - per approved object",
+  "result": "34 approved resource applies acknowledged; foundation storage/access provisioned; application not deployed",
+  "namespace": {
+    "name": "deployflow-system",
+    "uid": "d611539e-df7d-4826-b76d-2bd0c4d97225"
+  },
+  "target_namespace": {
+    "name": "deployflow-test",
+    "uid": "84a720fd-dc36-4592-a2bb-12c8f54ddc7c"
+  },
+  "observation_time": "2026-10-22T16:35:20.073539+00:00",
+  "execution_flags": {
+    "DF_DEPLOYMENT_EXECUTION_ENABLED": "false",
+    "DF_DEPLOYMENT_CLEANUP_ENABLED": "false"
+  },
+  "data_services": [
+    {
+      "kind": "StatefulSet",
+      "name": "identity-postgres",
+      "uid": "4143696f-9cb4-4d02-b7f0-0ef991a8efeb",
+      "owned": true,
+      "desired": 1,
+      "ready": 0,
+      "images": [
+        "docker.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24"
+      ]
+    },
+    {
+      "kind": "StatefulSet",
+      "name": "postgres",
+      "uid": "16fe1c1b-6c69-4876-b3ca-2e67794b130a",
+      "owned": true,
+      "desired": 1,
+      "ready": 0,
+      "images": [
+        "docker.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24"
+      ]
+    },
+    {
+      "kind": "StatefulSet",
+      "name": "redis",
+      "uid": "2f2ffc81-7d0e-421b-a0ef-c2386e38cd06",
+      "owned": true,
+      "desired": 1,
+      "ready": 0,
+      "images": [
+        "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "identity-postgres-0",
+      "uid": "15d5d5f8-d3db-45f9-a893-05ec47999fb2",
+      "owned": true,
+      "phase": "Pending",
+      "token_automount": false,
+      "containers": [
+        {
+          "name": "identity-postgres",
+          "ready": false,
+          "waiting": {
+            "message": "secret \"deployflow-identity-postgres\" not found",
+            "reason": "CreateContainerConfigError"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "postgres-0",
+      "uid": "39ecab50-e965-474f-9b7c-98f651b3f2f1",
+      "owned": true,
+      "phase": "Pending",
+      "token_automount": false,
+      "containers": [
+        {
+          "name": "postgres",
+          "ready": false,
+          "waiting": {
+            "message": "secret \"deployflow-postgres\" not found",
+            "reason": "CreateContainerConfigError"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "Pod",
+      "name": "redis-0",
+      "uid": "706d1732-7796-48b5-924d-f31a5dafd903",
+      "owned": true,
+      "phase": "Pending",
+      "token_automount": false,
+      "containers": [
+        {
+          "name": "redis",
+          "ready": false,
+          "waiting": {
+            "message": "secret \"deployflow-redis\" not found",
+            "reason": "CreateContainerConfigError"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "data-identity-postgres-0",
+      "uid": "199f8770-b667-4438-ad38-0812c86f46ae",
+      "owned": true,
+      "phase": "Bound",
+      "requested": "2Gi",
+      "volume": "pvc-199f8770-b667-4438-ad38-0812c86f46ae"
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "data-postgres-0",
+      "uid": "b419d371-9712-49ab-991a-a690bf7233de",
+      "owned": true,
+      "phase": "Bound",
+      "requested": "5Gi",
+      "volume": "pvc-b419d371-9712-49ab-991a-a690bf7233de"
+    },
+    {
+      "kind": "PersistentVolumeClaim",
+      "name": "data-redis-0",
+      "uid": "c4333378-550f-4b44-9401-3e07ff78b02c",
+      "owned": true,
+      "phase": "Bound",
+      "requested": "1Gi",
+      "volume": "pvc-c4333378-550f-4b44-9401-3e07ff78b02c"
+    }
+  ],
+  "bindings": [
+    {
+      "name": "deployflow-platform-reader",
+      "uid": "8c12d164-3be1-4f80-85aa-599572ed8694",
+      "role": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "deployflow-reader"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "kube-reader",
+          "namespace": "deployflow-system"
+        }
+      ]
+    },
+    {
+      "name": "deployflow-platform-validator",
+      "uid": "995e92e1-6bbd-4cf1-b61b-04f9a0b8ea25",
+      "role": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "deployflow-validator"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "kube-validator",
+          "namespace": "deployflow-system"
+        }
+      ]
+    },
+    {
+      "name": "deployflow-platform-deployer",
+      "uid": "3855bec3-2c9d-4659-b902-23f566f9eabf",
+      "role": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "deployflow-deployer"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "kube-deployer",
+          "namespace": "deployflow-system"
+        }
+      ]
+    }
+  ],
+  "unrelated_comparison": {
+    "count": 111,
+    "fields": [
+      "kind",
+      "namespace",
+      "name",
+      "uid",
+      "generation",
+      "replica spec"
+    ],
+    "changes": [],
+    "snapshot_sha256": "73c031779c21f6079170b4621acf7193e5b8de6f6b6729b78e62bf858f613a49",
+    "limits": "Identity/generation/replica comparison; not a complete byte-for-byte audit of unrelated resource status/data"
+  },
+  "not_activated": [
+    "seven runtime/bootstrap Secrets",
+    "application migration",
+    "identity setup",
+    "platform Deployments",
+    "Ingress/TLS cutover",
+    "application deployment execution",
+    "cleanup"
+  ],
+  "next_approval": {
+    "scope": "seven runtime/bootstrap Secrets in deployflow-system",
+    "manifest_sha256": "b99426d4052a0198b04754731d3a9df9af21d88f87c5cadb2c1771403c6428d6",
+    "effect": "Initialize/start the new PostgreSQL/identity PostgreSQL/Redis services; no schema migration or identity/application workload"
+  },
+  "phase7_complete": false
+}

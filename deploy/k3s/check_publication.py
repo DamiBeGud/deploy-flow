@@ -1,6 +1,7 @@
 """Validate GitHub's authenticated run response before consuming its public bundle."""
 
 import json
+import re
 import sys
 
 
@@ -13,6 +14,14 @@ def check(run, source, attempt):
         raise ValueError("Publication must be a successful manual run at this exact main source and attempt")
 
 
+def check_main(source, current):
+    if not re.fullmatch(r"[a-f0-9]{40}", source) or current != source:
+        raise ValueError("Main moved since this workflow source; publish and preview the current main again")
+
+
 if __name__ == "__main__":
-    with open(sys.argv[1]) as stream:
-        check(json.load(stream), sys.argv[2], sys.argv[3])
+    if sys.argv[1] == "--main":
+        check_main(sys.argv[2], sys.argv[3])
+    else:
+        with open(sys.argv[1]) as stream:
+            check(json.load(stream), sys.argv[2], sys.argv[3])

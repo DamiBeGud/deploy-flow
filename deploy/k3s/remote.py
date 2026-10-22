@@ -84,9 +84,9 @@ def inspection(namespace):
         print("Schema:", query("SELECT version_num FROM alembic_version").strip())
         print("Durable work and enabled policies:", query(
             "SELECT 'analysis', count(*) FROM pending_jobs UNION ALL "
-            "SELECT 'github', count(*) FROM github_jobs WHERE status NOT IN ('succeeded','failed') UNION ALL "
-            "SELECT 'delivery', count(*) FROM delivery_jobs WHERE status NOT IN ('succeeded','failed') UNION ALL "
-            "SELECT 'execution', count(*) FROM execution_jobs WHERE status NOT IN ('succeeded','failed') UNION ALL "
+            "SELECT 'github', count(*) FROM github_jobs WHERE status NOT IN ('completed','failed') UNION ALL "
+            "SELECT 'delivery', count(*) FROM delivery_jobs WHERE status NOT IN ('completed','failed') UNION ALL "
+            "SELECT 'execution', count(*) FROM execution_jobs WHERE status <> 'completed' UNION ALL "
             "SELECT 'enabled policies', count(*) FROM deployment_policies WHERE enabled").strip())
 
 
@@ -169,6 +169,10 @@ def install_secrets(document, namespace):
     if not namespace:
         raise ValueError("Approve foundation first")
     ensure_fresh()
+    if not any(item["metadata"]["name"] == "deployflow-ghcr" for item in document["items"]):
+        pull = get("secret", "deployflow-ghcr", NS)
+        if not pull or not owned(pull) or pull.get("type") != "kubernetes.io/dockerconfigjson":
+            raise ValueError("Existing namespace GHCR pull Secret is missing or unowned")
     check_collisions(document["items"])
     for item in document["items"]:
         current = get("secret", item["metadata"]["name"], NS)
@@ -197,6 +201,12 @@ def capture_host():
 def switch_host(document, namespace):
     if not namespace or capture_host() != document["previous"]:
         raise ValueError("Hostname owner changed since backup/review")
+    # Refuse an incomplete or broadened cutover before any write. The approval
+    # digest binds the exact contents; these checks bind their operational role.
+    items = document["items"]
+    if [(item["kind"], item["metadata"]["name"]) for item in items] != [
+            ("NetworkPolicy", "allow-acme-http01"), ("Ingress", "deployflow")]:
+        raise ValueError("Expected reviewed HTTP-01 policy followed by platform Ingress")
     check_collisions(document["items"])
     routes = json.loads(kubectl("get", "ingress", "-A", "-o", "json"))["items"]
     for route in routes:
@@ -205,12 +215,15 @@ def switch_host(document, namespace):
             raise ValueError("Another Ingress already claims this hostname")
     for name in ("api", "frontend", "keycloak", "webhook"):
         kubectl("rollout", "status", "deployment/" + name, "-n", NS, "--timeout=180s")
+    # Prepare solver connectivity before interrupting the old route. If this
+    # fails, the mockup remains available. No shared issuer or RBAC is changed.
+    kubectl("apply", "-f", "-", value=items[0])
     options = {"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {
         "uid": document["previous"]["uid"], "resourceVersion": document["previous"]["resourceVersion"]}}
     kubectl("delete", "--raw=/apis/networking.k8s.io/v1/namespaces/deployflow-mockup/ingresses/deployflow-mockup",
             "-f", "-", value=options)
     kubectl("wait", "--for=delete", "ingress/deployflow-mockup", "-n", "deployflow-mockup", "--timeout=60s")
-    kubectl("apply", "-f", "-", value=document["items"][0])
+    kubectl("apply", "-f", "-", value=items[1])
     print("Hostname route switched; verify certificate, HTTPS API, login and webhook independently")
 
 

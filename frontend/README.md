@@ -23,9 +23,10 @@ server-side proxy, not browser credentials.
 The proxy avoids additional backend CORS configuration for same-origin requests.
 `npm run build` produces static assets in `dist/`; the dev proxy is not included.
 A hosted frontend needs its own API reverse proxy and configured OIDC callback.
-The [prepared k3s bundle](../deploy/k3s/README.md) and `Dockerfile`/`nginx.conf`
-provide hosted packaging. The image has passed isolated container checks;
-real hosted OIDC login and live activation remain pending.
+The [k3s hosting guide](../deploy/k3s/README.md) and `Dockerfile`/`nginx.conf`
+provide hosted packaging. Public HTTPS, the actual UI and navigation to the
+hosted S256 PKCE login form were verified on 2026-10-22. Full first login and
+authenticated workflows remain unverified; see [public hosting evidence](../backend/ops/evidence/hosting-public-20261022.json).
 
 ## Authentication
 

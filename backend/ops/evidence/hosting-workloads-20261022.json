@@ -1,0 +1,535 @@
+{
+  "observed_at": "2026-10-22T17:14:37.385801+00:00",
+  "namespace_uid": "d611539e-df7d-4826-b76d-2bd0c4d97225",
+  "deployments": [
+    {
+      "name": "api",
+      "uid": "5d02b0b5-471a-451c-9204-123684513226",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "deployflow-runtime",
+      "token_automount": false,
+      "pods": [
+        {
+          "name": "api-6c4dfd7cf8-njtlf",
+          "uid": "66cd89df-1706-4811-afa4-4eccd8cae4aa",
+          "containers": [
+            {
+              "name": "api",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "delivery-worker",
+      "uid": "9cba56a8-0fb7-46c8-b85c-e93049c223bb",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "deployflow-runtime",
+      "token_automount": false,
+      "pods": [
+        {
+          "name": "delivery-worker-7dbdcd9f84-m64bn",
+          "uid": "854f248c-c82f-4f11-a4b3-d45188c6ee8b",
+          "containers": [
+            {
+              "name": "delivery-worker",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "dispatcher",
+      "uid": "9a776f00-a62c-44e3-9d18-5b8af69be6e4",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "deployflow-runtime",
+      "token_automount": false,
+      "pods": [
+        {
+          "name": "dispatcher-86476ffdd7-cpgc6",
+          "uid": "ff196ebe-d24b-400d-a1dc-9dfc95a20745",
+          "containers": [
+            {
+              "name": "dispatcher",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "external-probe",
+      "uid": "32205f46-992a-4044-8363-6dd61d89e27a",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "deployflow-runtime",
+      "token_automount": false,
+      "pods": [
+        {
+          "name": "external-probe-7b8868bb4b-s7lsf",
+          "uid": "e35aefa4-d244-4550-83e6-4c7d922b6976",
+          "containers": [
+            {
+              "name": "external-probe",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "frontend",
+      "uid": "7596a68c-d7f9-4bc4-a3e0-8fa09f8b58eb",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-frontend@sha256:627f7561027ec24b475572fc54df9083d5b70b4488c556372cb07842e7bad5da"
+      ],
+      "service_account": "deployflow-runtime",
+      "token_automount": false,
+      "pods": [
+        {
+          "name": "frontend-d59595fd8-x2tq9",
+          "uid": "e408098b-ae9e-4c40-92ae-984d448da4f1",
+          "containers": [
+            {
+              "name": "frontend",
+              "image_id": "ghcr.io/damibegud/deployflow-frontend@sha256:627f7561027ec24b475572fc54df9083d5b70b4488c556372cb07842e7bad5da",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "github-worker",
+      "uid": "c3af7049-db36-4476-a1e3-c25555f6bf4d",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "deployflow-runtime",
+      "token_automount": false,
+      "pods": [
+        {
+          "name": "github-worker-786d9c7f6c-sq2rz",
+          "uid": "fe7ee9cf-7a1e-48aa-84ac-10e46d7b51bf",
+          "containers": [
+            {
+              "name": "github-worker",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "keycloak",
+      "uid": "ee83d7a4-62ba-492f-a5c5-2fe79f8588f6",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-keycloak@sha256:91fbecdd9f5ac089492f0905463a884d291b165b347d2da243c66b5add96de75"
+      ],
+      "service_account": "deployflow-runtime",
+      "token_automount": false,
+      "pods": [
+        {
+          "name": "keycloak-7f4694dbbd-vsmsw",
+          "uid": "ffec6538-c65d-4a85-a205-2a96fcb0782f",
+          "containers": [
+            {
+              "name": "keycloak",
+              "image_id": "ghcr.io/damibegud/deployflow-keycloak@sha256:91fbecdd9f5ac089492f0905463a884d291b165b347d2da243c66b5add96de75",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "kube-deployer",
+      "uid": "c880db9d-ce96-4cc3-a758-419c4e7caf4b",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "kube-deployer",
+      "token_automount": true,
+      "pods": [
+        {
+          "name": "kube-deployer-5d95997d5d-tgb7r",
+          "uid": "0ed95e7e-a4a0-46fe-badd-607ccffcc6b3",
+          "containers": [
+            {
+              "name": "kube-deployer",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "kube-reader",
+      "uid": "130880c7-86e2-4077-8fa4-231e6c3c0b50",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "kube-reader",
+      "token_automount": true,
+      "pods": [
+        {
+          "name": "kube-reader-645f5868d6-t2k98",
+          "uid": "3281d3ee-7179-4037-9d52-4ccaa9466597",
+          "containers": [
+            {
+              "name": "kube-reader",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "kube-validator",
+      "uid": "806a874d-1622-4f58-a005-95e66ffc30d3",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "kube-validator",
+      "token_automount": true,
+      "pods": [
+        {
+          "name": "kube-validator-78949d45b5-l8pqv",
+          "uid": "ad076c2a-b6d9-4c76-94aa-523ceebeb390",
+          "containers": [
+            {
+              "name": "kube-validator",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "webhook",
+      "uid": "2f9eeda5-aa46-466e-afa2-39c543e922b1",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "deployflow-runtime",
+      "token_automount": false,
+      "pods": [
+        {
+          "name": "webhook-6695488859-tlf8r",
+          "uid": "f8f09b7b-ffae-4308-a22d-deb041a0bb1a",
+          "containers": [
+            {
+              "name": "webhook",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "worker",
+      "uid": "63b9fdfc-4365-44c0-a91f-da1776208766",
+      "generation": 1,
+      "observed_generation": 1,
+      "desired": 1,
+      "ready": 1,
+      "available": 1,
+      "images": [
+        "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      ],
+      "service_account": "deployflow-runtime",
+      "token_automount": false,
+      "pods": [
+        {
+          "name": "worker-7c958c887b-qzskw",
+          "uid": "a5d4cfd2-5af4-447a-8f88-491c527d6dc3",
+          "containers": [
+            {
+              "name": "worker",
+              "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+              "ready": true,
+              "restarts": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "http": {
+    "/health/live": {
+      "status": 200,
+      "value": {
+        "status": "ok"
+      }
+    },
+    "/health/ready": {
+      "status": 200,
+      "value": {
+        "status": "ready",
+        "analysis_mode": "deterministic"
+      }
+    },
+    "/api/v1/auth/config": {
+      "status": 200,
+      "value": {
+        "mode": "oidc",
+        "issuer": "https://deployflow.damibegud.cloud/identity/realms/deployflow-local",
+        "authorization_endpoint": "https://deployflow.damibegud.cloud/identity/realms/deployflow-local/protocol/openid-connect/auth",
+        "token_endpoint": "https://deployflow.damibegud.cloud/identity/realms/deployflow-local/protocol/openid-connect/token",
+        "client_id": "deployflow-local-ui"
+      }
+    },
+    "unauthenticated_applications": 401
+  },
+  "frontend_auth_config": {
+    "mode": "oidc"
+  },
+  "identity_discovery": {
+    "status": 200,
+    "issuer": "https://deployflow.damibegud.cloud/identity/realms/deployflow-local",
+    "authorization_endpoint": "https://deployflow.damibegud.cloud/identity/realms/deployflow-local/protocol/openid-connect/auth",
+    "token_endpoint": "https://deployflow.damibegud.cloud/identity/realms/deployflow-local/protocol/openid-connect/token",
+    "pkce_methods": [
+      "plain",
+      "S256"
+    ],
+    "probe_origin": "cluster node to Keycloak Pod"
+  },
+  "mcp": {
+    "reader": {
+      "namespace": "deployflow-test",
+      "observed_at": "2026-10-22T17:14:31.208893+00:00",
+      "workload_count": 2,
+      "service_count": 3
+    },
+    "validator": {
+      "tool_names": [
+        "kube.validate_manifests"
+      ],
+      "mutation_invoked": false
+    }
+  },
+  "credential_boundaries": {
+    "kube-reader": {
+      "target_deployments": 200,
+      "cross_namespace_deployments": 403,
+      "nonexistent_secret": 403
+    },
+    "kube-validator": {
+      "target_deployments": 403,
+      "cross_namespace_deployments": 403,
+      "nonexistent_secret": 403
+    },
+    "kube-deployer": {
+      "target_deployments": 403,
+      "cross_namespace_deployments": 403,
+      "nonexistent_secret": 403
+    }
+  },
+  "application_metadata": [
+    "BEGIN",
+    "c3a71d9e4208",
+    "applications|0",
+    "analysis_pending|0",
+    "github_jobs|0",
+    "delivery_jobs|0",
+    "execution_jobs|0",
+    "enabled_policies|0",
+    "COMMIT"
+  ],
+  "execution_flags": {
+    "DF_DEPLOYMENT_EXECUTION_ENABLED": "false",
+    "DF_DEPLOYMENT_CLEANUP_ENABLED": "false"
+  },
+  "worker_log_summary": {
+    "dispatcher": {
+      "lines_checked": 0,
+      "error_or_traceback_lines": 0
+    },
+    "worker": {
+      "lines_checked": 2,
+      "error_or_traceback_lines": 0
+    },
+    "github-worker": {
+      "lines_checked": 2,
+      "error_or_traceback_lines": 0
+    },
+    "delivery-worker": {
+      "lines_checked": 2,
+      "error_or_traceback_lines": 0
+    },
+    "kube-deployer": {
+      "lines_checked": 2,
+      "error_or_traceback_lines": 0
+    }
+  },
+  "unrelated_comparison": {
+    "count": 111,
+    "changes": [],
+    "fields": [
+      "uid",
+      "generation",
+      "replica spec"
+    ]
+  },
+  "scope": "Approved twelve platform Deployments only",
+  "manifest_sha256": "d68e82a48c62d3284872d9daeb73e414dea566b3ecfb72ff7907c9dbc9d97efa",
+  "receipt": {
+    "scope": "Approved twelve platform Deployments only",
+    "authorization": "User yes after explicit workloads proposal",
+    "manifest_sha256": "d68e82a48c62d3284872d9daeb73e414dea566b3ecfb72ff7907c9dbc9d97efa",
+    "operator_sha256": "245ac1a2a8205ebf428d7b04b752d8bd719824364a4a12801b3aed110545ca8a",
+    "started_at": "2026-10-22T17:11:51.088843+00:00",
+    "finished_at": "2026-10-22T17:12:12.363650+00:00",
+    "returncode": 0
+  },
+  "public_host_changed": false,
+  "phase7_complete": false,
+  "next_approval": {
+    "manifest_sha256": "1acfbb8afb3da381ff7e2142ecafb31af58ab9c1351dc91821f106cecaa1e567",
+    "operator_sha256": "ee103648846daad2e9bc981bc0f748501307e69fd0b3037a692033b77cb5e1c1",
+    "old_ingress": {
+      "namespace": "deployflow-mockup",
+      "name": "deployflow-mockup",
+      "uid": "8adb1de3-8d69-4c54-9e15-51b34d72fe67",
+      "resource_version": "1528465"
+    },
+    "new_resources": [
+      {
+        "kind": "NetworkPolicy",
+        "namespace": "deployflow-system",
+        "name": "allow-acme-http01"
+      },
+      {
+        "kind": "Ingress",
+        "namespace": "deployflow-system",
+        "name": "deployflow"
+      }
+    ],
+    "controller_effects": [
+      "Certificate/deployflow-tls",
+      "Secret/deployflow-tls and temporary certificate-key Secret",
+      "CertificateRequest/Order/Challenge and temporary cm-acme-http-solver-* Pod/Service/Ingress for this hostname only"
+    ],
+    "interruption": "Brief interruption or certificate mismatch while the new route/certificate settles; cutover is not atomic",
+    "reversal": "With separate approval, UID-fence removal of only new platform Ingress and recreate captured mockup Ingress; retain old Deployment/Service, all data/TLS Secrets and narrow HTTP-01 policy",
+    "read_only_prerequisites": {
+      "production_issuer_ready": true,
+      "nginx_host_network": false,
+      "dns_ipv4": [
+        "91.89.185.146"
+      ],
+      "existing_platform_ingresses": 0,
+      "existing_platform_certificates": 0,
+      "existing_platform_tls_secret": false,
+      "cert_manager_image": "quay.io/jetstack/cert-manager-controller:v1.21.1",
+      "existing_solver_pod_security": "nonroot, RuntimeDefault, no privilege escalation, drop ALL, read-only root filesystem"
+    },
+    "local_verification": {
+      "unit_tests": 48,
+      "ruff": "passed",
+      "cluster_apply": "not run"
+    }
+  },
+  "public_https_before_cutover": {
+    "ui": {
+      "status": 200,
+      "content_type": "text/html"
+    },
+    "auth_config": {
+      "status": 200,
+      "content_type": "text/html",
+      "real_json": false
+    },
+    "oidc_discovery": {
+      "status": 200,
+      "content_type": "text/html",
+      "real_json": false
+    },
+    "interpretation": "Valid HTTPS still reaches mockup HTML fallback; hosted product is not public"
+  }
+}

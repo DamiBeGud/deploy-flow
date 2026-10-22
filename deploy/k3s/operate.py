@@ -26,12 +26,14 @@ SECRET_KEYS = {
 }
 
 
-def secret_document(folder):
+def secret_document(folder, *, registry_on_cluster=False):
     folder = private_path(folder)
     if stat.S_IMODE(folder.stat().st_mode) & 0o077:
         raise ValueError("Secret directory must be private (0700)")
     items = []
     for name, keys in SECRET_KEYS.items():
+        if registry_on_cluster and name == "deployflow-ghcr":
+            continue
         path = private_path(folder / f"{name}.json")
         if stat.S_IMODE(path.stat().st_mode) & 0o077:
             raise ValueError("Secret file must be private (0600)")
@@ -69,6 +71,8 @@ def main():
     parser.add_argument("--stage", choices=["inspect", "capture-host", "secrets", "restore-ingress", *STAGES], default="inspect")
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--secrets-dir", type=Path)
+    parser.add_argument("--registry-secret-on-cluster", action="store_true",
+                        help="For secrets stage: use the already provisioned namespace pull Secret")
     parser.add_argument("--host-backup", type=Path)
     parser.add_argument("--platform-ingress-uid", help="Exact current Ingress UID for separately approved restoration; or absent")
     parser.add_argument("--approve-sha256", help="After scoped approval only; absent means review without SSH mutation")
@@ -78,12 +82,14 @@ def main():
     parser.add_argument("--key", type=Path, required=True)
     parser.add_argument("--known-hosts", type=Path, required=True)
     args = parser.parse_args()
+    if args.registry_secret_on_cluster and args.stage != "secrets":
+        parser.error("--registry-secret-on-cluster applies only to --stage secrets")
     request = {"operation": args.stage}
     if args.stage not in {"inspect", "capture-host"}:
         if args.stage == "secrets":
             if not args.secrets_dir:
                 parser.error("--secrets-dir is required")
-            document = secret_document(args.secrets_dir)
+            document = secret_document(args.secrets_dir, registry_on_cluster=args.registry_secret_on_cluster)
         elif args.stage == "restore-ingress":
             if not args.host_backup or not args.platform_ingress_uid:
                 parser.error("Restore requires --host-backup and --platform-ingress-uid")

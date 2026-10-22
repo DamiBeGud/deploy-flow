@@ -1,13 +1,59 @@
 # Hosting DeployFlow in k3s
 
-**Prepared locally; not deployed or operationally accepted.** These resources host
+**Public UI/API/OIDC endpoints verified; full login and application-release acceptance pending.** These resources host
 the platform itself. Managed applications remain in `deployflow-test`.
 All live actions require the [operational approval boundaries](../../backend/ops/README.md#approval-boundaries).
+
+**Latest capability review (19:33 UTC):** two applications now exist and one
+preflight-passed release waits for execution. Both feature gates remain false;
+no application policy/execution job exists. The separate cleanup identity/worker
+and exact activation patches are prepared offline, not applied. Webhooks still
+target the old receiver and fail with 502; main pushes do not upgrade this
+populated platform. Follow the [activation and upgrade limits](automation.md#6-enable-execution-and-cleanup-on-the-installed-platform)
+and [review evidence](../../backend/ops/evidence/hosting-capabilities-review-20261022.json).
+
+**Platform upgrade flow now prepared locally:** use the separate protected
+**Upgrade DeployFlow platform** workflow after publication. It supports an exact
+read-only preview, approved image-only apply and separately approved rollback
+from private receipts. It preserves live flags/data/configuration; unsupported
+schema/provider/template changes stop for review. Follow the
+[merge-to-upgrade instructions](automation.md#7-upgrade-the-installed-platform-after-merging-main).
+No live upgrade, feature activation or GitHub-runner deployment has been tested.
+
+The installation observations below predate that capability review. The explicitly
+approved 34-object foundation was applied on 2026-10-22.
+Three new PVCs are Bound. After separate approval, seven runtime/bootstrap Secrets
+were created; the three data-service Pods are Ready, authenticated SQL/Redis checks
+pass, and the two empty database backups passed isolated restoration. Execution/
+cleanup remain disabled. The separately approved migration Job completed and
+PostgreSQL stores `c3a71d9e4208` (29 tables; zero application/job/policy work).
+The separately approved identity setup Job completed; account/role/PKCE metadata
+was verified without querying password hashes. After separate approval, all twelve
+platform Deployments reached `1/1` Ready and available with zero restarts on
+2026-10-22. API health, frontend API proxy, provider discovery, real MCP reader
+observations and credential-denial checks passed. After separate approval, the
+hostname switched to the real platform at **18:21 UTC**. Let's Encrypt certificate
+`deployflow-tls` is Ready (expires 2027-01-20); public HTTPS UI/API/discovery/JWKS,
+401 for unauthenticated application reads and 404 for identity admin/master paths
+passed. Desktop Chromium rendered the UI and opened the actual S256 PKCE login
+form without console/request errors or credentials submitted. The API Pod can
+fetch public JWKS. Execution/cleanup remain false; no application/job/policy work
+exists. Of 111 earlier unrelated resource records, 110 remain unchanged and the
+approved old mockup Ingress was removed. Full first login, authenticated API/SSE,
+signed webhook and application-release acceptance remain pending. Current results:
+[foundation evidence](../../backend/ops/evidence/hosting-foundation-20261022.json) and
+[data-service evidence](../../backend/ops/evidence/hosting-data-services-20261022.json) and
+[migration evidence](../../backend/ops/evidence/hosting-migration-20261022.json) and
+[identity evidence](../../backend/ops/evidence/hosting-identity-20261022.json) and
+[workload evidence](../../backend/ops/evidence/hosting-workloads-20261022.json) and
+[public hosting evidence](../../backend/ops/evidence/hosting-public-20261022.json).
 
 For GitHub environment settings, CI/publication, stage-by-stage installation and
 the hostname reversal procedure, follow the [installation automation guide](automation.md).
 Pushes run checks; publication and cluster stages require manual runs and scoped
-approval. The new workflow/tooling remains local until reviewed and pushed.
+approval. Installation/publication workflows were recorded on main `54f0498`;
+subsequent upgrade/operator work and evidence are prepared for a local reviewed
+commit. No hosted-runner installation or upgrade has been verified.
 
 ## Selected installation
 
@@ -60,6 +106,10 @@ only the four worker roles mount the actual GitHub PEM.
 PostgreSQL and Redis have new persistent claims, separate identity/application
 passwords, and internal Services. Default-deny ingress policies restrict internal
 callers and the ingress controller; they do not implement an egress allowlist.
+The separately approved hostname stage permits nginx ingress-controller
+traffic to temporary HTTP-01 solver Pods on TCP 8089. That narrowly selected policy
+is required for certificate issuance/renewal under default-deny and is retained
+when routing is reversed; it grants no Kubernetes API permissions.
 Storage is single-node local-path, not high availability or an off-host backup.
 The platform's TLS terminates at ingress; internal service traffic is not mTLS.
 

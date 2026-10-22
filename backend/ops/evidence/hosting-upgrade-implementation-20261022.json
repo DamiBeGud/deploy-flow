@@ -1,0 +1,210 @@
+{
+  "recorded_at": "2026-10-22T20:32:22.631555+00:00",
+  "scope": "Local implementation of protected image-only upgrade/rollback for DeployFlow platform; not managed-application CD",
+  "base_commit": "54f04988e21f03bda6800bb6b7c74604e5a428e4",
+  "source_files_sha256": {
+    ".github/workflows/platform-upgrade.yml": "b7a2af17745582cbd3da8ed0dbb8acd077380d6f961ee2d41a7006e221535a37",
+    ".github/workflows/platform-images.yml": "cb8ec7cc5578b9fac7483fbb10838ee7ae2f3aa082c4987e9814522dcc28038b",
+    "deploy/k3s/bundle.py": "405ba2824c5f0ed980447cd01840447aff3d1fd808a91d7dbdef901c3431dac8",
+    "deploy/k3s/check_publication.py": "482f48b127bd322a2f4b4ee708d2c5ad777b2ec714f13e54dd5f185cd88bd21a",
+    "deploy/k3s/upgrade.py": "8f093193bd6bba450edb6c7eec66cf956d9dabfcfe3d7face6d528e3565292c6",
+    "deploy/k3s/upgrade_protocol.py": "9ec0d27fa56ace79dfa24f0659e5794d09e98cd46bb93603f9507ac8205c4508",
+    "deploy/k3s/upgrade_remote.py": "00029e49a3c91f095f5de3729e4b094255d1eb0f679fb16565771a97e1c1ac8d",
+    "deploy/k3s/test_upgrade.py": "7cbee7a6dce91a1833b5576e5b70e4ce36131f86e0ec614c7a08098039f37148",
+    "deploy/k3s/test_upgrade_fence.py": "5d1b688eb2364971178a14aa67414784c42d5294960c1625823027bbf946cb8f"
+  },
+  "implemented": [
+    "Manual protected Upgrade DeployFlow platform workflow: preview, apply, rollback-preview, rollback-apply",
+    "Authenticated publication repository/workflow/main/source/run-attempt/success and exact renderer validation; format-2 bundle binds Keycloak version",
+    "Current main rechecked immediately before SSH; stale source/plan approvals rejected",
+    "Known existing Deployment images/source annotations only; strict configuration/namespace/ownership/UID/generation/spec fences",
+    "Private current database backups and catalog/full-archive checks on server before images; no archive in Actions artifacts",
+    "Bounded application-table SHARE locks prevent new durable work/policy writes during maintenance; no DML/migration/restore",
+    "Server-side exclusive upgrade lock and durable private receipts with exact previous image inventory",
+    "Live flags/policies/Secrets/RBAC/data/network/routing preserved; optional cleaner updated only if already present",
+    "Actual running image IDs verified against exact registry index/amd64 digests and owned ready Pods; real HTTPS auth/OIDC checks",
+    "Partial failure retained; no automatic rollback; explicit receipt-based image recovery and old-approval replay refusal"
+  ],
+  "local_checks": [
+    {
+      "command": "DF_UPGRADE_TEST_POSTGRES=1 python3 -m unittest discover -s deploy/k3s -p 'test_*.py' -q",
+      "cwd": "repository root",
+      "result": "75 passed, including 3 real disposable-PostgreSQL tests; 3.094s"
+    },
+    {
+      "command": "<existing verification venv>/bin/ruff check deploy/k3s",
+      "cwd": "repository root",
+      "result": "passed"
+    },
+    {
+      "command": "actionlint -shellcheck= .github/workflows/platform-images.yml .github/workflows/platform-k3s.yml .github/workflows/platform-upgrade.yml",
+      "cwd": "repository root",
+      "result": "passed; ShellCheck unavailable and explicitly disabled"
+    },
+    {
+      "command": "DF_TEST_IMAGE=sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24 sh scripts/test_phase7_isolated.sh",
+      "cwd": "backend",
+      "result": "176 passed, 1 dependency deprecation warning, 19.83s; disposable deployflow_test DB; no live credentials"
+    },
+    {
+      "command": "npm run lint; npm run build (executed sequentially)",
+      "cwd": "frontend",
+      "result": "passed; production build 213ms"
+    },
+    {
+      "command": "relative documentation link/anchor checks across six guides",
+      "cwd": "repository root",
+      "result": "78 passed"
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "repository root",
+      "result": "passed"
+    }
+  ],
+  "real_postgres_tests": [
+    "Read remains available while INSERT is locked; write succeeds after release",
+    "Exception releases locks; an existing writer prevents fence acquisition before mutations",
+    "Multiline catalog aggregate parsing; row changes preserve schema fingerprint; DDL changes alter it"
+  ],
+  "synthetic_orchestration_evidence": [
+    "Patch preserves non-image spec and replica/authorization data",
+    "Failed rollout leaves all applied images and failed receipt; no automatic inverse patch",
+    "Fresh explicit rollback restores exact recorded old image digests/source metadata and preserves failure history",
+    "Replayed original upgrade approval is rejected after rollback",
+    "Pending/blocked work, schema/provider/config/namespace/UID drift and private/untrusted image candidates rejected",
+    "Pre-patch backup failure journals failure without Kubernetes image writes",
+    "Wrong approval/confirmation performs no SSH mutation; preview makes no files/backups/locks/credential reads"
+  ],
+  "read_only_live_check": {
+    "performed": true,
+    "server": "homeserver1",
+    "account": "connectops",
+    "namespace_uid": "d611539e-df7d-4826-b76d-2bd0c4d97225",
+    "target_namespace_uid": "84a720fd-dc36-4592-a2bb-12c8f54ddc7c",
+    "schema_revision": "c3a71d9e4208",
+    "keycloak_version": "26.8.0",
+    "settled_deployments": 12,
+    "renderer_contracts_matched": 12,
+    "pending_jobs": {
+      "analysis": 0,
+      "analysis_runs": 0,
+      "github": 0,
+      "delivery": 0,
+      "execution": 0
+    },
+    "config_flags": {
+      "DF_DEPLOYMENT_EXECUTION_ENABLED": "false",
+      "DF_DEPLOYMENT_CLEANUP_ENABLED": "false"
+    },
+    "observed_runtime_flags": {
+      "api": {
+        "observed": true,
+        "flags": {
+          "DF_DEPLOYMENT_EXECUTION_ENABLED": false,
+          "DF_DEPLOYMENT_CLEANUP_ENABLED": false
+        }
+      },
+      "dispatcher": {
+        "observed": true,
+        "flags": {
+          "DF_DEPLOYMENT_EXECUTION_ENABLED": false,
+          "DF_DEPLOYMENT_CLEANUP_ENABLED": false
+        }
+      },
+      "delivery-worker": {
+        "observed": true,
+        "flags": {
+          "DF_DEPLOYMENT_EXECUTION_ENABLED": false,
+          "DF_DEPLOYMENT_CLEANUP_ENABLED": false
+        }
+      },
+      "kube-deployer": {
+        "observed": true,
+        "flags": {
+          "DF_DEPLOYMENT_EXECUTION_ENABLED": false,
+          "DF_DEPLOYMENT_CLEANUP_ENABLED": false
+        }
+      }
+    },
+    "application_policies": [],
+    "protected_resource_fingerprints": 53,
+    "running_images": {
+      "api": {
+        "containers/api": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+        "initContainers/schema-ready": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      },
+      "delivery-worker": {
+        "containers/delivery-worker": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+        "initContainers/schema-ready": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      },
+      "dispatcher": {
+        "containers/dispatcher": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+        "initContainers/schema-ready": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      },
+      "external-probe": {
+        "containers/external-probe": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      },
+      "frontend": {
+        "containers/frontend": "ghcr.io/damibegud/deployflow-frontend@sha256:627f7561027ec24b475572fc54df9083d5b70b4488c556372cb07842e7bad5da"
+      },
+      "github-worker": {
+        "containers/github-worker": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+        "initContainers/schema-ready": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      },
+      "keycloak": {
+        "containers/keycloak": "ghcr.io/damibegud/deployflow-keycloak@sha256:91fbecdd9f5ac089492f0905463a884d291b165b347d2da243c66b5add96de75"
+      },
+      "kube-deployer": {
+        "containers/kube-deployer": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+        "initContainers/schema-ready": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      },
+      "kube-reader": {
+        "containers/kube-reader": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      },
+      "kube-validator": {
+        "containers/kube-validator": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      },
+      "webhook": {
+        "containers/webhook": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+        "initContainers/schema-ready": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      },
+      "worker": {
+        "containers/worker": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+        "initContainers/schema-ready": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24"
+      }
+    },
+    "source_annotation": "Not present on original hosted images; no prior source SHA asserted",
+    "actions": "GET metadata, read-only SQL and version/config inspection only; no live lock, backup, image patch or file creation by upgrade operator"
+  },
+  "operational_acceptance": {
+    "github_runner_connection": "unproven",
+    "new_format_publication": "unproven; requires merged source/manual publication",
+    "live_upgrade": "unproven; not authorized/run",
+    "live_platform_rollback": "unproven; not authorized/run",
+    "feature_activation": "not performed; both gates remain false",
+    "webhook_alignment": "not performed; prior audit records old URL failures",
+    "application_automatic_upgrade_rollback_replay": "unproven",
+    "cleanup": "disabled/unproven",
+    "phase7_complete": false
+  },
+  "limitations": [
+    "Image-only same-schema/same-Keycloak-version flow; schema/provider/workload infrastructure changes require separate approved procedures",
+    "Backups receive complete archive readability checks, not a full current-state restore rehearsal; no automatic DB restore",
+    "Server-side backups are not off-host disaster recovery",
+    "Maintenance interrupts services and may fail/time out writes/webhooks; any redelivery/reconciliation needs review",
+    "First real GitHub-hosted publication/preview/apply/rollback remain external operational evidence",
+    "Local tests and read-only observations do not establish a successful production rollout"
+  ],
+  "git_authority": "User explicitly allowed local commits of current reviewed changes; no push/merge authority supplied",
+  "k3s_mutations_this_implementation": [],
+  "final_secret_scan": {
+    "files_scanned": 230,
+    "raw_findings": 8,
+    "triage": "Four historical source hashes, three synthetic test idempotency keys and one immutable image digest; no untriaged finding",
+    "real_credentials_identified": 0,
+    "known_private_representations": 21,
+    "known_private_matches": 0,
+    "limits": "Known-value/pattern scanning is evidence, not a guarantee covering arbitrary unknown encodings or external artifacts"
+  }
+}

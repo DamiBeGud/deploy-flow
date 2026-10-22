@@ -1,0 +1,613 @@
+{
+  "scope": "Approved public hostname cutover and selected TLS resources; no managed-application execution",
+  "receipt": {
+    "scope": "Approved platform hostname cutover and selected TLS resources only",
+    "authorization": "User approved exact hostname cutover proposal",
+    "manifest_sha256": "1acfbb8afb3da381ff7e2142ecafb31af58ab9c1351dc91821f106cecaa1e567",
+    "operator_sha256": "ee103648846daad2e9bc981bc0f748501307e69fd0b3037a692033b77cb5e1c1",
+    "started_at": "2026-10-22T18:20:56.673401+00:00",
+    "finished_at": "2026-10-22T18:21:00.564130+00:00",
+    "returncode": 0
+  },
+  "observed_at": "2026-10-22T18:24:28.376760+00:00",
+  "exact_resources": [
+    {
+      "kind": "NetworkPolicy",
+      "namespace": "deployflow-system",
+      "name": "allow-acme-http01"
+    },
+    {
+      "kind": "Ingress",
+      "namespace": "deployflow-system",
+      "name": "deployflow"
+    }
+  ],
+  "approved_old_ingress": {
+    "namespace": "deployflow-mockup",
+    "name": "deployflow-mockup",
+    "uid": "8adb1de3-8d69-4c54-9e15-51b34d72fe67",
+    "resource_version": "1528465"
+  },
+  "controller_scope": [
+    "Certificate/deployflow-tls",
+    "Secret/deployflow-tls and temporary certificate-key Secret",
+    "CertificateRequest/Order/Challenge and temporary cm-acme-http-solver-* Pod/Service/Ingress for this hostname only"
+  ],
+  "cluster": {
+    "observed_at": "2026-10-22T18:24:28.376760+00:00",
+    "namespace_uid": "d611539e-df7d-4826-b76d-2bd0c4d97225",
+    "target_namespace_uid": "84a720fd-dc36-4592-a2bb-12c8f54ddc7c",
+    "deployments": [
+      {
+        "name": "api",
+        "uid": "5d02b0b5-471a-451c-9204-123684513226",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "api",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "delivery-worker",
+        "uid": "9cba56a8-0fb7-46c8-b85c-e93049c223bb",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "delivery-worker",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "dispatcher",
+        "uid": "9a776f00-a62c-44e3-9d18-5b8af69be6e4",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "dispatcher",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "external-probe",
+        "uid": "32205f46-992a-4044-8363-6dd61d89e27a",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "external-probe",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "frontend",
+        "uid": "7596a68c-d7f9-4bc4-a3e0-8fa09f8b58eb",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "frontend",
+            "image_id": "ghcr.io/damibegud/deployflow-frontend@sha256:627f7561027ec24b475572fc54df9083d5b70b4488c556372cb07842e7bad5da",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "github-worker",
+        "uid": "c3af7049-db36-4476-a1e3-c25555f6bf4d",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "github-worker",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "keycloak",
+        "uid": "ee83d7a4-62ba-492f-a5c5-2fe79f8588f6",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "keycloak",
+            "image_id": "ghcr.io/damibegud/deployflow-keycloak@sha256:91fbecdd9f5ac089492f0905463a884d291b165b347d2da243c66b5add96de75",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "kube-deployer",
+        "uid": "c880db9d-ce96-4cc3-a758-419c4e7caf4b",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "kube-deployer",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "kube-reader",
+        "uid": "130880c7-86e2-4077-8fa4-231e6c3c0b50",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "kube-reader",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "kube-validator",
+        "uid": "806a874d-1622-4f58-a005-95e66ffc30d3",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "kube-validator",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "webhook",
+        "uid": "2f9eeda5-aa46-466e-afa2-39c543e922b1",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "webhook",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      },
+      {
+        "name": "worker",
+        "uid": "63b9fdfc-4365-44c0-a91f-da1776208766",
+        "generation": 1,
+        "observed_generation": 1,
+        "desired": 1,
+        "ready": 1,
+        "available": 1,
+        "containers": [
+          {
+            "name": "worker",
+            "image_id": "ghcr.io/damibegud/deployflow-backend@sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24",
+            "ready": true,
+            "restarts": 0
+          }
+        ]
+      }
+    ],
+    "ingress": {
+      "name": "deployflow",
+      "uid": "39f84dbb-61ed-4f95-aa64-f13bfe8f5128",
+      "resource_version": "3843645",
+      "spec": {
+        "ingressClassName": "nginx",
+        "rules": [
+          {
+            "host": "deployflow.damibegud.cloud",
+            "http": {
+              "paths": [
+                {
+                  "backend": {
+                    "service": {
+                      "name": "webhook",
+                      "port": {
+                        "number": 8000
+                      }
+                    }
+                  },
+                  "path": "/webhooks/github",
+                  "pathType": "Exact"
+                },
+                {
+                  "backend": {
+                    "service": {
+                      "name": "keycloak",
+                      "port": {
+                        "number": 8080
+                      }
+                    }
+                  },
+                  "path": "/identity/realms/deployflow-local",
+                  "pathType": "Prefix"
+                },
+                {
+                  "backend": {
+                    "service": {
+                      "name": "keycloak",
+                      "port": {
+                        "number": 8080
+                      }
+                    }
+                  },
+                  "path": "/identity/resources",
+                  "pathType": "Prefix"
+                },
+                {
+                  "backend": {
+                    "service": {
+                      "name": "frontend",
+                      "port": {
+                        "number": 8080
+                      }
+                    }
+                  },
+                  "path": "/",
+                  "pathType": "Prefix"
+                }
+              ]
+            }
+          }
+        ],
+        "tls": [
+          {
+            "hosts": [
+              "deployflow.damibegud.cloud"
+            ],
+            "secretName": "deployflow-tls"
+          }
+        ]
+      }
+    },
+    "solver_policy": {
+      "name": "allow-acme-http01",
+      "uid": "148ce469-dd49-4fca-9fca-6018c43de574",
+      "spec": {
+        "ingress": [
+          {
+            "from": [
+              {
+                "namespaceSelector": {
+                  "matchLabels": {
+                    "kubernetes.io/metadata.name": "ingress-nginx"
+                  }
+                },
+                "podSelector": {
+                  "matchLabels": {
+                    "app.kubernetes.io/component": "controller"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "port": 8089,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "podSelector": {
+          "matchLabels": {
+            "acme.cert-manager.io/http01-solver": "true"
+          }
+        },
+        "policyTypes": [
+          "Ingress"
+        ]
+      }
+    },
+    "certificate": {
+      "name": "deployflow-tls",
+      "uid": "3f8c93ce-0907-4cfb-8a71-2de5c3241f01",
+      "dns_names": [
+        "deployflow.damibegud.cloud"
+      ],
+      "issuer": {
+        "group": "cert-manager.io",
+        "kind": "ClusterIssuer",
+        "name": "letsencrypt-production"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-22T18:21:27Z",
+            "message": "Certificate is up to date and has not expired",
+            "observedGeneration": 1,
+            "reason": "Ready",
+            "status": "True",
+            "type": "Ready"
+          }
+        ],
+        "notAfter": "2027-01-20T17:22:55Z",
+        "notBefore": "2026-10-22T17:22:56Z",
+        "renewalTime": "2026-12-21T17:22:55Z",
+        "revision": 1
+      }
+    },
+    "runtime_api": {
+      "public_jwks_status": 200,
+      "public_key_count": 2,
+      "execution_enabled": false,
+      "cleanup_enabled": false
+    },
+    "runtime_deployer": {
+      "execution_enabled": false,
+      "cleanup_enabled": false
+    },
+    "application_metadata": [
+      "BEGIN",
+      "c3a71d9e4208",
+      "applications|0",
+      "analysis_pending|0",
+      "github_jobs|0",
+      "delivery_jobs|0",
+      "execution_jobs|0",
+      "enabled_policies|0",
+      "COMMIT"
+    ],
+    "unrelated_comparison": {
+      "original_count": 111,
+      "unchanged_count": 110,
+      "expected_removed": [
+        "Ingress/deployflow-mockup/deployflow-mockup"
+      ],
+      "unexpected_changes": [],
+      "fields": [
+        "uid",
+        "generation",
+        "replica spec"
+      ],
+      "limitation": "Not a complete byte-for-byte resource/status comparison"
+    }
+  },
+  "public_https": {
+    "observed_at": "2026-10-22T18:23:21.684516+00:00",
+    "host": "deployflow.damibegud.cloud",
+    "endpoints": {
+      "/": {
+        "status": 200,
+        "content_type": "text/html"
+      },
+      "/api/v1/auth/config": {
+        "status": 200,
+        "content_type": "application/json",
+        "mode": "oidc"
+      },
+      "/identity/realms/deployflow-local/.well-known/openid-configuration": {
+        "status": 200,
+        "content_type": "application/json",
+        "issuer": "https://deployflow.damibegud.cloud/identity/realms/deployflow-local"
+      },
+      "/identity/realms/deployflow-local/protocol/openid-connect/certs": {
+        "status": 200,
+        "content_type": "application/json",
+        "public_key_count": 2
+      },
+      "/api/v1/applications": {
+        "status": 401,
+        "content_type": "application/problem+json"
+      },
+      "/identity/admin/": {
+        "status": 404,
+        "content_type": "text/html"
+      },
+      "/identity/realms/master/.well-known/openid-configuration": {
+        "status": 404,
+        "content_type": "text/html"
+      },
+      "/webhooks/github": {
+        "status": 405,
+        "content_type": "application/json"
+      }
+    },
+    "tls": {
+      "hostname_verified": true,
+      "issuer": [
+        [
+          [
+            "countryName",
+            "US"
+          ]
+        ],
+        [
+          [
+            "organizationName",
+            "Let's Encrypt"
+          ]
+        ],
+        [
+          [
+            "commonName",
+            "YR2"
+          ]
+        ]
+      ],
+      "not_before": "Oct 22 17:22:56 2026 GMT",
+      "not_after": "Jan 20 17:22:55 2027 GMT",
+      "subject_alt_names": [
+        [
+          "DNS",
+          "deployflow.damibegud.cloud"
+        ]
+      ],
+      "protocol": "TLSv1.2"
+    }
+  },
+  "desktop_browser": {
+    "observed_at": "2026-10-22T18:22:55.536Z",
+    "browser": "Chromium",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "browser_plugin": "not available; regular Playwright used",
+    "tls_errors_ignored": false,
+    "ui": {
+      "title": "DeployFlow \u00b7 Agentic Infrastructure",
+      "origin": "https://deployflow.damibegud.cloud",
+      "path": "/",
+      "status": 200,
+      "welcome_visible": true,
+      "sign_in_enabled": true
+    },
+    "framework_overlay_count": 0,
+    "login": {
+      "title": "Sign in to deployflow-local",
+      "origin": "https://deployflow.damibegud.cloud",
+      "path": "/identity/realms/deployflow-local/protocol/openid-connect/auth",
+      "username_visible": true,
+      "password_visible": true,
+      "pkce": "S256",
+      "client_id": "deployflow-local-ui",
+      "redirect_uri": "https://deployflow.damibegud.cloud/auth/callback",
+      "credential_submission": false
+    },
+    "console_problems": [],
+    "failed_requests": [],
+    "credentials_or_storage_recorded": false,
+    "full_login": "not tested",
+    "screenshots": "public-ui.png and public-login.png retained privately outside Git"
+  },
+  "acceptance": {
+    "platform_internal_readiness": "passed",
+    "valid_public_https": "passed",
+    "real_ui_render": "passed",
+    "public_api_auth_configuration": "passed",
+    "oidc_discovery_and_public_jwks": "passed",
+    "api_pod_public_jwks_fetch": "passed",
+    "unauthenticated_application_api_rejected": "passed",
+    "master_realm_and_admin_paths_not_public": "passed",
+    "sign_in_reaches_provider_form_with_s256_pkce": "passed",
+    "full_first_login_and_password_change": "unproven",
+    "authenticated_api_and_sse": "unproven",
+    "real_signed_github_delivery": "unproven",
+    "automatic_application_update": "unproven; execution disabled",
+    "manual_application_rollback_and_replay": "unproven",
+    "first_deployment_cleanup": "unproven; disabled",
+    "phase7_complete": false
+  },
+  "verification_sequence": [
+    "Exact manifest/operator digests and saved old route/UID/resourceVersion rechecked read-only before apply",
+    "Guarded operator applied narrow solver policy, fenced deletion of old Ingress, then new platform Ingress",
+    "Initial public HTTPS check failed while certificate issuance was pending; certificate validation was not disabled",
+    "Read-only wait observed Certificate/deployflow-tls Ready; rerun of verify_public.py passed",
+    "Public HTTPS and Chromium checks passed without ignoring TLS errors; no credentials submitted or storage captured",
+    "API and deployer parsed execution/cleanup flags remain false; all application/job/enabled-policy counts zero"
+  ],
+  "preserved": [
+    "Old mockup Deployment, Service and namespace",
+    "All data/PVCs and backup files",
+    "Existing managed application workloads/history evidence",
+    "Separate reader/validator/deployer permissions; no Role/ClusterIssuer rule changes",
+    "Existing uncommitted repository work"
+  ],
+  "not_performed": [
+    "Git stage/commit/push",
+    "Application deployment or policy enablement",
+    "GitHub App settings or signing-secret changes",
+    "Full operator login/password change",
+    "Database migration/restore",
+    "Resource cleanup or public-route reversal"
+  ],
+  "reversal": "Requires separate scoped approval: remove only new Ingress using current UID/resourceVersion fencing; recreate privately saved mockup Ingress. Retain old Deployment/Service, data/TLS Secrets and narrow solver policy. No DB restore involved.",
+  "private_artifacts": "Exact manifest/proposal, route restore snapshot, operator receipt, sanitized cluster/public/browser observations and two screenshots retained outside Git with private permissions; no credentials in public evidence",
+  "limitations": [
+    "UI/API/OIDC endpoints and login form verified; no authenticated platform workflow or real webhook processing established",
+    "Certificate renewal time is scheduled, not evidence a renewal already occurred",
+    "Comparison covers UID/generation/replica specifications, not every unrelated data/status field",
+    "Namespace storage is single-node local-path; private pre-migration backups contain the original empty databases, not current identity data",
+    "Registry credential expiry remains unknown; Kubernetes application identities use rotating projected tokens"
+  ],
+  "local_verification": {
+    "working_directory": "repository root",
+    "commands": [
+      {
+        "command": "python3 -m unittest discover -s deploy/k3s -p 'test_*.py' -q",
+        "result": "48 tests passed; 0.038s; isolated offline hosting tests"
+      },
+      {
+        "command": "<existing private verification venv>/bin/ruff check deploy/k3s",
+        "result": "passed"
+      },
+      {
+        "command": "python3 deploy/k3s/verify_public.py",
+        "result": "passed after certificate Ready; real HTTPS UI and JSON auth/OIDC endpoints"
+      },
+      {
+        "command": "node <temporary public-browser-check.cjs>",
+        "result": "passed; Chromium 1440x900; no ignored TLS errors, mocked routes, submitted credentials or storage capture"
+      },
+      {
+        "command": "relative Markdown link/anchor check across six updated guides",
+        "result": "69 passed"
+      },
+      {
+        "command": "public hosting JSON evidence assertions",
+        "result": "passed"
+      },
+      {
+        "command": "git diff --check",
+        "result": "passed"
+      }
+    ],
+    "backend_or_live_database_tests": "not run for this routing-only stage; no database-resetting test runner or operational credentials used"
+  }
+}

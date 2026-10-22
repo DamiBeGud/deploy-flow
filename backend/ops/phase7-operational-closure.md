@@ -4,8 +4,9 @@
 UI is recorded; real subsequent automatic update, manual rollback, and replay
 after rollback remain unproven.
 
-Last recorded operational checks: **2026-10-21, 19:32–19:34 UTC**, followed by the
-fixture PR update below on the same date. This compact record consolidates earlier
+Last recorded application-release acceptance: **2026-10-21, 19:32–19:34 UTC**, followed by the
+fixture PR update below on the same date. Hosted foundation checks were performed
+on **2026-10-22**, as recorded below. This compact record consolidates earlier
 checkpoints and the former automatic-release handoff. The documentation cleanup
 verified local files/code, not current runtime, GitHub, DNS, or credential state.
 All operational values below are dated observations and must be rechecked.
@@ -14,9 +15,119 @@ Use the [operational guide](README.md) for procedures and approval boundaries,
 and the [backend guide](../README.md) for implementation rules. No historical
 approval in this record authorizes a new operation.
 
-## Hosted-platform preparation — not activated
+## Hosted-platform installation — public endpoints verified
 
-**2026-10-22 installation tooling update (local, not activated):**
+**Current live status — 2026-10-22, 19:33 UTC: public platform running; two applications registered; one release ready; execution/cleanup still disabled pending scoped activation approval.**
+
+The latest read-only capability audit found `node-express-service` and
+`node-express-service2`. The latter (application
+`2202caf2-759b-4fd2-84c2-58f8fac226ba`) has deployment
+`607c97a6-2b6f-4a31-b70d-fbf70ac7c01b`, release
+`4a949ede-3412-42ed-a12b-d6b6b9f86aca`, source
+`6a31e8a015dfb181101b53625be344705c483d0e`, image
+`ghcr.io/damibegud/deployflow-node-express-fixture@sha256:d6b121b81541cf4b69e3388f51c2615ba3613ee2654926db4a90d1adaa867946`.
+Its preflight passed, status is `waiting_for_executor`, and its ConfigMap,
+Deployment and Service are absent. No application policy or execution/cleanup job
+exists. API/dispatcher/delivery-worker/deployer all parse both flags as false.
+The hosted cleaner identity/worker is absent. An offline activation planner now
+prepares both gates plus that separate worker/identity and four relevant restarts;
+it grants no authority to execute a release or cleanup. Current private database
+backups passed catalog/full-archive reads without a live restore; no current-state
+restore rehearsal is claimed. No live flag, policy, RBAC or workload was changed
+by this audit.
+
+Read-only GitHub App inspection found the old `wh.damibegud.cloud` receiver URL;
+five latest deliveries failed with HTTP 502. The hosted inbox is empty and all 13
+completed GitHub jobs were manually queued. Public receiver availability alone
+does not establish automatic ingestion. Agent analysis has no configured provider
+key; deterministic analysis remains selected. Main pushes run checks, with manual
+publication and a fresh-install-only operator at that audit. A separate protected
+platform upgrade/rollback workflow is now implemented locally, not activated;
+it preserves flags/policies and refuses unsupported schema/provider/template
+changes. It binds publication/main/attempt and a current exact plan, keeps private
+backups/receipts server-side and fences application DB writes during image rollout.
+Real disposable-PostgreSQL and synthetic failure/rollback/replay tests are recorded
+in [upgrade evidence](evidence/hosting-upgrade-implementation-20261022.json).
+No platform image was changed on k3s, no feature was enabled and no GitHub write
+or deployment was performed while implementing it. See the
+[merge-to-upgrade guide](../../deploy/k3s/automation.md#7-upgrade-the-installed-platform-after-merging-main)
+and [activation guide](../../deploy/k3s/automation.md#6-enable-execution-and-cleanup-on-the-installed-platform)
+and [current review evidence](evidence/hosting-capabilities-review-20261022.json).
+
+**Earlier installation evidence (18:24 UTC and before):**
+After explicit approval, the guarded SSH operator applied the exact 34-object
+foundation manifest (SHA256 `3d78629ec1e0a52b2af902d0b8cb3ef130d096a1db127c89c9e5d48357c2163a`).
+The three PVCs are Bound (5Gi application PostgreSQL, 2Gi identity PostgreSQL,
+1Gi Redis). After separate approval, all seven runtime/bootstrap Secrets were
+created. Both PostgreSQL Pods and Redis are `1/1` Ready with zero restarts.
+Authenticated SQL checks show zero user relations in both fresh databases; Redis
+returns `PONG`. Both private pre-migration database backups passed archive listing
+and an actual isolated restore, with zero relations matching their source.
+Execution and cleanup flags remain `false`. All 111 unrelated resource identities,
+generations and replica specifications checked before/after are unchanged; this
+does not establish a byte-for-byte audit of unrelated resource data/status.
+After separate approval, `Job/deployflow-migrate-c3a71d9e4208` completed successfully
+(UID `f5924cf4-2e7f-453f-98ce-e5a281131df3`, Pod exit 0, zero restarts). PostgreSQL
+stores revision `c3a71d9e4208`, with 29 public-schema tables and zero applications,
+pending analysis/GitHub/delivery/execution jobs, or enabled policies. The identity
+database was then initialized through separately approved
+`Job/deployflow-identity-setup` (UID `4a4f880f-b6ac-4482-a150-5516e2028b37`);
+its guard, bootstrap and import containers all exited 0. Read-only metadata checks
+verified temporary master administrator `deployflow-bootstrap-admin` and operator
+`deployflow-local`, the operator's `administrator` role and `UPDATE_PASSWORD`,
+public browser client, S256 PKCE and the hosted redirect URL. No password/hash fields
+were queried. The subsequently approved twelve-Deployment manifest (SHA256
+`d68e82a48c62d3284872d9daeb73e414dea566b3ecfb72ff7907c9dbc9d97efa`)
+was applied at 17:11–17:12 UTC. All twelve Deployments reached `1/1` ready and
+available, generation observed, exact pinned images and zero container restarts.
+API liveness/readiness, frontend API proxy, unauthenticated API rejection (401),
+provider discovery and fresh reader MCP observations passed. Validator tool
+discovery passed; no admission/apply was invoked. Reader, validator and deployer
+actual Pod identities were denied cross-namespace access and a GET of a deliberately
+nonexistent Secret (403; no Secret values queried). Only the reader can list target
+Deployments; validator/deployer list denial is consistent with their narrow Roles.
+Application/job/policy counts remain zero, execution/cleanup false, and the same
+111 unrelated UID/generation/replica records are unchanged. Empty/error-free sampled
+worker logs are not end-to-end job-processing evidence.
+
+The separately approved hostname manifest (SHA256
+`1acfbb8afb3da381ff7e2142ecafb31af58ab9c1351dc91821f106cecaa1e567`)
+was applied at 18:20–18:21 UTC: narrow HTTP-01 policy, UID/resourceVersion-fenced
+old Ingress removal, then new `deployflow-system/deployflow` (UID
+`39f84dbb-61ed-4f95-aa64-f13bfe8f5128`). Certificate `deployflow-tls` is Ready,
+expires 2027-01-20 17:22:55 UTC, with renewal scheduled for December 21. Public
+HTTPS checks validate the real HTML UI, JSON OIDC configuration/discovery/JWKS,
+401 for unauthenticated application reads, 404 for identity admin/master paths,
+and 405 for GET of the POST-only webhook receiver. GET 405 does not prove signed
+webhook ingestion. The initial HTTPS check during certificate issuance failed;
+after waiting for Ready, validation passed without disabling certificate checks.
+Desktop Chromium (1440×900) rendered the UI, with no overlay/console/request errors,
+and Sign in opened the actual hosted username/password form using S256 PKCE.
+No credentials were submitted, account changed, or browser storage captured.
+The API Pod can fetch public JWKS. All twelve Deployments remain 1/1 ready and
+available with zero restarts; API/deployer parsed execution/cleanup flags are false,
+and application/job/policy counts remain zero. Of 111 earlier resource records,
+110 are unchanged and only the approved old Ingress is removed; the old mockup
+Deployment/Service/namespace remain. Full first login/password change,
+authenticated API/SSE, signed webhook and application-release acceptance are unproven.
+See [foundation evidence](evidence/hosting-foundation-20261022.json) and
+[data-service/backup evidence](evidence/hosting-data-services-20261022.json) and
+[migration evidence](evidence/hosting-migration-20261022.json) and
+[identity evidence](evidence/hosting-identity-20261022.json) and
+[workload evidence](evidence/hosting-workloads-20261022.json) and
+[public hosting evidence](evidence/hosting-public-20261022.json).
+
+A separate credential audit checked remote main
+`54f04988e21f03bda6800bb6b7c74604e5a428e4`, all 22 reachable commits/440 unique
+blobs, and the current tracked/nonignored working files. No real deployment
+credential was found. The seven history scanner findings were four file SHA256
+digests and three test idempotency keys; the working tree added a pinned image
+digest finding. Exact comparisons against 21 private credential representations
+also found no history matches. Development/example credentials remain intentionally
+committed; generated hosted passwords, PEMs and tokens are private/ignored.
+See [audit evidence and coverage limits](evidence/credential-audit-20261022.json).
+
+**Earlier installation tooling preparation:**
 Two GitHub workflows now provide push/PR checks, separately approved manual GHCR
 publication and manual single-stage installation. The offline release bundle binds
 source SHA, image digests, schema and exact manifests. The SSH operator checks the
@@ -28,11 +139,64 @@ See the [installation guide](../../deploy/k3s/automation.md). These additions do
 authorize Git writes, SSH key installation, publication, migrations or cluster
 changes. The five previously staged files were preserved in the index.
 
-The new operator's read-only SSH inspection reconfirmed `homeserver1`, target UID
+Before foundation activation, the new operator's read-only SSH inspection reconfirmed `homeserver1`, target UID
 `84a720fd-dc36-4592-a2bb-12c8f54ddc7c`, no `deployflow-system`, and mockup Ingress UID
 `8adb1de3-8d69-4c54-9e15-51b34d72fe67`. No GitHub-hosted-runner connection or cluster
-mutation has been tested. Live hosting and Phase 7 acceptance remain incomplete.
-Current local checks: **34 hosting tests**, **176 isolated backend tests** (19.76s,
+mutation had been tested at that point. Live hosting and Phase 7 acceptance remain incomplete.
+Latest registry-setup preparation: **45 offline hosting tests** and Ruff pass,
+including synthetic-only server-side credential reuse and the option to provision
+seven runtime Secrets without a local registry credential. Read-only metadata
+inspection found `connect-app/ghcr-pull-secret`; the agent has not inspected its
+credential values. The user's subsequent server-side run confirmed `read:packages`
+only and access to all three published images; expiry was not reported.
+The [server-side reuse command](../../deploy/k3s/automation.md#reuse-an-existing-server-side-ghcr-credential)
+is prepared for the user to run. The user's first apply created Namespace
+`deployflow-system` (UID `d611539e-df7d-4826-b76d-2bd0c4d97225`, 2026-10-22 16:00:44 UTC),
+then stopped because the helper parsed kubectl's plain-text create acknowledgement
+as JSON. Read-only inspection confirmed the expected ownership/PSA labels, no
+workloads and no `deployflow-ghcr` Secret. The parser is fixed locally, with
+regression coverage for a fresh apply and retry after namespace creation; the
+user's retry successfully created `deployflow-system/deployflow-ghcr`, retaining
+the source Connect Secret. The agent's subsequent read-only inspection confirmed
+the namespace/Secret exist, no platform workloads exist, the three target Roles
+and local-path storage are present, and approximately 20 GiB of root disk is free.
+At that point the agent had made no cluster changes. The reviewable 34-object foundation manifest
+(SHA256 `3d78629ec1e0a52b2af902d0b8cb3ef130d096a1db127c89c9e5d48357c2163a`)
+was subsequently approved/applied as recorded above. Seven exact private runtime
+Secret objects have been prepared outside Git (0700 directory/0600 files), with
+SHA256 `b99426d4052a0198b04754731d3a9df9af21d88f87c5cadb2c1771403c6428d6`.
+They were explicitly approved and created, starting the new data services as
+recorded above. The subsequently approved application migration was only
+`Job/deployflow-migrate-c3a71d9e4208`, manifest SHA256
+`50fcb800f7cb7c21fcb1efaeff72ac99d8fb0ed60138974fa47e566b6162b840`,
+using the published immutable backend image to migrate the empty application DB
+from base to `c3a71d9e4208`. It completed as recorded above. Offline SQL and the
+private tested backup/restore procedure remain outside Git; no live restore was
+executed. The subsequent identity approval covered only `Job/deployflow-identity-setup`,
+manifest SHA256 `d93f86c683cf11fdb93edbc0906c56be9a4efb82de3b97e69ffabbce28fb4179`:
+read-only empty-identity-DB guard, one-time temporary master administrator creation
+and application-realm/operator import. No automatic retry, account reset, identity
+server Deployment or public route change was included. Identity setup completed
+as recorded above. The next separately approved stage was exactly twelve platform
+Deployments, manifest SHA256
+`d68e82a48c62d3284872d9daeb73e414dea566b3ecfb72ff7907c9dbc9d97efa`.
+Three separate Kubernetes identities use projected rotating tokens with the
+existing narrow Roles. Execution/cleanup stay disabled; no public route switch,
+GitHub setting change or managed-application deployment is included.
+
+The subsequently approved hostname cutover included a narrow HTTP-01
+solver NetworkPolicy. Read-only preparation verified the production ClusterIssuer
+Ready, nginx (not host-networked), correct public DNS, and no platform Ingress or
+Certificate. Default-deny would otherwise prevent nginx reaching temporary solver
+Pods; the local renderer/operator now prepare the selected TCP 8089 rule before
+removing the old route. The policy and route/TLS activation then completed as
+recorded above. GitHub App settings, permanent private identity administration,
+application execution and cleanup have not been changed by that approval.
+Current offline hosting checks: **48 tests** and Ruff passed; these validate local
+operator behavior; live certificate issuance and login-form navigation have
+separate evidence above. Full authenticated login remains unproven.
+
+Previously recorded checks: **34 hosting tests**, **176 isolated backend tests** (19.76s,
 one dependency warning), Ruff, actionlint and relative links/whitespace passed.
 The exact fresh-state/pending-job SQL also passed against disposable pinned
 PostgreSQL with the real backend migration. Full commands and limits are in
@@ -49,8 +213,8 @@ A separate one-time setup Job creates a temporary master administrator and a new
 application operator with required first-login password change. Generated passwords
 stay in private files/Secrets; the long-running Keycloak Pod receives neither
 bootstrap passwords nor automatic import flags. The optional full-export recovery
-helper remains available but is not part of this fresh installation. No real
-export/import or account creation occurred.
+helper remains available but is not part of this fresh installation. No historical
+account export/restore occurred; fresh live account creation is recorded above.
 
 New read-only SSH checks reconfirmed `homeserver1`, the target namespace UID,
 nginx, local-path storage, and ready Let's Encrypt issuers. DNS already points
@@ -123,9 +287,10 @@ published successfully. Authenticated registry reads confirmed all three indexes
 and their `linux/amd64` manifests. Package permissions/visibility were not changed;
 anonymous reads returned 401 for all three. Evidence contains exact tags, full
 index/platform digests, old/new IDs, and filesystem/configuration comparisons.
-Private image pull access or separately approved public visibility remains a prerequisite
-for the proposed namespace. No GitHub Actions workflow exists in the pushed commit.
-No cluster activation occurred. The earlier baseline acceptance below does not
+At that earlier publication checkpoint, private pull access had not yet been
+provisioned, no GitHub Actions workflow had been pushed, and no cluster activation
+had occurred. Later installation and pushed workflows are recorded above. The
+earlier baseline acceptance below does not
 establish acceptance of this fresh installation.
 
 ## Acceptance matrix
@@ -138,7 +303,7 @@ establish acceptance of this fresh installation.
 | Real desktop lifecycle, fresh 1/1 observation, reload | Passed | Checked-in baseline screenshot; later access-recovery browser check recorded |
 | Unrelated resources unchanged by baseline recovery | Passed | Equal before/after identity/spec hashes for 10 resources |
 | Subsequent-source verification, compatibility, ordering, policy | Passed in isolated tests | Does not establish live automatic deployment |
-| Signed GitHub notification ingestion | Failed / unconfigured | Public endpoint DNS failed; receiver signing secret absent |
+| Signed GitHub notification ingestion | Failed in latest App delivery audit | Hosted receiver exists, but App uses old URL (502); zero hosted inbox deliveries; URL/signing alignment needs approval |
 | Later source → new verified release → automatic healthy update | Unproven | Published marker-2 image and marker-3 PR are not deployed-version evidence |
 | Manual rollback → new release → previous healthy version | Unproven live | No demonstrated upgrade/rollback lineage |
 | Relevant worker restart/replay after rollback | Unproven live | Needs separate scoped approval and observed recovery |

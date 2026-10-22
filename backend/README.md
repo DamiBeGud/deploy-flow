@@ -33,7 +33,7 @@ The files in [skills/](skills/) are versioned runtime inputs loaded and hashed b
 
 ## Development and configuration
 
-For the separately prepared hosted installation, see the
+For the separately operated hosted installation and its current evidence, see the
 [k3s hosting guide](../deploy/k3s/README.md). Hosted reader/validator/deployer Pods
 use explicit `DF_KUBE_ACCESS_MODE=incluster` and rotating projected identities;
 the local SSH client remains the default. Hosting is not operationally accepted.

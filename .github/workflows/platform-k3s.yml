@@ -97,7 +97,7 @@ jobs:
       - name: Inspect, preview, or apply exactly one approved stage
         env:
           SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
-          SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+          SSH_PORT: ${{ vars.K3S_SSH_PORT || '22' }}
           SSH_USER: ${{ secrets.K3S_SSH_USER }}
         run: |
           set -euo pipefail

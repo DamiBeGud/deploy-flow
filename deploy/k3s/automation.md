@@ -24,10 +24,17 @@ Add environment secrets (not environment variables):
 | Secret | Value |
 | --- | --- |
 | `K3S_SSH_HOST` | `91.89.185.146` |
-| `K3S_SSH_PORT` | `22` |
 | `K3S_SSH_USER` | `connectops` |
 | `K3S_SSH_PRIVATE_KEY` | Dedicated Actions private key, including its PEM/OpenSSH delimiters |
 | `K3S_SSH_KNOWN_HOSTS` | Previously verified host entry for the selected address/port |
+
+Set environment **variable** `K3S_SSH_PORT=22` (the workflows default to 22), and
+remove any old secret with that name. The port is not a credential. GitHub can
+suppress job outputs whose public hashes happen to contain a short secret such
+as `22`. Finalization therefore reads the receipt from the checksum-verified
+upgrade artifact for its exact controller run/attempt, independently of job
+outputs. Missing or invalid metadata produces a safe error artifact before SSH;
+inspect the prior receipt before recovery.
 
 Use a dedicated key, not a personal SSH key. Store its private copy outside Git,
 directory 0700/file 0600. Installing its public key on the server requires an exact
@@ -561,8 +568,9 @@ verification plan using that pending recovery receipt as the next origin. Rollba
    | `k3s-platform-automatic` | Dedicated `K3S_PLATFORM_OPERATOR_KEY` and host/port/user/known-host settings; no general SSH key |
    | `k3s` | Manual installation/recovery key; require reviewer protection before enabling automation |
 
-   The automatic environment needs `K3S_SSH_HOST`, `K3S_SSH_PORT`,
-   `K3S_SSH_USER`, `K3S_SSH_KNOWN_HOSTS`, and the dedicated operator key. It does not
+   The automatic environment needs secrets `K3S_SSH_HOST`, `K3S_SSH_USER`,
+   `K3S_SSH_KNOWN_HOSTS`, and the dedicated operator key, plus non-secret variable
+   `K3S_SSH_PORT`. It does not
    need `K3S_SSH_PRIVATE_KEY`. Limit deployment branches to main. Existing package
    Actions access must grant this repository Write for all three platform images.
    If reviewer protection cannot protect the manual environment, remove its broad

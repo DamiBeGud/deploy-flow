@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PROTECTED_FILES = (
     ".github/workflows/platform-images.yml", ".github/workflows/platform-auto.yml",
     ".github/workflows/platform-upgrade.yml",
+    ".github/workflows/platform-k3s.yml",
     "backend/Dockerfile", "backend/pyproject.toml", "backend/uv.lock",
     "frontend/Dockerfile", "frontend/nginx.conf", "frontend/package.json", "frontend/package-lock.json",
     "deploy/k3s/Dockerfile.keycloak",

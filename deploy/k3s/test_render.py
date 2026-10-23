@@ -30,6 +30,14 @@ def by_name(stage, kind, name):
 
 
 class HostingPolicyTests(unittest.TestCase):
+    def test_executor_can_revalidate_admission_with_only_the_validator_peer(self):
+        rule = by_name("foundation", "NetworkPolicy", "allow-kube-validator")["spec"]
+        self.assertEqual(rule["ingress"][0]["ports"], [{"protocol": "TCP", "port": 8001}])
+        self.assertEqual(rule["ingress"][0]["from"], [
+            {"podSelector": {"matchLabels": {"app.kubernetes.io/name": name}}}
+            for name in ("api", "delivery-worker", "kube-deployer")
+        ])
+
     def test_only_new_platform_resources_and_three_target_bindings(self):
         all_objects = [item for stage in ("foundation", "migration", "identity-setup", "identity-import", "workloads", "ingress") for item in render(stage, IMAGES)["items"]]
         identifiers = [(item["kind"], item["metadata"].get("namespace"), item["metadata"]["name"]) for item in all_objects]

@@ -27,6 +27,7 @@ PROTECTED_FILES = (
     "backend/Dockerfile", "backend/pyproject.toml", "backend/uv.lock",
     "frontend/Dockerfile", "frontend/nginx.conf", "frontend/package.json", "frontend/package-lock.json",
     "deploy/k3s/Dockerfile.keycloak",
+    "backend/ops/local-oidc/deployflow-local-realm.json",
     "backend/app/config.py", "backend/app/main.py", "backend/app/webhook_main.py", "backend/app/api/routes.py",
     "backend/app/api/identity.py", "backend/app/api/github_webhook.py",
     "backend/app/api/delivery_routes.py", "backend/app/persistence/models.py", "backend/app/dispatcher.py",
@@ -36,7 +37,7 @@ PROTECTED_FILES = (
     *tuple(str(p.relative_to(ROOT)) for p in sorted((ROOT / "backend/migrations/versions").glob("*.py"))),
     *tuple("deploy/k3s/" + name for name in (
         "automatic.py", "upgrade.py", "upgrade_remote.py", "upgrade_protocol.py", "github_proof.py",
-        "public_checks.py", "check_publication.py", "bundle.py", "render.py", "operate.py", "remote.py", "workflow_upgrade.py", "automatic_candidate.py",
+        "public_checks.py", "check_publication.py", "bundle.py", "render.py", "operate.py", "remote.py", "prepare_secrets.py", "workflow_upgrade.py", "automatic_candidate.py",
     )),
 )
 

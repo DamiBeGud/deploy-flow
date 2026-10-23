@@ -183,7 +183,7 @@ def foundation():
         ("identity-postgres", ["keycloak", "identity-setup", "identity-import"], 5432),
         ("redis", RUNTIME, 6379), ("api", ["frontend"], 8000), ("frontend", [], 8080),
         ("webhook", [], 8000), ("keycloak", [], 8080), ("kube-reader", ["api"], 8001),
-        ("kube-validator", ["api", "delivery-worker"], 8001), ("external-probe", ["kube-deployer"], 8000),
+        ("kube-validator", ["api", "delivery-worker", "kube-deployer"], 8001), ("external-probe", ["kube-deployer"], 8000),
     ):
         result.append(policy(name, callers, port))
     result += [postgres("postgres", "deployflow-postgres", "deployflow", "5Gi"),

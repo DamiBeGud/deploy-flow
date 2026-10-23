@@ -41,7 +41,7 @@ def _patch(value, operations):
             ]}
 
 
-def prepare(snapshot):
+def prepare(snapshot, *, include_cleanup=False):
     if any(row.get("enabled") for row in snapshot["policies"]):
         raise ValueError("Enabled application policies require a separate activation scope")
     for row in snapshot["jobs"]:
@@ -51,12 +51,13 @@ def prepare(snapshot):
             raise ValueError("Pending release verification/preparation must settle before activation")
         if row["kind"] == "analysis_pending" and row["count"]:
             raise ValueError("Pending analysis must settle before activation")
-    for kind in ("deployments", "serviceaccounts"):
-        if any(row["metadata"]["name"] == "kube-cleaner" for row in snapshot["objects"][kind]):
-            raise ValueError("Cleaner already exists; review its current configuration separately")
-    cleaner_role = next(row for row in snapshot["target_roles"] if row["metadata"]["name"] == "deployflow-cleaner")
-    if not cleaner_role.get("absent"):
-        raise ValueError("Existing cleaner Role must be reviewed separately; no overwrite/adoption")
+    if include_cleanup:
+        for kind in ("deployments", "serviceaccounts"):
+            if any(row["metadata"]["name"] == "kube-cleaner" for row in snapshot["objects"][kind]):
+                raise ValueError("Cleaner already exists; review its current configuration separately")
+        cleaner_role = next(row for row in snapshot["target_roles"] if row["metadata"]["name"] == "deployflow-cleaner")
+        if not cleaner_role.get("absent"):
+            raise ValueError("Existing cleaner Role must be reviewed separately; no overwrite/adoption")
 
     config = _object(snapshot, "configmaps", "deployflow-config")
     if any(config["data"].get(flag) != "false" for flag in FLAGS):
@@ -64,7 +65,7 @@ def prepare(snapshot):
     deployer = _object(snapshot, "deployments", "kube-deployer")
     image = deployer["spec"]["template"]["spec"]["containers"][0]["image"]
     if not re.fullmatch(re.escape(IMAGE_REPOSITORIES["backend"]) + r"@sha256:[0-9a-f]{64}", image):
-        raise ValueError("Cleaner requires the existing approved immutable backend image")
+        raise ValueError("Activation requires the existing approved immutable backend image")
     cleaner = runtime("kube-cleaner", image,
                       ["dramatiq", "app.worker", "--processes", "1", "--threads", "1", "--queues", "cleanup"],
                       identity=True)
@@ -82,14 +83,15 @@ def prepare(snapshot):
     ]
     networks = []
     peer = {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "kube-cleaner"}}}
-    for name in ("allow-postgres", "allow-redis"):
-        policy = _object(snapshot, "networkpolicies", name)
-        if peer in policy["spec"]["ingress"][0]["from"]:
-            raise ValueError("Cleaner network permission already exists; review separately")
-        networks.append(_patch(policy, [{"op": "add", "path": "/spec/ingress/0/from/-", "value": peer}]))
+    if include_cleanup:
+        for name in ("allow-postgres", "allow-redis"):
+            policy = _object(snapshot, "networkpolicies", name)
+            if peer in policy["spec"]["ingress"][0]["from"]:
+                raise ValueError("Cleaner network permission already exists; review separately")
+            networks.append(_patch(policy, [{"op": "add", "path": "/spec/ingress/0/from/-", "value": peer}]))
     config_patch = _patch(config, [
         *[{"op": "test", "path": "/data/" + flag, "value": "false"} for flag in FLAGS],
-        *[{"op": "replace", "path": "/data/" + flag, "value": "true"} for flag in FLAGS],
+        *[{"op": "replace", "path": "/data/" + flag, "value": "true"} for flag in (FLAGS if include_cleanup else FLAGS[:1])],
     ])
     restarts = []
     for name in RESTART:
@@ -98,7 +100,7 @@ def prepare(snapshot):
         annotations["deployflow.io/capabilities-review"] = snapshot["observed_at"]
         restarts.append(_patch(current, [{"op": "add", "path": "/spec/template/metadata/annotations", "value": annotations}]))
     return {
-        "format": 1, "operation": "enable-execution-and-cleanup-capabilities",
+        "format": 1, "operation": "enable-execution-and-cleanup-capabilities" if include_cleanup else "enable-execution-capability",
         "snapshot_observed_at": snapshot["observed_at"], "schema_revision": REVISION,
         "preconditions": {
             "server": "homeserver1", "platform_namespace": NAMESPACE, "target_namespace": TARGET,
@@ -110,19 +112,22 @@ def prepare(snapshot):
             "private_current_database_backups_verified": True,
             "recheck_live_state_immediately_before_mutation": True,
         },
-        "steps": [
+        "steps": ([
             {"operation": "create-only", "resources": creates},
             {"operation": "json-patch", "resources": networks},
             {"operation": "json-patch", "resources": [config_patch]},
             {"operation": "create-only", "resources": [cleaner]},
             {"operation": "json-patch", "resources": restarts},
-        ],
+        ] if include_cleanup else [
+            {"operation": "json-patch", "resources": [config_patch]},
+            {"operation": "json-patch", "resources": restarts},
+        ]),
         "application_policy_changes": [], "application_execution_requests": [], "cleanup_requests": [],
         "waiting_releases": [{"deployment_id": row["id"], "release_id": row["release_id"],
                               "status": row["status"]} for row in snapshot["runs"]],
-        "expected_effect": "Expose execution/cleanup controls; no waiting release executes without its separate application policy and execution authorization",
+        "expected_effect": ("Expose execution/cleanup controls" if include_cleanup else "Expose execution controls; cleanup remains disabled") + "; no waiting release executes without separate application policy and execution authorization",
         "interruption": "API and three relevant worker Deployments use Recreate; brief API interruption and worker pause expected",
-        "reversal": "Separately disable both ConfigMap flags and restart API/dispatcher/delivery-worker/deployer/cleaner; inspect any newly queued work first. Retain data and identity/RBAC; deletion requires separate approval",
+        "reversal": "Separately disable the activated ConfigMap gates and restart only affected consumers; inspect newly queued work first. Retain data and identity/RBAC; deletion requires separate approval",
         "approval": "Required for this exact plan; offline preparation grants no operational authority",
     }
 
@@ -131,8 +136,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--include-cleanup", action="store_true", help="Prepare separate cleanup capability/identity scope too; destructive testing still needs its own approval")
     args = parser.parse_args()
-    plan = prepare(json.loads(args.snapshot.read_text()))
+    plan = prepare(json.loads(args.snapshot.read_text()), include_cleanup=args.include_cleanup)
     # A new file prevents accidentally replacing a previously reviewed plan.
     descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w") as stream:

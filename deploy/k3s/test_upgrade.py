@@ -15,7 +15,7 @@ import upgrade
 import upgrade_remote as remote
 from bundle import create, keycloak_version
 from check_publication import check_main
-from render import IMAGE_REPOSITORIES, render, runtime
+from render import IMAGE_REPOSITORIES, REVISION, render, runtime
 from upgrade_protocol import (
     NS_UID,
     SOURCE_ANNOTATION,
@@ -36,7 +36,7 @@ def fixtures():
     items = render("workloads", OLD)["items"]
     for item in items:
         item["metadata"].update(uid="uid-" + item["metadata"]["name"], generation=1, annotations={"retained": "yes"})
-    state = {"namespace_uid": NS_UID, "target_namespace_uid": TARGET_UID, "schema_revision": "c3a71d9e4208",
+    state = {"namespace_uid": NS_UID, "target_namespace_uid": TARGET_UID, "schema_revision": REVISION,
              "keycloak_version": "26.8.0", "keycloak_version_observed": True,
              "schema_fingerprints": {"application": "schema-a", "identity": "schema-i"},
              "pending_jobs": {"analysis": 0, "analysis_runs": 0, "github": 0, "delivery": 0, "execution": 0},
@@ -272,7 +272,7 @@ class UpgradeRemoteTests(unittest.TestCase):
             stack.enter_context(patch.object(remote, "query", return_value=[{"name": "applications"}]))
             stack.enter_context(patch.object(remote, "backup", return_value=[{"validation": "synthetic-only archive result"}]))
             stack.enter_context(patch.object(remote, "verify_images", side_effect=lambda refs: {ref: {ref} for ref in refs}))
-            stack.enter_context(patch.object(remote, "public_checks", return_value={"/": 200}))
+            stack.enter_context(patch("github_proof.GitHubProof.public_job", return_value={"job_id": 123, "vantage": "synthetic-only"}))
             fence = stack.enter_context(patch.object(remote, "WriteFence"))
             fence.return_value.__enter__.return_value.remaining.return_value = 60
             env.fail_rollout = True
@@ -288,10 +288,12 @@ class UpgradeRemoteTests(unittest.TestCase):
             preview = remote.execute({"operation": "rollback-preview", "receipt_id": original["id"]})
             self.assertEqual(preview["plan"]["operation"], "rollback")
             env.fail_rollout = False
-            result = remote.execute({"operation": "rollback-apply", "receipt_id": original["id"], "approval": preview["plan_sha256"]})
+            result = remote.execute({"operation": "rollback-apply", "receipt_id": original["id"], "approval": preview["plan_sha256"], "controller": {"synthetic": True}})
+            self.assertEqual(result["status"], "awaiting_public_verification")
+            result = remote.finalize({"receipt_id": result["receipt_id"], "controller": {"synthetic": True}, "github_token": "synthetic-only"})
             self.assertEqual(result["status"], "succeeded")
             self.assertFalse(remote.unfinished())
-            self.assertEqual(remote.load_receipt(original["id"])["reverted_by"], result["receipt_id"])
+            self.assertEqual(remote.resolved_receipts()[original["id"]], result["receipt_id"])
             for name, current in env.snapshot()["deployments"].items():
                 self.assertEqual(current["images"], before["deployments"][name]["images"])
                 self.assertEqual(current["source_sha"], before["deployments"][name]["source_sha"])

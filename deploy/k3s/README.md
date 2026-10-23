@@ -12,13 +12,18 @@ target the old receiver and fail with 502; main pushes do not upgrade this
 populated platform. Follow the [activation and upgrade limits](automation.md#6-enable-execution-and-cleanup-on-the-installed-platform)
 and [review evidence](../../backend/ops/evidence/hosting-capabilities-review-20261022.json).
 
-**Platform upgrade flow now prepared locally:** use the separate protected
-**Upgrade DeployFlow platform** workflow after publication. It supports an exact
-read-only preview, approved image-only apply and separately approved rollback
-from private receipts. It preserves live flags/data/configuration; unsupported
-schema/provider/template changes stop for review. Follow the
-[merge-to-upgrade instructions](automation.md#7-upgrade-the-installed-platform-after-merging-main).
-No live upgrade, feature activation or GitHub-runner deployment has been tested.
+**Latest platform upgrade (2026-10-22): images applied; workflow verification failed.**
+PR #1 merged and GitHub publication/preview passed. The approved workflow replaced
+all twelve platform Deployment images. Post-failure read-only checks verified
+ready/available replicas, running digests, unchanged schemas/protected resources,
+and public HTTPS from the operator computer. The server itself times out connecting
+to its public endpoint, so the durable receipt remains failed. No automatic rollback
+or success override occurred. Do not blindly rerun apply. See
+[current upgrade evidence](../../backend/ops/evidence/hosting-upgrade-20261022.json)
+and the [upgrade/recovery guide](automation.md#7-upgrade-the-installed-platform-after-merging-main).
+Explicit verification recovery needs a reviewed implementation and new scoped
+approval; rollback remains separately approved. Feature activation and application
+CD acceptance remain pending.
 
 The installation observations below predate that capability review. The explicitly
 approved 34-object foundation was applied on 2026-10-22.
@@ -50,10 +55,11 @@ signed webhook and application-release acceptance remain pending. Current result
 
 For GitHub environment settings, CI/publication, stage-by-stage installation and
 the hostname reversal procedure, follow the [installation automation guide](automation.md).
-Pushes run checks; publication and cluster stages require manual runs and scoped
-approval. Installation/publication workflows were recorded on main `54f0498`;
-subsequent upgrade/operator work and evidence are prepared for a local reviewed
-commit. No hosted-runner installation or upgrade has been verified.
+Pushes run checks by default. Optional automatic publication/upgrades need the
+[separate activation procedure](automation.md#8-automatic-platform-and-managed-application-deployment);
+its gates and server policy remain off until explicitly approved. Installation initially used main `54f0498`. Publication and the first hosted-runner
+upgrade attempt used merged main `9ae460d7`; its final verification failed as
+recorded above. A complete successful hosted-runner upgrade remains unproven.
 
 ## Selected installation
 
@@ -226,8 +232,10 @@ Choose either fresh setup **or** recovery, never both against the same identity 
    configuration, internal Services, ingress policies, three StatefulSets/PVCs)
    and exact private Secrets. Wait for the new databases/Redis; leave all existing
    application workloads and any private historical backups untouched.
-3. Separately approve `Job/deployflow-migrate-c3a71d9e4208`, pinned to revision
-   `c3a71d9e4208`, against **only the new** database. Workload init containers read
+3. For a fresh installation from this checkout, separately approve
+   `Job/deployflow-migrate-e4b92f7a6103`, pinned to revision `e4b92f7a6103`, against
+   **only the new** database. The earlier installation used `c3a71d9e4208`; upgrading
+   that populated database needs a new backup/migration/fallback review. Workload init containers read
    the revision and never perform migrations.
 4. Separately approve `Job/deployflow-identity-setup` and its bootstrap Secret,
    before any Keycloak server is started against the new identity DB. Verify the

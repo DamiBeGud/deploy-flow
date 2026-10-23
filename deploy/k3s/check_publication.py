@@ -8,10 +8,10 @@ import sys
 def check(run, source, attempt):
     if (run.get("repository", {}).get("full_name") != "DamiBeGud/deploy-flow"
             or run.get("path") != ".github/workflows/platform-images.yml"
-            or run.get("event") != "workflow_dispatch" or run.get("head_branch") != "main"
+            or run.get("event") not in {"workflow_dispatch", "push"} or run.get("head_branch") != "main"
             or run.get("head_sha") != source or run.get("run_attempt") != int(attempt)
             or run.get("status") != "completed" or run.get("conclusion") != "success"):
-        raise ValueError("Publication must be a successful manual run at this exact main source and attempt")
+        raise ValueError("Publication must be a successful main push/manual run at this exact source and attempt")
 
 
 def check_main(source, current):

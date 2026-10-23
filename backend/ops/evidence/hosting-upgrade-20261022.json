@@ -1,0 +1,145 @@
+{
+  "recorded_at": "2026-10-22T21:35:37.705218+00:00",
+  "scope": "Approved first image-only upgrade of DeployFlow platform; separate from managed application CD",
+  "source_sha": "9ae460d7e03b7455e4ddaff4251035f349e198ff",
+  "approval_plan_sha256": "616c5c087d8b3925cbc121f570611fd668e72ce28aec0cf63bccd395aef2ebce",
+  "publication": {
+    "run_id": 39854452238,
+    "attempt": 2,
+    "result": "success",
+    "url": "https://github.com/DamiBeGud/deploy-flow/actions/runs/39854452238/attempts/2",
+    "first_attempt": "failed before release artifact: GHCR read_package denied; user subsequently configured package Actions access"
+  },
+  "preview": {
+    "run_id": 39857313101,
+    "attempt": 1,
+    "result": "success",
+    "url": "https://github.com/DamiBeGud/deploy-flow/actions/runs/39857313101"
+  },
+  "apply": {
+    "run_id": 39857752877,
+    "attempt": 1,
+    "workflow_result": "failure",
+    "durable_receipt_status": "failed",
+    "receipt_id": "616c5c087d8b3925cbc121f570611fd668e72ce28aec0cf63bccd395aef2ebce",
+    "url": "https://github.com/DamiBeGud/deploy-flow/actions/runs/39857752877",
+    "automatic_rollback": false
+  },
+  "images": {
+    "backend": "ghcr.io/damibegud/deployflow-backend@sha256:05e2ac7c596291706a4c16e4026805cca3d20b8a407d4b692d64042a9ceaddd6",
+    "frontend": "ghcr.io/damibegud/deployflow-frontend@sha256:ecd085cf24668d6dff78ddc575f80fd92a9133f0e228e8b84b240cac0b26d6ce",
+    "keycloak": "ghcr.io/damibegud/deployflow-keycloak@sha256:5d57b65369199b09ed3a755db96a66ed6d4b241a1a260b83f294e92f99e57596"
+  },
+  "resources_changed": {
+    "namespace": "deployflow-system",
+    "deployments": [
+      "api",
+      "delivery-worker",
+      "dispatcher",
+      "external-probe",
+      "frontend",
+      "github-worker",
+      "keycloak",
+      "kube-deployer",
+      "kube-reader",
+      "kube-validator",
+      "webhook",
+      "worker"
+    ],
+    "fields": "container/init-container image references and root source annotations only"
+  },
+  "backups": [
+    {
+      "bytes": 103207,
+      "database": "deployflow",
+      "file": "deployflow.dump",
+      "sha256": "099d31813fed588e3318729ed301c4ca2afda5c84c4694670988027700963685",
+      "validation": "Catalog and complete archive-to-SQL read; not a restore"
+    },
+    {
+      "bytes": 255930,
+      "database": "keycloak",
+      "file": "keycloak.dump",
+      "sha256": "7fb26ee48514e9e9b4bafd74dc9d12779dfc7e3063cb1564df2f4f811efa850c",
+      "validation": "Catalog and complete archive-to-SQL read; not a restore"
+    }
+  ],
+  "private_backup_directory": "$HOME/.deployflow-upgrades/616c5c087d8b3925cbc121f570611fd668e72ce28aec0cf63bccd395aef2ebce/ on homeserver1; directory 0700, files 0600; archives remain private; no full current-state restore rehearsal",
+  "post_failure_read_only_checks": {
+    "all_12_deployments_settled_ready_available": true,
+    "running_image_ids_verified_against_registry_and_owned_pods": true,
+    "protected_resources_changed": [],
+    "schema_revision": "c3a71d9e4208",
+    "schema_fingerprints": {
+      "application": "c0549eeea042582e1fd967eb290f937dc811845986e15478230f1e1259be463a",
+      "identity": "6050b936fca8d198346e6b5628e292711d7594f2cd72d0a8da10418fb4e2c78c"
+    },
+    "keycloak_version": "26.8.0",
+    "pending_jobs": {
+      "analysis": 0,
+      "analysis_runs": 0,
+      "github": 0,
+      "delivery": 0,
+      "execution": 0
+    },
+    "flags": {
+      "DF_DEPLOYMENT_EXECUTION_ENABLED": "false",
+      "DF_DEPLOYMENT_CLEANUP_ENABLED": "false"
+    },
+    "application_policies": [],
+    "application_share_locks": 0,
+    "public_check_from_server": {
+      "result": "failed",
+      "exception": "URLError wrapping TimeoutError",
+      "dns": [
+        "91.89.185.146"
+      ],
+      "https_request_timeout_seconds": 5,
+      "interpretation": "Server cannot complete HTTPS connection to its own public endpoint. NAT loopback/hairpin or routing/filtering is a possible cause; underlying network cause not proven."
+    },
+    "public_check_from_operator_computer": {
+      "tls_verification": true,
+      "/": {
+        "status": 200,
+        "content_type": "text/html"
+      },
+      "/api/v1/auth/config": {
+        "status": 200,
+        "content_type": "application/json",
+        "mode": "oidc"
+      },
+      "/identity/realms/deployflow-local/.well-known/openid-configuration": {
+        "status": 200,
+        "issuer": "https://deployflow.damibegud.cloud/identity/realms/deployflow-local"
+      },
+      "/api/v1/applications": {
+        "status": 401
+      }
+    }
+  },
+  "acceptance": {
+    "image_rollouts": "passed",
+    "running_digest_verification": "passed in read-only diagnosis",
+    "public_endpoints_from_operator_computer": "passed",
+    "upgrade_workflow_and_durable_completion": "failed",
+    "server_origin_public_endpoint_verification": "failed",
+    "platform_rollback": "unproven; not executed",
+    "authenticated_workflows": "unproven",
+    "managed_application_automatic_update_rollback_replay": "unproven; not part of this operation",
+    "phase7_complete": false
+  },
+  "remaining_work": [
+    "Correct verifier network vantage and bounded failure reporting; preserve real public TLS verification from a reachable independent runner",
+    "Implement/review an explicit verification-only recovery path for an already-applied failed receipt, or separately approve image rollback after a fresh preview",
+    "Obtain new scoped approval before further server receipt/resource mutations; do not edit the failed receipt manually or rerun apply blindly",
+    "Execution/cleanup activation and webhook alignment remain separately pending"
+  ],
+  "safety": {
+    "migrations": false,
+    "restores": false,
+    "flag_or_policy_changes": false,
+    "automatic_rollback": false,
+    "manual_receipt_or_database_success_override": false,
+    "additional_live_mutations_after_failure": false
+  }
+}

@@ -348,17 +348,32 @@ def list_applications(identity: Actor, limit: int = Query(default=50, ge=1, le=1
             query = query.where(Application.owner_id == identity.actor_id)
         apps = db.scalars(query.order_by(Application.created_at.desc()).limit(limit)).all()
         ids = [app.id for app in apps]
-        policies = {row.application_id: row.enabled for row in db.scalars(select(DeploymentPolicy).where(DeploymentPolicy.application_id.in_(ids)))}
+        policies = {row.application_id: row for row in db.scalars(select(DeploymentPolicy).where(DeploymentPolicy.application_id.in_(ids)))}
         recent = {}
+        successful = {}
         for run, release in db.execute(select(DeploymentRun, ReleaseSpecificationRecord).join(
             ReleaseSpecificationRecord, DeploymentRun.release_id == ReleaseSpecificationRecord.id,
         ).where(DeploymentRun.application_id.in_(ids)).order_by(DeploymentRun.created_at.desc())):
             recent.setdefault(run.application_id, {"status": run.status, "source_sha": release.source_sha or release.merged_sha,
                                                    "image_reference": release.image_reference, "error_code": run.error_code})
+            if run.status == "succeeded":
+                successful.setdefault(run.application_id, {"source_sha": release.source_sha or release.merged_sha,
+                                                           "image_reference": release.image_reference})
+        verification = {}
+        for pr, plan in db.execute(select(InfrastructurePullRequest, InfrastructurePlan).join(
+            InfrastructurePlan, InfrastructurePullRequest.plan_id == InfrastructurePlan.id,
+        ).where(InfrastructurePlan.application_id.in_(ids)).order_by(InfrastructurePullRequest.created_at.desc())):
+            verification.setdefault(plan.application_id, {"status": pr.source_status or pr.status,
+                                                         "source_sha": pr.source_head_sha,
+                                                         "error_code": pr.source_error_code or pr.error_code})
         return [
             {
-                "deployment_policy_enabled": policies.get(app.id, False),
+                "deployment_policy_enabled": bool(policies.get(app.id) and policies[app.id].enabled),
+                "deployment_execution_available": settings().deployment_execution_enabled,
+                "allowed_source_sha": policies[app.id].allowed_source_sha if app.id in policies else None,
                 "latest_deployment": recent.get(app.id),
+                "last_successful_deployment": successful.get(app.id),
+                "source_verification": verification.get(app.id),
                 "id": str(app.id),
                 "name": app.name,
                 "repository_url": app.repository_url,

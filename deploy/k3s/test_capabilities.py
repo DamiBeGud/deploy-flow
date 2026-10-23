@@ -24,8 +24,20 @@ def snapshot():
 
 
 class CapabilitiesTests(unittest.TestCase):
-    def test_cleanup_consumes_only_cleanup_queue_with_separate_projected_identity(self):
+    def test_default_activation_enables_execution_without_cleanup_identity_or_permissions(self):
         plan = prepare(snapshot())
+        self.assertEqual(plan["operation"], "enable-execution-capability")
+        self.assertEqual(len(plan["steps"]), 2)
+        self.assertTrue(all(s["operation"] == "json-patch" for s in plan["steps"]))
+        patch = plan["steps"][0]["resources"][0]["json_patch"]
+        self.assertEqual([p["path"] for p in patch if p["op"] == "replace"], ["/data/DF_DEPLOYMENT_EXECUTION_ENABLED"])
+        self.assertEqual([r["name"] for r in plan["steps"][1]["resources"]], list(RESTART))
+        self.assertFalse(plan["application_policy_changes"])
+        self.assertFalse(plan["application_execution_requests"])
+        self.assertFalse(plan["cleanup_requests"])
+
+    def test_cleanup_consumes_only_cleanup_queue_with_separate_projected_identity(self):
+        plan = prepare(snapshot(), include_cleanup=True)
         cleaner = plan["steps"][3]["resources"][0]["spec"]["template"]["spec"]
         self.assertEqual(cleaner["serviceAccountName"], "kube-cleaner")
         self.assertTrue(cleaner["automountServiceAccountToken"])
@@ -41,7 +53,7 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertFalse(plan["cleanup_requests"])
 
     def test_optimistic_patches_preserve_other_permissions_and_configuration(self):
-        plan = prepare(snapshot())
+        plan = prepare(snapshot(), include_cleanup=True)
         for step in plan["steps"]:
             if step["operation"] == "json-patch":
                 for patch in step["resources"]:
@@ -76,7 +88,7 @@ class CapabilitiesTests(unittest.TestCase):
             state = snapshot()
             mutate(state)
             with self.assertRaises(ValueError):
-                prepare(state)
+                prepare(state, include_cleanup=True)
 
 
 if __name__ == "__main__":

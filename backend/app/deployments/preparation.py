@@ -24,6 +24,7 @@ from app.persistence.database import Session
 from app.persistence.models import (
     Application,
     DeliveryJob,
+    DeploymentPolicy,
     DeploymentRun,
     InfrastructurePlan,
     InfrastructurePlanFile,
@@ -105,6 +106,11 @@ def _source(db, pr_id: UUID, build_id: UUID, profile: dict, *, lock: bool = Fals
         or pr.merged_sha is None or build.image_repository != plan.validation_json.get("image_binding", {}).get("repository")
     ):
         raise ReleasePreparationError("release_source_stale")
+    if build.compatibility_json and build.compatibility_json.get("policy") == "node-handler-compatibility-v2":
+        policy = db.scalar(select(DeploymentPolicy).where(DeploymentPolicy.application_id == application.id,
+                           DeploymentPolicy.environment_profile_id == profile["id"]))
+        if policy is None or policy.source_compatibility_policy != "node-handler-compatibility-v2":
+            raise ReleasePreparationError("source_compatibility_policy_revoked")
     return _Source(
         pr.id, plan.id, application.id, approval.id, build.id,
         build.run_id, build.run_attempt,
@@ -143,7 +149,8 @@ def _check_github(source: _Source) -> None:
                 checked_artifact,
                 verify_registry_digest,
             )
-            compatibility = checked_source_compatibility(api, baseline=source.merged_sha, source=source.source_sha, files=source.files)
+            compatibility = checked_source_compatibility(api, baseline=source.merged_sha, source=source.source_sha, files=source.files,
+                              policy=(source.compatibility or {}).get("policy", "node-source-compatibility-v1"))
             if not source.compatibility or any(source.compatibility.get(key) != value for key, value in compatibility.items()):
                 raise ReleasePreparationError("source_compatibility_changed")
             artifacts = [row for row in api.run_artifacts(source.ci_run_id) if row.get("name") == "deployflow-build" and not row.get("expired")]

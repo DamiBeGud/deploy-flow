@@ -1,0 +1,181 @@
+{
+  "recorded_date": "2026-10-23",
+  "kind": "local-implementation-evidence",
+  "status": "Implemented and locally tested; not activated; operational acceptance incomplete",
+  "base_commit": "c6d4e786d13f52481d7b0928f3b8f2a435bef069",
+  "uncommitted": true,
+  "scope": {
+    "platform": "Opt-in main publication, pinned forced-command controller, exact-source default policy, independently verified candidate and HTTPS, immutable recovery lineage",
+    "managed_applications": "Explicit per-application source policy, conservative handler compatibility opt-in, signed event and existing verified release/execution pipeline, lifecycle and dashboard controls"
+  },
+  "source_sha256": {
+    ".github/workflows/platform-auto.yml": "b83c9e8b230d9e18fd6cff6a9aa7838c5db4c94a7beb8b2a1cfe67f0abefd558",
+    ".github/workflows/platform-images.yml": "988569720f52dee641c1f4fcede7a7d5067343bb68a4022e22be3c0012801a08",
+    ".github/workflows/platform-upgrade.yml": "ce2ea8ba7f22af0fe1a99d5be5e608aba4540349705310bb1a2425520b3a1a13",
+    "README.md": "2a3791a3cbe654fb50c1e4f97c0924a14d73450ec2515089170ffa9ec8b13b0b",
+    "backend/README.md": "0058660d33ab2ef7f6cd2713fbbc9da163ef8f09dc972132c85b9f323142f35b",
+    "backend/app/api/delivery_routes.py": "7466fe6df20fe9a4c021038f4869d8d61cd9187331456f3c4f81397062a5c018",
+    "backend/app/api/routes.py": "459aa62a4902c3442140b5b75172546fdf4ffc4d554fb024770e3bcf9dbabed1",
+    "backend/app/deployments/execution.py": "ff89fbb99554cf9d1180844f8351299fddf50c7a427c2e4d07bb764cb7b68cb4",
+    "backend/app/deployments/preparation.py": "42a64de89814c0b152ad3379a254fe4269283f085ee3ebad0bb5fcf514eb5153",
+    "backend/app/deployments/queue.py": "436cde77ddf395977fd0c52a98aded735204973e43cb2f38213aec8b07f021dc",
+    "backend/app/integrations/github/compatibility.py": "956e00d7224e34c83566a980ae9909fcf3e772fdfc868ce87e83c7f7c8ef30c1",
+    "backend/app/integrations/github/source_updates.py": "0661f93b3648f94bcedddffad2577b77c556f0353a164a0d5a89585c695d3649",
+    "backend/app/persistence/models.py": "0e55e1dd2b61e415e75d564226d78e58ff1b10990ef4932e1c6ce7f097de2eb4",
+    "backend/migrations/versions/e4b92f7a6103_automatic_source_policy.py": "1114428489ba3625236c57373365e3447620770bcee1faf61e796a09fb8b25cd",
+    "backend/ops/evidence/hosting-upgrade-20261022.json": "5d92fa7f288663c26678230bed8e0260e86758d34b832c9dd5d532313295df3c",
+    "backend/ops/phase7-operational-closure.md": "7afaad156cf156248debc78bc52f63495c41de4e62944852b7a65ca17dc7f8c4",
+    "backend/tests/test_automatic_deployment_policy.py": "7269b752db491ee54bf5b67e7fbe134cc37ab0efed70f264be41ba9f43a0296d",
+    "deploy/k3s/README.md": "e77f9843af2335b76690197416a6a0e4d03609e16f9b75d01db470c281011e8c",
+    "deploy/k3s/automatic.py": "cd562c4f2d5ef9a7a3ae10796042709362fba68b896c029033fc34b2db550bb8",
+    "deploy/k3s/automatic_candidate.py": "ca104aed0b28d4b76a4da9296dbddc8afe48c0a52a346c57396e3fc7d74c78c7",
+    "deploy/k3s/automation.md": "9bda3edd6896a9a6f93f8a551560d4724350a4e38c7bedcb9ed9804daa00879c",
+    "deploy/k3s/capabilities.py": "03b200a2b6ed10d735f4be5df8c6c8e3c12fbffe3ab204a8be87de97d7427458",
+    "deploy/k3s/check_publication.py": "def197838a8c3a4f7667a71a3d1856c279596c3611d426b2eb3eec0ac24f0add",
+    "deploy/k3s/github_proof.py": "a2d869069b644b8315fa17f37b0ae49ef717a6010c27b56adc0091fa3a56fa29",
+    "deploy/k3s/prepare_automatic_policy.py": "ee9c1b3192e4fd56626ebe306c3d7eec80e48c402d074457b93ff4f26c359abd",
+    "deploy/k3s/public_checks.py": "cd03a4a0bb6876711f95b230f62e80d6f806adbb126d8de1fbaac025673c1975",
+    "deploy/k3s/render.py": "def610cf757ec774f9ca352ba61ab39d7b44766170236e138aa79adffc89e1a6",
+    "deploy/k3s/test_automatic.py": "2d69f8fb0fc4db771817ad08486b175d81f94fcbe22e6adcd4f13de0cec9ce9e",
+    "deploy/k3s/test_capabilities.py": "64fc289a312c4df046e735d40ac2e190e3c9df8e027a2cdc702f318c52c4a341",
+    "deploy/k3s/test_upgrade.py": "c4199dc69c2a5b34c2dc7f43d0717de5efe9247e5765f103d8ed385a57010cb0",
+    "deploy/k3s/upgrade.py": "4e38bcc1471baac620a3a1658c81662d75cff5b058d5cb27a4a3d05392dc1fd9",
+    "deploy/k3s/upgrade_protocol.py": "6d39a5654dd5633ab0d8c6ed8032c2c2dd20b7f56abb5461bdab1f23a9d12957",
+    "deploy/k3s/upgrade_remote.py": "11d9e9c11f61acfffa74a5432eca292dbfe5feac1965975353d2afa66a75ceac",
+    "deploy/k3s/workflow_upgrade.py": "dcecd9a473d94af6194dfe8ac9389130ae32f1600a1d3d757d901310d97abd58",
+    "frontend/README.md": "d34cbb06d5405dee66730cb6d5d1e763bbec3840cf8bf4d5357db6f038c3bec8",
+    "frontend/playwright.config.ts": "1861827ba178a37eb697e822b92b3d8f6bbc4e9ae93bafc51077e5c2bec540b8",
+    "frontend/src/App.css": "603e531d40467b321d8bef3a137b464c378008bb3b92fd072e5e4412e26637eb",
+    "frontend/src/features/applications/ApplicationsPage.tsx": "f2647e98854cea775199e35d4d633cbb46e8f13056b7aa4491bca0a2d26eb290",
+    "frontend/src/features/deployments/ApplicationLifecyclePage.tsx": "79650965d4bfd370501c98c6e1aa4b171ca9a51f0cdc9fa02f1233400bf0acd6",
+    "frontend/src/features/deployments/DeploymentPolicyControl.tsx": "d6a813afb7a55d75087a71c59dacdb65ff6b73094f536b3f06f841b7b36b098a",
+    "frontend/src/shared/contracts.ts": "ce7c3a375a7ed95e504f23b0e7e07ae79be50e72a1672a90056b537a2587001e",
+    "frontend/tests/phase7-lifecycle.spec.ts": "9294f59830887741ed72ef7e1494a99385e4b2be475407a1d5d7771547b4730f"
+  },
+  "checks": [
+    {
+      "cwd": "backend",
+      "command": "DF_TEST_IMAGE=sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24 sh scripts/test_phase7_isolated.sh",
+      "result": "195 passed; one existing anyio deprecation warning; 21.09 seconds",
+      "isolation": "Disposable deployflow_test database/container/network; no live GitHub/Kubernetes credentials"
+    },
+    {
+      "cwd": ".",
+      "command": "DF_UPGRADE_TEST_POSTGRES=1 python3 -m unittest discover -s deploy/k3s -p 'test_*.py' -q",
+      "result": "94 passed; 5.225 seconds",
+      "isolation": "Includes three real PostgreSQL fencing tests in owned disposable network-disabled container"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run lint",
+      "result": "Passed"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run build",
+      "result": "Passed"
+    },
+    {
+      "cwd": "frontend",
+      "command": "PLAYWRIGHT_BASE_URL=http://127.0.0.1:5176 npm run test:e2e -- tests/phase7-lifecycle.spec.ts tests/oidc-callback.spec.ts --output /tmp/deployflow-automatic-browser-verified",
+      "result": "12 passed; 1.3 minutes",
+      "isolation": "Desktop 1440x900; mocked APIs/OIDC; owned new Vite server; no live acceptance"
+    },
+    {
+      "cwd": "correct fixture checkout deployflow-node-express-fixture",
+      "command": "npm test",
+      "result": "3 passed; fixture unchanged"
+    },
+    {
+      "cwd": ".",
+      "command": "ruff check [modified Python files]",
+      "result": "Passed",
+      "note": "Locally available verified tool; source files and hosting modules checked"
+    },
+    {
+      "cwd": ".",
+      "command": "actionlint -shellcheck= .github/workflows/platform-images.yml .github/workflows/platform-upgrade.yml .github/workflows/platform-auto.yml",
+      "result": "Passed",
+      "note": "ShellCheck unavailable; shellcheck was explicitly disabled"
+    },
+    {
+      "cwd": "backend (isolated Docker --network none)",
+      "command": "alembic upgrade c3a71d9e4208:e4b92f7a6103 --sql",
+      "result": "Passed; SQL rendered without contacting live database"
+    },
+    {
+      "cwd": ".",
+      "command": "gitleaks dir [nonignored public working-tree snapshot] --redact=100 --max-decode-depth=3",
+      "result": "Eight raw findings, all unchanged previously triaged synthetic keys/image or evidence hashes; zero findings in new implementation",
+      "note": "Not a claim of zero raw findings or a new historical scan"
+    },
+    {
+      "cwd": ".",
+      "command": "Relative Markdown file/anchor validator; evidence JSON parser",
+      "result": "86 relative links/anchors passed; all evidence JSON parsed"
+    },
+    {
+      "cwd": ".",
+      "command": "git diff --check",
+      "result": "Passed"
+    },
+    {
+      "cwd": ".",
+      "command": "Final Gitleaks 8.30.1 scan of nonignored tracked/untracked public working-tree snapshot, redacted",
+      "result": "Eight known unchanged synthetic-key/hash false positives; no new-code findings; scanner exit 1 reviewed"
+    }
+  ],
+  "migration": {
+    "prepared_not_applied": true,
+    "from": "c3a71d9e4208",
+    "to": "e4b92f7a6103",
+    "effect": "Adds deployment_policies.source_compatibility_policy VARCHAR(64) NOT NULL DEFAULT 'node-source-compatibility-v1'; preserves policy enabled/source bounds",
+    "additional_review": "Seven schema-ready init command expectations and compatible runtime images need separately reviewed rollout; ordinary image-only operator refuses mismatch"
+  },
+  "browser_artifacts": {
+    "availability": "Private temporary local artifacts; not durable repository evidence",
+    "screenshots": [
+      "/tmp/deployflow-automatic-policy-review-false.png",
+      "/tmp/deployflow-automatic-policy-review-true.png",
+      "/tmp/deployflow-automatic-dashboard.png"
+    ],
+    "checks": "Rendered review/error/dashboard inspected; interactions and no-pageerror assertions covered by tests"
+  },
+  "last_live_evidence": "hosting-upgrade-20261022.json",
+  "last_live_receipt": {
+    "id": "616c5c087d8b3925cbc121f570611fd668e72ce28aec0cf63bccd395aef2ebce",
+    "status": "failed; unchanged",
+    "source_sha": "9ae460d7e03b7455e4ddaff4251035f349e198ff",
+    "publication_run": 39854452238,
+    "publication_attempt": 2,
+    "apply_run": 39857752877,
+    "note": "Historical operation, not performed during this implementation"
+  },
+  "acceptance": {
+    "local_implementation": "Passed checks above",
+    "live_automatic_platform_update": "Unproven",
+    "live_managed_automatic_update": "Unproven",
+    "live_rollback_and_worker_replay": "Unproven",
+    "cleanup": "Disabled; unproven; separate authority required"
+  },
+  "operations_this_implementation": {
+    "git_writes": false,
+    "cluster_changes": false,
+    "live_database_changes": false,
+    "existing_service_restarts": false,
+    "credentials_requested": false,
+    "policy_or_flag_changes": false,
+    "github_settings_changed": false,
+    "temporary_test_server": "Started isolated Vite on 127.0.0.1:5176 and stopped only that process after verification; existing services untouched"
+  },
+  "activation_prerequisites": [
+    "Review and approve new code Git writes/merge/publication",
+    "Approved verification-only recovery of historical failed receipt before schema drift",
+    "Private backups and compatible fallback; separately approved additive migration and seven init command revisions",
+    "Root-owned controller install, dedicated forced SSH key/environment and exact-source policy",
+    "Explicit repository publication/controller/automatic gates; protect broad manual SSH access",
+    "Managed GitHub App signed receiver repair and bounded application execution/policy authorization",
+    "Real automatic different-version updates, health/UI, rollback and worker-replay evidence"
+  ],
+  "guide": "../../../deploy/k3s/automation.md#8-automatic-platform-and-managed-application-deployment"
+}

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: 'Publish three platform images to GHCR (requires scoped approval)'
+        description: 'Publish three platform images to GHCR (manual scoped approval)'
         type: boolean
         default: false
 
@@ -42,11 +42,11 @@ jobs:
       - run: git diff --check
 
   publish:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main' && github.repository == 'DamiBeGud/deploy-flow'
+    if: github.repository == 'DamiBeGud/deploy-flow' && github.ref == 'refs/heads/main' && ((github.event_name == 'push' && vars.DF_PLATFORM_PUBLICATION_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.publish))
     needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment: k3s
+    environment: ghcr-platform-publication
     permissions:
       contents: read
       packages: write

@@ -205,7 +205,7 @@ class HostingPolicyTests(unittest.TestCase):
     def test_internal_ingress_is_default_denied_and_mcp_is_caller_scoped(self):
         self.assertEqual(by_name("foundation", "NetworkPolicy", "default-deny-ingress")["spec"],
                          {"podSelector": {}, "policyTypes": ["Ingress"]})
-        for target, callers in (("kube-reader", ["api"]), ("kube-validator", ["api", "delivery-worker"])):
+        for target, callers in (("kube-reader", ["api"]), ("kube-validator", ["api", "delivery-worker", "kube-deployer"])):
             rule = by_name("foundation", "NetworkPolicy", f"allow-{target}")["spec"]["ingress"][0]
             self.assertEqual([p["podSelector"]["matchLabels"]["app.kubernetes.io/name"] for p in rule["from"]], callers)
 

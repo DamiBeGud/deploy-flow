@@ -428,7 +428,11 @@ Ordinary upgrade also refuses a ConfigMap flag change that was not consistently
 loaded by its existing consumers; capability activation needs its own review.
 
 Apply refuses pending/running/blocked execution work and active analysis/GitHub/
-delivery jobs. It requires identical application schema revision and Keycloak
+delivery jobs. An unleased blocked **prepare** job with no DeploymentRun is a retained
+non-executing result, listed in preview; it remains blocked through worker restart
+and requires the product's explicit preparation-retry API. Blocked preflights,
+partial deployments, leased jobs and unknown states still prevent upgrade. No
+job/status field is rewritten to clear a maintenance guard. It requires identical application schema revision and Keycloak
 version. No automatic migration, database restore, identity import or account reset
 is implemented. Publish-time checks verify the identity image's actual version;
 registry checks bind allowed private repositories, exact index bytes and amd64

@@ -71,13 +71,18 @@ def query(sql):
     return [json.loads(line) for line in result.stdout.decode().splitlines() if line.startswith("{")]
 
 
+INACTIVE_PREPARATION = ("status='blocked' AND kind='prepare' AND deployment_run_id IS NULL "
+                        "AND lease_token IS NULL AND lease_expires_at IS NULL")
+
+
 def pending():
     return query("SELECT json_build_object("
                  "'schema_revision',(SELECT version_num FROM alembic_version),"
                  "'analysis',(SELECT count(*) FROM pending_jobs),"
                  "'analysis_runs',(SELECT count(*) FROM analysis_runs WHERE status IN ('queued','running')),"
                  "'github',(SELECT count(*) FROM github_jobs WHERE status NOT IN ('completed','failed')),"
-                 "'delivery',(SELECT count(*) FROM delivery_jobs WHERE status NOT IN ('completed','failed')),"
+                 "'delivery',(SELECT count(*) FROM delivery_jobs WHERE status NOT IN ('completed','failed') "
+                 "AND NOT (" + INACTIVE_PREPARATION + ")),"
                  "'execution',(SELECT count(*) FROM execution_jobs WHERE status <> 'completed'))")[0]
 
 
@@ -172,6 +177,8 @@ def snapshot(*, origin=None):
     policies = query("SELECT json_build_object('application_id',application_id,'enabled',enabled,"
                      "'allowed_source_sha',allowed_source_sha,'source_compatibility_policy',COALESCE(to_jsonb(deployment_policies)->>'source_compatibility_policy','node-source-compatibility-v1')) FROM deployment_policies ORDER BY application_id")
     applications = query("SELECT json_build_object('application_id',id,'name',name) FROM applications ORDER BY id")
+    inactive = query("SELECT json_build_object('id',id,'verified_build_id',verified_build_id,'error_code',error_code) "
+                     "FROM delivery_jobs WHERE " + INACTIVE_PREPARATION + " ORDER BY id")
     config = get("configmap", "deployflow-config")["data"]
     flags = {key: config.get(key) for key in ("DF_DEPLOYMENT_EXECUTION_ENABLED", "DF_DEPLOYMENT_CLEANUP_ENABLED")}
     runtime_flags = {}
@@ -197,7 +204,8 @@ def snapshot(*, origin=None):
                                     "identity": schema_fingerprint("identity-postgres-0", "keycloak", "keycloak")},
             "pending_jobs": work, "deployments": deployments, "protected": protected(),
             "flags": flags, "runtime_flags": runtime_flags,
-            "application_policies": policies, "applications": applications}
+            "application_policies": policies, "applications": applications,
+            "retained_blocked_preparations": inactive}
 
 
 class WriteFence:

@@ -1,6 +1,8 @@
 # DeployFlow operational guide
 
-This is the reusable runbook for the local DeployFlow stack deploying into k3s.
+This is the reusable runbook for operating DeployFlow and its managed k3s releases.
+Local Compose procedures and hosted platform procedures are identified separately;
+for the hosted installation use the [k3s guide](../../deploy/k3s/README.md).
 For dated outcomes, image identities, credential expiry, pending work, and evidence,
 use the [operational status record](phase7-operational-closure.md).
 Reinspect runtime state before acting; documentation is not live inventory.

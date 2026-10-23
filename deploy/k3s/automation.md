@@ -2,9 +2,9 @@
 
 This guide deploys **DeployFlow itself**, using the topology and fresh accounts in
 the [hosting guide](README.md). It is separate from DeployFlow's release pipeline
-for registered applications. Public UI/API/OIDC endpoints and navigation to the
-hosted login form are verified; full login, authenticated workflows and application
-release acceptance remain pending. See [current evidence](../../backend/ops/evidence/hosting-public-20261022.json).
+for registered applications. Hosted acceptance on 2026-10-23 passed real login,
+automatic platform and managed-application updates, rollback and replay. See the
+[current evidence and limits](../../backend/ops/phase7-operational-closure.md).
 Use the [approval boundaries](../../backend/ops/README.md#approval-boundaries)
 before every live operation. A checksum confirms reviewed bytes; it does not grant
 permission to execute them.
@@ -338,30 +338,16 @@ activated gates and restart their affected consumers after inspecting new work.
 It does not undo application operations already performed. Do not restore a DB,
 delete RBAC/data, or remove application resources as an implicit flag rollback.
 
-### Current review and upgrade limits (2026-10-22)
+### Historical capability review (2026-10-22)
 
-At the capability audit there are two registered applications, no deployment
-policies or execution/cleanup jobs, and one preflight-passed release for
-`node-express-service2` waiting for its executor. Capability activation is
-prepared, **not applied**; see [review evidence](../../backend/ops/evidence/hosting-capabilities-review-20261022.json).
-Cleanup remains unproven until a separate eligible inventory/deletion test is approved.
-Analysis currently uses deterministic mode; agent mode additionally needs a private
-provider key and explicit provider configuration, not another boolean toggle.
-
-GitHub App `deploy-flow-2` still points to
-`https://wh.damibegud.cloud/webhooks/github`; its five latest deliveries failed
-with 502. The hosted inbox contains zero deliveries and its 13 completed GitHub
-jobs were manually queued. Separately approve changing that App's webhook URL to
-`https://deployflow.damibegud.cloud/webhooks/github` and aligning the signing secret
-with the existing private receiver Secret. Do not redeliver old events or enable
-an application's policy as part of that settings change. The existing App signing
-secret cannot be recovered from its masked API response, so retain any private
-old value before a change if restoring the old receiver is required.
-
-Without the section 8 opt-ins, pushing main runs checks without publication or
-upgrade. Manual protected publication remains available. The fresh-install operator
-cannot upgrade a populated stack. Use the separate upgrade flow below; never
-reuse foundation or identity setup to replace a running platform.
+The [capability audit](../../backend/ops/evidence/hosting-capabilities-review-20261022.json)
+recorded disabled execution/cleanup, no policies and an old webhook URL returning
+502. Those execution/webhook blockers were resolved during the
+[2026-10-23 activation and acceptance](../../backend/ops/phase7-operational-closure.md);
+cleanup remains disabled. Do not repeat completed activation to recover a stack.
+Agent-based analysis separately needs private provider credentials/configuration;
+it is not enabled by an execution flag. The fresh-install operator cannot upgrade
+a populated stack; never reuse foundation or identity setup for an upgrade.
 
 ## 7. Upgrade the installed platform after merging main
 
@@ -430,7 +416,7 @@ changed workload fields require a separate review. The optional cleaner is upgra
 only when already installed; this flow never installs or enables it.
 Live replicas, ConfigMaps/flags, policies, accounts, Secrets, Kubernetes identities,
 RBAC, Services, routing/TLS, data StatefulSets and PVCs are preserved. Thus an image
-upgrade does not enable the pending execution/cleanup capability proposal.
+upgrade does not change execution or cleanup authorization.
 Ordinary upgrade also refuses a ConfigMap flag change that was not consistently
 loaded by its existing consumers; capability activation needs its own review.
 
@@ -513,8 +499,10 @@ These tests do not establish that a GitHub runner has deployed to this cluster.
 
 These are separate authorization domains. All activation below needs a concrete
 review and explicit approval; implementation or historical approvals grant none.
-Current running code/flags and the failed first-upgrade receipt are recorded in
-[upgrade evidence](../../backend/ops/evidence/hosting-upgrade-20261022.json).
+Current recorded activation, receipts and live acceptance are in the
+[operational status](../../backend/ops/phase7-operational-closure.md). The
+[first-upgrade failure](../../backend/ops/evidence/hosting-upgrade-20261022.json)
+is preserved as historical evidence; its verification-only recovery completed.
 
 ### Repair verification before activation
 
@@ -595,7 +583,7 @@ verification plan using that pending recovery receipt as the next origin. Rollba
    review template, not an instruction to apply without approval.
 
    ~~~text
-   restrict,command="/usr/bin/python3 /opt/deployflow-platform/controller/deploy/k3s/automatic.py" <approved public key>
+   restrict,command="/usr/bin/python3 -E -s /opt/deployflow-platform/controller/deploy/k3s/automatic.py" <approved public key>
    ~~~
 
    This accepts only `deployflow-platform` and bounded JSON. It cannot execute
@@ -728,8 +716,9 @@ application-health path. Direct pushes and PR merges both qualify through succes
 Local tests cover provenance/policy guards, real isolated PostgreSQL fencing and
 migration, signed event → dispatcher → worker → persisted release transitions,
 synthetic rollout/health/rollback/replay and mocked desktop lifecycle review.
-They establish no live automatic-deployment success. Before acceptance, prove one
-real automatic platform update, one managed application update, their independent
-health/UI results, separately approved rollback and worker replay, and unchanged
+They establish no live automatic-deployment success. The selected hosted fixture
+passed the following sequence on 2026-10-23; repeat it when accepting a new
+installation or a materially changed contract. Prove one real automatic platform
+update, one managed application update, their independent health/UI results, separately approved rollback and worker replay, and unchanged
 unrelated resources. Record exact source/image/run/receipt/release identifiers.
 No Phase 7 completion follows from publication, apply or a ready Pod alone.

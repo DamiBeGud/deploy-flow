@@ -20,10 +20,12 @@ source-compatibility policy currently focus on Node web applications.
 A published image is not a deployment. Automatic updates require working signed
 webhooks, eligible CI, compatible source changes, and deployment authorization.
 
-To update DeployFlow itself after merging main, follow the protected
-[platform upgrade flow](deploy/k3s/automation.md#7-upgrade-the-installed-platform-after-merging-main):
-publish images, preview exact changes, approve, then apply. A main push runs checks;
-it does not deploy or enable application execution automatically.
+DeployFlow itself has a separate [platform upgrade flow](deploy/k3s/automation.md#7-upgrade-the-installed-platform-after-merging-main).
+An optional [automatic main-to-cluster path](deploy/k3s/automation.md#8-automatic-platform-and-managed-application-deployment)
+now supports publication, policy admission, image rollout, independent public
+verification and durable completion. Its activation gates default off. Automatic
+platform authorization and each application's deployment policy are separate;
+merging this implementation does not enable either.
 
 ## Fresh local development
 

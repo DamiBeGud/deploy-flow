@@ -15,9 +15,58 @@ Use the [operational guide](README.md) for procedures and approval boundaries,
 and the [backend guide](../README.md) for implementation rules. No historical
 approval in this record authorizes a new operation.
 
-## Hosted-platform installation — public endpoints verified
+## Current local implementation — 2026-10-23
 
-**Current live status — 2026-10-22, 19:33 UTC: public platform running; two applications registered; one release ready; execution/cleanup still disabled pending scoped activation approval.**
+Automatic platform upgrades and managed-application policy controls are implemented
+and locally tested, **not activated or accepted live**. Platform automation uses a
+pinned controller, a dedicated forced-command SSH key, exact-source policy by
+default, independent HTTPS verification and immutable recovery receipts. Managed
+applications retain reviewed infrastructure and can explicitly opt into conservative
+existing-handler compatibility rules; future source authorization is separate from
+one-source approval. Cleanup remains disabled and separately authorized.
+
+Current results: **195 backend tests**, **94 hosting tests** (including real isolated
+PostgreSQL fencing), **12 mocked desktop-browser tests**, and **3 fixture tests**
+passed. Frontend build/lint, Python lint, workflow syntax checks and offline migration
+SQL generation passed. These are local implementation checks, not live CD evidence.
+See [implementation evidence](evidence/automatic-deployment-implementation-20261023.json)
+and the [activation sequence](../../deploy/k3s/automation.md#8-automatic-platform-and-managed-application-deployment).
+
+No Git write, migration, credential request, live service restart, policy/flag change
+or Kubernetes mutation occurred during this implementation. The additive migration
+`c3a71d9e4208` → `e4b92f7a6103`, seven schema-ready init command updates, installed
+controller/key/policy, GitHub gates and webhook repair all still require scoped
+approval. Recover the last failed platform receipt before changing its schema.
+Real automatic updates, rollback and replay acceptance remain outstanding.
+
+## Last live platform upgrade result — 2026-10-22
+
+**Images upgraded; workflow/durable verification failed.** After PR #1 merged,
+publication run `39854452238` attempt 2 and preview `39857313101` passed for source
+`9ae460d7e03b7455e4ddaff4251035f349e198ff`. The separately approved apply run
+`39857752877` patched all twelve platform Deployment images/source annotations.
+Both private database archives passed catalog and complete archive-to-SQL reads.
+No migration, restore, policy/flag change or managed application deployment ran.
+
+The operator failed its final HTTPS check from `homeserver1`: connecting to its
+own public address times out. The underlying routing/NAT cause is not established.
+Independent post-failure read-only checks verified all twelve Deployments settled,
+ready/available, running registry-verified digests, unchanged protected resources
+and schema fingerprints, no pending work, both feature gates false, policies empty,
+and zero remaining application SHARE locks. HTTPS UI/auth/OIDC checks passed from
+the operator computer; unauthenticated application access returned 401.
+
+Receipt `616c5c087d8b3925cbc121f570611fd668e72ce28aec0cf63bccd395aef2ebce`
+remains **failed**. No automatic rollback, manual success override or further
+mutation occurred. Do not rerun apply or edit the receipt to manufacture success.
+A verifier correction and explicit reviewed verification-only recovery path (or a
+fresh approved image rollback) are needed. Platform rollback, signed-in workflows,
+and managed-application CD acceptance remain unproven. See
+[current upgrade evidence](evidence/hosting-upgrade-20261022.json).
+
+## Earlier hosted-platform installation — public endpoints verified
+
+**Historical pre-upgrade status — 2026-10-22, 19:33 UTC: public platform running; two applications registered; one release ready; execution/cleanup still disabled pending scoped activation approval.**
 
 The latest read-only capability audit found `node-express-service` and
 `node-express-service2`. The latter (application

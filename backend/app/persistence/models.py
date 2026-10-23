@@ -381,6 +381,7 @@ class DeploymentPolicy(Base):
     environment_profile_id: Mapped[str] = mapped_column(String(128))
     enabled: Mapped[bool] = mapped_column(default=False)
     allowed_source_sha: Mapped[str | None] = mapped_column(String(40))
+    source_compatibility_policy: Mapped[str] = mapped_column(String(64), default="node-source-compatibility-v1", server_default="node-source-compatibility-v1")
     actor_id: Mapped[str] = mapped_column(String(128))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

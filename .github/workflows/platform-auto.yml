@@ -1,0 +1,122 @@
+name: Automatic DeployFlow upgrade
+
+on:
+  workflow_run:
+    workflows: [Platform checks and images]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '*/10 * * * *'
+
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: deployflow-platform-k3s
+  cancel-in-progress: false
+
+env:
+  DF_CONTROLLER_WORKFLOW: .github/workflows/platform-auto.yml
+
+jobs:
+  candidate:
+    if: github.repository == 'DamiBeGud/deploy-flow' && vars.DF_PLATFORM_AUTO_UPGRADE_ENABLED == 'true' && vars.DF_PLATFORM_CONTROLLER_SHA != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      eligible: ${{ steps.select.outputs.eligible }}
+      source_sha: ${{ steps.select.outputs.source_sha }}
+      publication_run_id: ${{ steps.select.outputs.publication_run_id }}
+      publication_attempt: ${{ steps.select.outputs.publication_attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ vars.DF_PLATFORM_CONTROLLER_SHA }}
+      - id: select
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 deploy/k3s/automatic_candidate.py
+
+  upgrade:
+    needs: candidate
+    if: needs.candidate.outputs.eligible == 'true'
+    env:
+      DF_CONTROLLER_SOURCE_SHA: ${{ needs.candidate.outputs.source_sha }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: k3s-platform-automatic
+    outputs:
+      receipt_id: ${{ steps.operation.outputs.receipt_id }}
+      needs_verification: ${{ steps.operation.outputs.needs_verification }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ vars.DF_PLATFORM_CONTROLLER_SHA }}
+      - name: Execute the exact reviewed operation
+        id: operation
+        env:
+          OPERATION: auto-apply
+          DF_FIXED_OPERATOR: 'true'
+          RELEASE_RUN_ID: ${{ needs.candidate.outputs.publication_run_id }}
+          RELEASE_ATTEMPT: ${{ needs.candidate.outputs.publication_attempt }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SSH_KEY: ${{ secrets.K3S_PLATFORM_OPERATOR_KEY }}
+          SSH_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
+          SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+          SSH_USER: ${{ secrets.K3S_SSH_USER }}
+        run: python3 deploy/k3s/workflow_upgrade.py cluster
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: platform-upgrade-${{ github.run_id }}-${{ github.run_attempt }}
+          path: upgrade-review/
+          retention-days: 30
+          if-no-files-found: warn
+
+  public-verification:
+    needs: [candidate, upgrade]
+    if: needs.upgrade.outputs.needs_verification == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ vars.DF_PLATFORM_CONTROLLER_SHA }}
+      - name: Verify public HTTPS independently
+        run: python3 deploy/k3s/public_checks.py
+
+  finalize:
+    needs: [candidate, upgrade, public-verification]
+    env:
+      DF_CONTROLLER_SOURCE_SHA: ${{ needs.candidate.outputs.source_sha }}
+    if: needs.upgrade.outputs.needs_verification == 'true' && needs.public-verification.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: k3s-platform-automatic
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ vars.DF_PLATFORM_CONTROLLER_SHA }}
+      - name: Persist completion after authenticated proof and fresh cluster verification
+        env:
+          DF_FIXED_OPERATOR: 'true'
+          RECEIPT_ID: ${{ needs.upgrade.outputs.receipt_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SSH_KEY: ${{ secrets.K3S_PLATFORM_OPERATOR_KEY }}
+          SSH_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
+          SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+          SSH_USER: ${{ secrets.K3S_SSH_USER }}
+        run: python3 deploy/k3s/workflow_upgrade.py finalize
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: platform-finalization-${{ github.run_id }}-${{ github.run_attempt }}
+          path: upgrade-review/
+          retention-days: 30
+          if-no-files-found: warn

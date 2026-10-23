@@ -155,7 +155,7 @@ changes roll new Pods. The executor rejects a changed configuration without the
 corresponding template change (`configuration_rollout_missing`); approved old
 release bytes are never rewritten to add it.
 
-Source reuse uses [node-source-compatibility-v1](app/integrations/github/compatibility.py):
+Source reuse defaults to [node-source-compatibility-v1](app/integrations/github/compatibility.py):
 documentation/tests and narrowly checked JavaScript JSON-response data changes
 under `src/` can qualify. Approved Dockerfile/workflow/manifests must stay identical.
 Dependency/lockfile, runtime/startup, import, port, health, environment/configuration,
@@ -163,6 +163,27 @@ unknown-file, and ambiguous executable changes require reassessment/review.
 This is not generic JavaScript equivalence or multi-runtime support.
 Useful errors include `approved_infrastructure_changed` and
 `deployment_requirements_need_review`.
+
+An explicitly selected application policy can instead use
+`node-handler-compatibility-v2`: it also permits behavior changes inside existing
+static non-health Express route handlers. Imports, handler parameters, route
+methods/paths, startup and code outside those bodies remain fixed. V2 covers local
+handler logic; imported helpers, free module references and dynamic property access
+need review. Sensitive
+configuration/network/runtime changes still require review. This is a deployment
+contract classifier, not a proof of arbitrary JavaScript safety or equivalence.
+Existing policies keep v1; changing rules requires explicit authorization and is
+rechecked before preparation, queueing and mutation. Preparation may continue with
+an explicitly selected policy whose execution is disabled.
+
+Migration `e4b92f7a6103` adds the non-null policy selector with default v1. It does
+not enable policies or clear source bounds. It is prepared and isolated-tested,
+**not applied to the hosted database**. The hosted renderer now expects this
+revision; image-only upgrades refuse the live older schema until a separately
+reviewed migration/compatible fallback is approved. Recover the existing failed
+platform receipt before any schema change; see the
+[activation sequence](../deploy/k3s/automation.md#8-automatic-platform-and-managed-application-deployment).
+
 
 Ordering is current branch head and forward ancestry, serialized per application.
 Each admitted source is used once. New verified builds supersede older unstarted

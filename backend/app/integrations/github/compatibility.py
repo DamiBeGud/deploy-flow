@@ -14,13 +14,25 @@ from tree_sitter import Language, Parser
 from app.integrations.github.api import GitHubPhase6Error
 
 VERSION = "node-source-compatibility-v1"
+HANDLER_VERSION = "node-handler-compatibility-v2"
+POLICIES = {VERSION, HANDLER_VERSION}
+
+
+def policy_permits(policy, evidence):
+    if policy not in POLICIES:
+        return False
+    if evidence is None:  # Original separately reviewed bootstrap build.
+        return True
+    version = evidence.get("policy")
+    return version == VERSION or (version == HANDLER_VERSION and policy == HANDLER_VERSION)
 # Even unchanged requirements can be expressed dynamically. Such edits are not
 # automatically approved. This is deliberately narrower than generic JS support.
 SENSITIVE = re.compile(
     r"process|\b(?:PORT|HOST|port|host)\b|listen\s*\(|health|ready|live|"
     r"\bimport\b|\brequire\b|\bexport\b|\beval\b|\bFunction\b|"
     r"child_process|\bexec\b|\bspawn\b|\bfetch\b|\bconnect\b|"
-    r"readFile|writeFile|mkdir|createServer|setInterval|setTimeout",
+    r"readFile|writeFile|mkdir|createServer|setInterval|setTimeout|"
+    r"\benv\b|\bconfig\b|\blocals\b|\.\s*app\b|getPrototypeOf|setPrototypeOf|Reflect|Proxy",
     re.I,
 )
 
@@ -89,7 +101,81 @@ def _safe_response_edits(before: bytes, after: bytes) -> bool:
     return skeleton(before) == skeleton(after)
 
 
-def checked_source_compatibility(api, *, baseline: str, source: str, files: dict[str, str]) -> dict:
+def _safe_handler_edits(before: bytes, after: bytes) -> bool:
+    """Allow behavior changes inside existing static, non-health Express routes.
+
+    Preserve imports, startup, route method/path, handler parameters and all code
+    outside handler bodies. New routes, helper/module edits and dynamic loading
+    require reassessment. This classifies deployment contracts, not JS equivalence.
+    """
+    parser = Parser(Language(tree_sitter_javascript.language()))
+
+    def names(node):
+        if node is None:
+            return set()
+        if node.type in {"identifier", "shorthand_property_identifier_pattern"}:
+            return {node.text}
+        return set().union(*(names(child) for child in node.named_children))
+
+    def local_logic(body, parameters):
+        # Only local handler logic is covered by this opt-in. Module helpers and
+        # imported aliases can conceal new environment/network requirements.
+        # Track lexical blocks/functions instead of treating a nested shadowing
+        # declaration as a global authorization for that identifier.
+        builtins = {b"Math", b"JSON", b"Number", b"String", b"Boolean", b"Array", b"Object", b"Promise", b"undefined"}
+
+        def inspect(node, scope):
+            if node.type == "subscript_expression":
+                return False  # Dynamic property access needs reassessment.
+            if node.type == "statement_block":
+                scope = set(scope)
+                for statement in node.named_children:
+                    if statement.type == "lexical_declaration":
+                        for declaration in statement.named_children:
+                            scope |= names(declaration.child_by_field_name("name"))
+                    elif statement.type == "function_declaration":
+                        scope |= names(statement.child_by_field_name("name"))
+            if node.type in {"arrow_function", "function_expression", "function_declaration"}:
+                scope = scope | names(node.child_by_field_name("parameters") or node.child_by_field_name("parameter")) | names(node.child_by_field_name("name"))
+            if node.type in {"identifier", "shorthand_property_identifier"} and node.text not in scope | builtins:
+                return False
+            return all(inspect(child, scope) for child in node.named_children)
+
+        return inspect(body, names(parameters))
+
+    def skeleton(raw):
+        root = parser.parse(raw).root_node
+        if root.has_error:
+            raise GitHubPhase6Error("deployment_requirements_need_review")
+        replacements = []
+
+        def visit(node):
+            if node.type == "call_expression":
+                function = node.child_by_field_name("function")
+                args = node.child_by_field_name("arguments")
+                if function and args and re.fullmatch(rb"[A-Za-z_$][\w$]*\.(?:get|post|put|patch|delete|head|options)", function.text):
+                    children = args.named_children
+                    if len(children) == 2 and children[0].type == "string" and children[1].type in {"arrow_function", "function_expression"}:
+                        if not re.search(rb"health|ready|live", children[0].text, re.I):
+                            body = children[1].child_by_field_name("body")
+                            parameters = children[1].child_by_field_name("parameters") or children[1].child_by_field_name("parameter")
+                            if body and body.type == "statement_block" and local_logic(body, parameters):
+                                replacements.append((body.start_byte, body.end_byte))
+                                return
+            for child in node.named_children:
+                visit(child)
+        visit(root)
+        value = raw
+        for start, end in sorted(replacements, reverse=True):
+            value = value[:start] + b"{APPROVED_HANDLER_BODY}" + value[end:]
+        return value
+
+    return skeleton(before) == skeleton(after)
+
+
+def checked_source_compatibility(api, *, baseline: str, source: str, files: dict[str, str], policy: str = VERSION) -> dict:
+    if policy not in POLICIES:
+        raise GitHubPhase6Error("source_compatibility_policy_unknown")
     if not re.fullmatch(r"[0-9a-f]{40}", source):
         raise GitHubPhase6Error("source_revision_invalid")
     api.require_descendant(baseline, source)
@@ -120,8 +206,10 @@ def checked_source_compatibility(api, *, baseline: str, source: str, files: dict
             if re.findall(health, old, re.I) != re.findall(health, new, re.I):
                 raise GitHubPhase6Error("deployment_requirements_need_review")
             delta = [line[1:] for line in difflib.ndiff(old.splitlines(), new.splitlines()) if line[:2] in {"+ ", "- "}]
-            if any(SENSITIVE.search(line) for line in delta) or not _safe_response_edits(before, after):
+            unsafe = any(SENSITIVE.search(line) or re.search(r"\b(?:globalThis|global|constructor|__proto__)\b", line) for line in delta)
+            compatible = _safe_response_edits(before, after) or (policy == HANDLER_VERSION and _safe_handler_edits(before, after))
+            if unsafe or not compatible:
                 raise GitHubPhase6Error("deployment_requirements_need_review")
         evidence[path] = hashlib.sha256(after or b"").hexdigest()
-    return {"policy": VERSION, "baseline_sha": baseline, "source_sha": source,
+    return {"policy": policy, "baseline_sha": baseline, "source_sha": source,
             "status": "compatible", "changed_file_hashes": evidence}

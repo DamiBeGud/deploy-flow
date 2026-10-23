@@ -53,6 +53,11 @@ state and credentials must not be copied into documentation, logs, or tests.
   image digest, policy, resource journal, rollout, health, and deployment history.
 - Select a historical run explicitly; otherwise newer releases become the
   default. Historical rollout/health remains separate from the current cluster.
+- Review deployment authorization before saving: choose one exact source or future
+  compatible branch commits, select compatibility rules, and explicitly confirm.
+  Omitting a field preserves its existing scope; clearing a source bound is explicit.
+  In-flight verification/preflight may queue eligible work after policy activation;
+  already waiting releases still need explicit selection.
 - Review manual rollback to a previous successful release. First-deployment
   cleanup controls require a separate enabled capability and exact inventory review.
 
@@ -84,10 +89,11 @@ npm run test:e2e -- tests/phase7-lifecycle.spec.ts tests/oidc-callback.spec.ts
 ~~~
 
 Playwright expects an already running frontend on `127.0.0.1:5174`; it does not
-start servers. Those two browser suites mock backend APIs/token exchange, so they
+start servers. For an isolated frontend port, set `PLAYWRIGHT_BASE_URL` to its
+actual URL. Those two browser suites mock backend APIs/token exchange, so they
 need no real backend, Keycloak, or Kubernetes credentials. They cover lifecycle
 transitions, failed/unavailable/stale/missing/zero observations, reload/history,
-rollback/cleanup review, and OIDC callback exchange. Mock success is not live
+rollback/cleanup review, source-policy authorization and failed saves, and OIDC callback exchange. Mock success is not live
 deployment evidence.
 
 `npm run test:e2e` also includes `tests/deployflow.spec.ts`. That suite requires

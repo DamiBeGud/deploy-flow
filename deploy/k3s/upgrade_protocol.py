@@ -186,3 +186,30 @@ def image_patch(item, change):
         patch.append({"op": "test", "path": "/metadata/annotations", "value": item["metadata"]["annotations"]})
     patch.append({"op": "add", "path": "/metadata/annotations", "value": annotations})
     return patch
+
+
+def verification_plan(current, origin):
+    """Recovery verifies exactly the applied target; never writes Kubernetes."""
+    if origin["status"] not in {"failed", "awaiting_public_verification"} or origin.get("reverted_by") or origin.get("recovered_by"):
+        raise ValueError("Receipt is not eligible for verification recovery")
+    before = origin["before"]
+    for key in ("namespace_uid", "target_namespace_uid", "schema_revision", "schema_fingerprints",
+                "keycloak_version", "protected", "flags", "application_policies"):
+        if current[key] != before[key]:
+            raise ValueError("Recovery context changed: " + key)
+    if set(current["deployments"]) != set(origin["targets"]):
+        raise ValueError("Recovery workload inventory changed")
+    for name, target in origin["targets"].items():
+        row = current["deployments"][name]
+        if (row["uid"] != target["uid"] or row["images"] != target["images"]
+                or row["contract_sha256"] != before["deployments"][name]["contract_sha256"]
+                or row["source_sha"] != target_source(origin, name)):
+            raise ValueError("Recovery target changed: " + name)
+    return {"format": 1, "operation": "verify", "origin_receipt": origin["id"],
+            "source_sha": origin["release"]["source_sha"], "before": current,
+            "effects": "No resource patches, restarts, locks, migrations or backups; verify exact applied images and independent HTTPS, retain original failure"}
+
+
+def target_source(receipt, name):
+    change = next((c for c in receipt["plan"].get("changes", []) if c["name"] == name), None)
+    return change["to_source"] if change else receipt["before"]["deployments"][name]["source_sha"]

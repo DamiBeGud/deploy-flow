@@ -1,5 +1,11 @@
 export type Identity = { actor_id: string; organization_id: string; roles: string[]; authentication: string }
-export type Application = { id: string; name: string; repository_url: string; revision: string; deployment_policy_enabled?: boolean; latest_deployment?: { status: string; source_sha: string; image_reference: string; error_code?: string } | null }
+export type Application = {
+  id: string; name: string; repository_url: string; revision: string
+  deployment_policy_enabled?: boolean; deployment_execution_available?: boolean; allowed_source_sha?: string | null
+  latest_deployment?: { status: string; source_sha: string; image_reference: string; error_code?: string } | null
+  last_successful_deployment?: { source_sha: string; image_reference: string } | null
+  source_verification?: { status: string; source_sha?: string | null; error_code?: string | null } | null
+}
 export type Finding = { value: string | number | null; source: 'mock' | 'unknown' | 'user' | 'explicit' | 'inferred'; command?: string | null }
 export type FakeAssessment = {
   mode: 'fake'; runtime: Finding; port: Finding; health_path: Finding

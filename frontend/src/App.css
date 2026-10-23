@@ -86,3 +86,5 @@ a.button{text-decoration:none}
 
 /* Keep immutable digests and lifecycle controls readable at desktop widths. */
 .lifecycle-history table{table-layout:fixed}.lifecycle-history th:nth-child(1){width:24%}.lifecycle-history th:nth-child(2){width:15%}.lifecycle-history th:nth-child(3){width:31%}.lifecycle-history th:nth-child(4){width:20%}.lifecycle-history th:nth-child(5){width:10%}.lifecycle-history td{white-space:normal;overflow-wrap:anywhere}.lifecycle-history .image-name{display:table-cell;max-width:none;overflow:visible}.lifecycle-history td,.lifecycle-history th{padding:14px 12px}
+
+.lifecycle-actions form{max-width:760px;padding:18px;border:1px solid var(--line);border-radius:8px}.lifecycle-actions form>label{display:block;font-size:12px;margin:14px 0}.lifecycle-actions form select,.lifecycle-actions form input:not([type=checkbox]){display:block;margin-top:6px}.lifecycle-actions input[type=checkbox]{width:auto;margin-right:7px}

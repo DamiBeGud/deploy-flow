@@ -39,7 +39,9 @@ The recorded server ED25519 fingerprint is
 `SHA256:ZrsNCZuNUJizIAelRbYP5xDcY5qAl6sz4WiUzd2Yhnc`. Reverify through existing
 trusted access if it changes; do not disable host-key checking.
 
-The Actions jobs explicitly reference `environment: k3s`. No registry publisher
+Installation/manual recovery jobs reference `environment: k3s`. Publication uses
+`ghcr-platform-publication`; optional automatic upgrades use
+`k3s-platform-automatic`. Keep their secrets and authorization separate. No registry publisher
 PAT is needed in Actions: publication uses the job's short-lived `GITHUB_TOKEN`
 with `packages: write`. For **each** existing package `deployflow-backend`,
 `deployflow-frontend`, and `deployflow-keycloak`, check Package settings → Manage
@@ -128,8 +130,9 @@ registry access privately before approving installation.
 
 After reviewing and authorizing the Git commit/push, the workflows become available
 on main. A push or PR runs offline hosting tests, the isolated backend suite,
-frontend lint/build, and frontend/Keycloak image builds. **Push does not publish
-images or deploy the platform.** CI receives no runtime/Kubernetes/SSH credentials.
+frontend lint/build, and frontend/Keycloak image builds. By default a push does not
+publish or deploy. Explicit automatic activation is documented in section 8.
+The checks job receives no runtime/Kubernetes/SSH credentials.
 
 For separately approved publication, run **Platform checks and images** on main
 with `publish=true`. Checks must pass before its protected publication job builds
@@ -298,25 +301,33 @@ job/policy counts, release identities and cleaner-Role absence, not Secret value
 Recheck the server and both namespace UIDs, schema, resource versions, absence of
 new resource names, no enabled policies and no pending analysis/release/execution
 work immediately before any separately approved mutation. The planner refuses
-active policies/work and preexisting cleaner resources rather than adopting them.
+active policies/work and, when cleanup is requested, preexisting cleaner resources
+rather than adopting them.
 
-The exact proposal creates `kube-cleaner` ServiceAccount and cleanup-only Deployment
-in `deployflow-system`, with a separate projected rotating identity. It creates
-`deployflow-test/deployflow-cleaner` Role (get/delete only ConfigMap, Service,
-Deployment and Ingress) and `deployflow-platform-cleaner` RoleBinding. It appends
-only that worker to PostgreSQL/Redis caller policies, patches only the two feature
-flags to true, then restarts API, dispatcher, delivery-worker and kube-deployer
-through UID/resourceVersion-fenced Pod-template patches. The cleaner uses the
-existing immutable backend image, no GitHub PEM and no new manual token request.
-The four existing Deployments use Recreate, so expect a brief API interruption
-and worker pause. No migrations, application policy writes, execution requests or
-cleanup requests are included. A waiting release still requires its own scoped
-application authorization and normal execute API request.
+By default the proposal enables **execution only**, keeps cleanup false, and
+restarts only API, dispatcher, delivery-worker and kube-deployer using
+UID/resourceVersion-fenced patches. It creates no worker/identity/RBAC resources
+and changes no network permissions. The four Deployments use Recreate, so expect
+a brief API interruption and worker pause. No migration, application policy write,
+execution request or cleanup request is included. Waiting releases still require
+explicit application authorization and normal execute selection.
+
+Only a separately requested `--include-cleanup` proposal additionally creates the
+`kube-cleaner` ServiceAccount and cleanup-only Deployment, a separate rotating
+identity, `deployflow-cleaner` Role (get/delete ConfigMap, Service, Deployment and
+Ingress) and `deployflow-platform-cleaner` RoleBinding in `deployflow-test`.
+It appends that worker to PostgreSQL/Redis caller policies and enables cleanup.
+It uses the existing immutable backend image and no GitHub PEM or manual token.
+The planner rejects preexisting cleaner resources for that scope rather than
+adopting them. Both variants require both flags initially false; later capability
+changes need a fresh reviewed proposal, not replay of a first-activation plan.
+The earlier combined activation proposal is historical and must not be applied
+as the current execution-only proposal.
 
 Before restarting, preserve private current backups of **both** databases and
 verify the archives. Keep their hashes, validation limits and restore procedure
-outside Git. Capability reversal requires separate approval to disable both flags
-and restart the four consumers plus cleaner, after inspecting any new queued work.
+outside Git. Capability reversal requires separate approval to disable only the
+activated gates and restart their affected consumers after inspecting new work.
 It does not undo application operations already performed. Do not restore a DB,
 delete RBAC/data, or remove application resources as an implicit flag rollback.
 
@@ -340,8 +351,8 @@ an application's policy as part of that settings change. The existing App signin
 secret cannot be recovered from its masked API response, so retain any private
 old value before a change if restoring the old receiver is required.
 
-Pushing main runs checks; it neither publishes nor upgrades the running platform.
-Publication remains a manual, protected workflow. The fresh-install operator
+Without the section 8 opt-ins, pushing main runs checks without publication or
+upgrade. Manual protected publication remains available. The fresh-install operator
 cannot upgrade a populated stack. Use the separate upgrade flow below; never
 reuse foundation or identity setup to replace a running platform.
 
@@ -352,7 +363,8 @@ The **Upgrade DeployFlow platform** workflow is manual and uses the same protect
 reviewers/main restrictions where supported. A preview digest plus typed source
 confirmation is still required even if GitHub does not offer required reviewers.
 It shares installation's concurrency group and also takes a private server lock.
-No push, workflow completion, or artifact upload automatically deploys images.
+This manual workflow never starts from pushes; optional automatic operation has
+its own independently installed policy and restricted key (section 8).
 
 ### Publish → preview → approve → apply
 
@@ -394,8 +406,12 @@ No push, workflow completion, or artifact upload automatically deploys images.
    It recomputes the plan from current live state; a changed workload, resource,
    schema or authorization context invalidates approval. It does not trust a
    downloaded executable patch. Keep the resulting receipt ID, which is the
-   approved plan SHA256. The workflow reports success only after rollout, actual
-   running image-ID checks and real HTTPS UI/auth/OIDC checks pass. Full signed-in
+   approved plan SHA256. The cluster phase records `awaiting_public_verification` after rollout and running
+   image-ID verification. A separate GitHub runner job checks real HTTPS
+   UI/auth/OIDC with bounded retries and normal certificate verification. The
+   finalizer queries that exact completed job through GitHub, requires fresh checks
+   after cluster verification, rechecks live state and only then persists success.
+   The server never needs to connect to its own public address. Full signed-in
    workflows and application-CD acceptance are separate evidence.
 
 ### What this upgrade changes and preserves
@@ -457,8 +473,8 @@ the possible receipt ID; do not rerun a fresh installation or delete the journal
    hosted upgrade an old source annotation may be unknown; exact old image digests
    are still retained and no source provenance is invented.
 4. A partial rollback can be previewed again using the original upgrade receipt.
-   Successful rollback preserves all receipts and marks the original/failed
-   recovery attempts as reverted. An approved no-change recovery can acknowledge
+   Successful rollback preserves all receipts; resolution of the original/failed
+   recovery attempts is derived from the successful receipt's ancestry. An approved no-change recovery can acknowledge
    a failure that stopped before any image patch. Replaying old approval hashes
    cannot silently undo a later state.
 
@@ -480,3 +496,226 @@ with no network, host ports or live credentials. It checks real lock exclusion,
 exception release and schema fingerprints. Synthetic orchestration tests cover
 durable partial failure, exact rollback and rejection of replayed approval.
 These tests do not establish that a GitHub runner has deployed to this cluster.
+
+
+## 8. Automatic platform and managed-application deployment
+
+These are separate authorization domains. All activation below needs a concrete
+review and explicit approval; implementation or historical approvals grant none.
+Current running code/flags and the failed first-upgrade receipt are recorded in
+[upgrade evidence](../../backend/ops/evidence/hosting-upgrade-20261022.json).
+
+### Repair verification before activation
+
+The first upgrade applied all images, but the server timed out reaching its own
+public origin. The new protocol verifies cluster state on the server and HTTPS
+from an independent GitHub job. A passed Pod rollout alone stays
+`awaiting_public_verification`. Failure leaves images and receipts intact and
+blocks later automatic upgrades; no automatic rollback is implemented.
+
+For the existing failed receipt, use the **manual** upgrade workflow:
+
+1. After separately approved code publication, choose `operation=verify-preview`
+   and the original receipt ID. Leave publication and mutation inputs empty.
+2. Review the exact verification plan. It rejects changed images, UIDs, source,
+   schema, protected configuration or authority and performs no writes.
+3. Obtain scoped approval, then select `verify-apply`, its new plan digest and
+   `confirmation=VERIFY <original receipt ID>`.
+4. This creates a new recovery receipt, verifies exact running images without
+   resource patches, backups, DB locks or restarts, and waits for independent HTTPS.
+   Finalization queries the exact controller run/attempt's successful
+   `public-verification` job. Checks must follow cluster verification and be at most
+   30 minutes old. It then rechecks cluster state and marks the **new** receipt
+   succeeded. Resolution is derived from its `origin_receipt` ancestry; the
+   original failed receipt is not rewritten. This avoids a crash leaving half a
+   multi-file success update. `operation=status` exposes the recorded status and
+   resolving receipt separately; it does not claim current live health.
+
+Run this **before** migrating the old schema: recovery intentionally refuses schema
+drift. Never edit receipt JSON or database fields to assert success. A failed
+public check or interrupted finalizer can itself be recovered through a fresh
+verification plan using that pending recovery receipt as the next origin. Rollback remains a separately approved operation.
+
+### One-time platform setup
+
+1. Review the code/CI and merge only after separately approving Git writes.
+2. Recover the existing failed receipt using the process above.
+3. Review private backups and a compatible fallback, then separately approve the
+   additive migration `c3a71d9e4208` → `e4b92f7a6103`, compatible images and the
+   existing `schema-ready` init commands' expected revision on `api`, `webhook`,
+   `dispatcher`, `worker`, `github-worker`, `delivery-worker` and `kube-deployer`. That command change
+   is a reviewed Deployment-template update, outside the image-only operator.
+   Existing policies retain v1 and their enabled/source-bound values. Automatic
+   image upgrades perform no migration or restore and reject a schema mismatch.
+   Existing Deployment init commands require the old revision; image rollback after this
+   migration needs a tested compatible fallback, not an assumed downgrade.
+4. Configure GitHub environments after review:
+
+   | Environment | Purpose / credentials |
+   | --- | --- |
+   | `ghcr-platform-publication` | Repository's short-lived `GITHUB_TOKEN`, packages write; no SSH/runtime credentials |
+   | `k3s-platform-automatic` | Dedicated `K3S_PLATFORM_OPERATOR_KEY` and host/port/user/known-host settings; no general SSH key |
+   | `k3s` | Manual installation/recovery key; require reviewer protection before enabling automation |
+
+   The automatic environment needs `K3S_SSH_HOST`, `K3S_SSH_PORT`,
+   `K3S_SSH_USER`, `K3S_SSH_KNOWN_HOSTS`, and the dedicated operator key. It does not
+   need `K3S_SSH_PRIVATE_KEY`. Limit deployment branches to main. Existing package
+   Actions access must grant this repository Write for all three platform images.
+   If reviewer protection cannot protect the manual environment, remove its broad
+   SSH secret from repository workflows and use separately controlled manual
+   operations before enabling automation. Merely separating environments does not
+   protect a broad key from a main workflow that can select its environment.
+5. After exact approval, install a root-owned controller checkout at
+   `/opt/deployflow-platform/controller/`, preserving repository-relative paths.
+   Include all files in `automatic.PROTECTED_FILES`; `automatic.py` imports the
+   trusted modules from that checkout. Directories must be root-owned and not
+   group/world writable; runtime Python files are root-owned 0644. The SSH account
+   must not be able to replace the checkout. Do not install candidate scripts
+   from an automatic request or widen Kubernetes RBAC. Copy only the reviewed
+   public controller files and their listed dependencies; exclude `.env`, `.config`,
+   credentials, backups, `.git` and `node_modules`.
+6. Generate a **dedicated** SSH key privately (0700 directory, 0600 private key),
+   then separately approve its installation. Its authorized-key entry must use:
+
+   Working directory: server account's SSH configuration directory; this is a
+   review template, not an instruction to apply without approval.
+
+   ~~~text
+   restrict,command="/usr/bin/python3 /opt/deployflow-platform/controller/deploy/k3s/automatic.py" <approved public key>
+   ~~~
+
+   This accepts only `deployflow-platform` and bounded JSON. It cannot execute
+   caller-supplied shell/Python, manual apply, migration, rollback or cleanup.
+   Retain separate reviewed administrative recovery access. Test rejected shell
+   commands before accepting this credential boundary.
+7. Generate a disabled policy proposal offline from a real reviewed bundle and
+   preview. Working directory: repository root; paths are private files outside Git:
+
+   ~~~bash
+   python3 deploy/k3s/prepare_automatic_policy.py \
+     --bundle "$PLATFORM_RELEASE_FILE" --preview "$PLATFORM_PREVIEW_FILE" \
+     --baseline-sha "$PLATFORM_APPROVED_SHA" --expires-at "$PLATFORM_POLICY_EXPIRY" \
+     --output "$PLATFORM_POLICY_PROPOSAL"
+   ~~~
+
+   The expiry must be explicit and within 90 days. The proposal binds namespace
+   UIDs, Deployment UIDs/inventory, infrastructure fingerprints, flags,
+   schema/provider versions and hashes of controller/workflows,
+   authorization/execution modules, Dockerfiles, dependency declarations/locks,
+   routing and migration files. New or
+   changed migrations require review. The proposal is **disabled**; generating it
+   does not install or enable anything. By default it authorizes only that exact
+   source SHA. First use a concrete bounded test candidate; inspect all current
+   publications before enabling either policy or workflow gate.
+8. Review and explicitly authorize the exact source for the bounded automatic test. After
+   that approval only, install the reviewed policy with `enabled=true` as
+   `/opt/deployflow-platform/policy.json`, root-owned and not group/world writable.
+   Record its digest, source scope and expiry. Policy replacement/revocation is a
+   scoped live configuration change.
+9. Separately approve setting repository variables:
+   `DF_PLATFORM_PUBLICATION_ENABLED=true`,
+   `DF_PLATFORM_CONTROLLER_SHA=<full reviewed controller commit>`, and
+   `DF_PLATFORM_AUTO_UPGRADE_ENABLED=true`.
+   The pinned runner controller must match the protected installed controller;
+   source candidates cannot supply privileged runner code. The gates default off
+   and the fixed server policy is checked immediately before resource patches.
+   Enabling a gate can immediately deploy the eligible current publication; the
+   exact-source policy must already exclude all other commits/pending builds.
+   Deploying an already-published candidate through the schedule proves bounded
+   reconciliation, not that the next merge triggers the completion-event path.
+10. After the bounded test passes, separately approve a fresh disabled policy
+    proposal with `--allow-future-compatible`, review its new digest and expiry,
+    then install/enable that exact proposal. It permits forward compatible commits
+    after the approved baseline. It does not authorize migrations, schema/provider
+    changes or protected-controller changes. Renew policy after approved feature
+    flag/infrastructure changes; adding a cleaner or replacing a Deployment UID
+    cannot silently inherit its scope.
+
+
+### Automatic platform behavior
+
+A main push runs CI, then publishes digest-bound candidates when publication is
+opted in. `Automatic DeployFlow upgrade` reconciles on workflow completion and
+every ten minutes while enabled. It selects **current main's latest push run**;
+failed/running CI never falls back to an older success. Fork/PR builds do not
+publish or deploy. Manual publication remains available separately.
+
+The fixed server controller independently queries GitHub repository/main/source,
+workflow, run/attempt, artifact checksum/content, ancestry, protected file hashes
+and the registry. Requests carry only a short-lived read-scoped Actions token in
+SSH stdin; tokens are never arguments, receipts or artifacts. The existing GHCR
+pull-only credential remains server-side. Kubernetes images are always immutable.
+
+An exact plan records its policy admission. Unknown inventory, changed namespace,
+schema/provider/configuration or requirements fail closed. Pending jobs produce
+`waiting` without a receipt or patch and are reconsidered by scheduled reconciliation.
+Unresolved receipts produce `blocked`. Job/server locks serialize operations;
+an active upgrade is not canceled when a newer source arrives. Before the first
+patch it must still be current main; remaining patches finish that admitted release.
+Already admitted sources are never redeployed by reruns, schedules or replay after
+manual rollback. A genuinely newer forward commit can qualify. No historical
+approval is interpreted as authorization for a different change class.
+
+The cluster, public-verification and finalization jobs expose source, exact
+images, waiting/blocking errors, receipt lineage and final state in Actions
+summaries/artifacts. Retain metadata before its 30-day retention expires. Preserve
+private archives separately; same-server archive reads are not a disaster-recovery
+restore rehearsal. Maintenance can interrupt writes/webhooks; review failed GitHub
+deliveries and separately approve reconciliation/redelivery rather than silently
+claiming event continuity.
+
+### Managed application activation
+
+Reuse the product's existing signed inbox → GitHub verification → compatibility →
+immutable release → admission → per-application policy → executor → rollout →
+application-health path. Direct pushes and PR merges both qualify through successful
+**push CI completion**, not the raw push notification.
+
+1. Review/correct the App receiver URL and signing secret as described in section 6.
+   Verify authentic completion events enter the durable inbox and workers claim
+   them. Manual source reconciliation is a fallback, not automatic-ingestion proof.
+2. Separately approve execution activation, relevant service restarts and pending
+   work. Keep cleanup off unless separately requested. Reader, validator and
+   deployer identities remain separate; projected tokens rotate in-cluster.
+   Deployment approval must also cover its fixed short-lived internal health
+   checker resources; those checks do not authorize first-deployment inventory
+   cleanup.
+3. Select one application's healthy baseline. If its resources are absent, the
+   first authorized deployment is a new baseline, not an upgrade.
+4. In its lifecycle page review **one source SHA** for a bounded test, then choose
+   v1 response-data rules or explicitly opt into v2 existing-handler changes.
+   Dependency, import/runtime/startup/port/health/configuration changes, new routes
+   and code outside existing handlers still require reassessment/review. V2 also
+   rejects imported-helper/free-module references and dynamic property access; it
+   permits local request/response handler logic rather than arbitrary Node code.
+5. Review pending/in-flight preparation before approval. Enabling a policy does
+   not enqueue old `waiting_for_executor` releases, but a future preflight can
+   enqueue an eligible release. Only an explicitly authorized application/source
+   may execute in the bounded test; unrelated application policies stay disabled.
+   A source already verified/prepared while policy was off is not re-admitted by
+   replaying its webhook or rerunning CI. For an exact-SHA test, authorize a known
+   commit before its first ingestion and separately approve its fast-forward push.
+   A PR whose final merge SHA is not yet known needs a separately approved future
+   source scope or another concrete bounded event-delivery arrangement. Manually
+   executing an old waiting release does not demonstrate an automatic update.
+6. Demonstrate a new signed CI completion event, verified different image and
+   visible marker, durable succeeded state, ready/available replicas, fresh UI and
+   application health without hidden manual reconciliation or kubectl apply.
+7. Separately authorize clearing `allowed_source_sha` to null for future compatible
+   branch commits. Omitted fields preserve existing scope/rules; explicit null
+   clears only the source bound. The compatibility selector cannot be null.
+8. Review/approve product rollback and worker restart/replay separately. Rollback
+   creates a new release, preserves prior history and prevents old notification
+   replay from re-admitting its source. First-deployment cleanup is a separate,
+   destructive acceptance test and remains unproven until approved and executed.
+
+### Acceptance before declaring completion
+
+Local tests cover provenance/policy guards, real isolated PostgreSQL fencing and
+migration, signed event → dispatcher → worker → persisted release transitions,
+synthetic rollout/health/rollback/replay and mocked desktop lifecycle review.
+They establish no live automatic-deployment success. Before acceptance, prove one
+real automatic platform update, one managed application update, their independent
+health/UI results, separately approved rollback and worker replay, and unchanged
+unrelated resources. Record exact source/image/run/receipt/release identifiers.
+No Phase 7 completion follows from publication, apply or a ready Pod alone.

@@ -35,20 +35,27 @@ def release_metadata(value):
 
 def command(args):
     result = ssh_command(args.host, args.port, args.user, args.key, args.known_hosts)
+    if args.fixed_operator:
+        result[-1] = "deployflow-platform"
+        return result
     root = Path(__file__).parent
     # Embed only this checkout's trusted stdlib modules. No server checkout,
     # dependency installation, credentials, or mutable downloaded script needed.
-    program = ("import types,sys\n"
-               "m=types.ModuleType('upgrade_protocol');sys.modules['upgrade_protocol']=m\n"
-               "exec(" + repr((root / "upgrade_protocol.py").read_text()) + ",m.__dict__)\n"
-               "exec(" + repr((root / "upgrade_remote.py").read_text()) + ",{'__name__':'__main__'})\n")
+    program = "import types,sys\n"
+    for name in ("upgrade_protocol", "check_publication", "github_proof"):
+        program += ("m=types.ModuleType(" + repr(name) + ");sys.modules[" + repr(name) + "]=m\n"
+                    "exec(" + repr((root / (name + ".py")).read_text()) + ",m.__dict__)\n")
+    program += "exec(" + repr((root / "upgrade_remote.py").read_text()) + ",{'__name__':'__main__'})\n"
     result[-1] = "python3 -c " + shlex.quote(program)
     return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--operation", choices=["preview", "apply", "rollback-preview", "rollback-apply"], default="preview")
+    parser.add_argument("--operation", choices=["preview", "apply", "rollback-preview", "rollback-apply", "verify-preview", "verify-apply", "finalize", "auto-preview", "auto-apply", "status"], default="preview")
+    parser.add_argument("--fixed-operator", action="store_true", help="Dedicated forced-command SSH key; mandatory for automatic deployment")
+    parser.add_argument("--publication-run-id", type=int)
+    parser.add_argument("--publication-attempt", type=int)
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--source-sha", help="Exact current main checkout/publication SHA")
     parser.add_argument("--receipt-id", help="Original server upgrade receipt for rollback")
@@ -62,11 +69,16 @@ def main():
     parser.add_argument("--known-hosts", type=Path, required=True)
     args = parser.parse_args()
     request = {"operation": args.operation}
-    if args.operation.startswith("rollback"):
+    if args.operation.startswith("auto"):
+        if not args.fixed_operator or not args.publication_run_id or not args.publication_attempt:
+            parser.error("Automatic operation requires fixed operator and exact publication run/attempt")
+        request.update(publication_run_id=args.publication_run_id, publication_attempt=args.publication_attempt)
+        confirmation = None
+    elif args.operation.startswith(("rollback", "verify")) or args.operation in {"finalize", "status"}:
         if not args.receipt_id or not re.fullmatch(r"[a-f0-9]{64}", args.receipt_id):
-            parser.error("Rollback requires an exact original receipt ID")
+            parser.error("Recovery/status requires an exact original receipt ID")
         request["receipt_id"] = args.receipt_id
-        confirmation = "ROLLBACK " + args.receipt_id
+        confirmation = ("VERIFY " if args.operation.startswith("verify") else "ROLLBACK ") + args.receipt_id
     else:
         if not args.bundle or not args.source_sha:
             parser.error("Upgrade requires the authenticated publication bundle and exact source SHA")
@@ -75,7 +87,10 @@ def main():
             parser.error("Publication source differs from current main checkout")
         request["release"] = release_metadata(value)
         confirmation = "UPGRADE " + args.source_sha
-    if args.operation.endswith("apply"):
+    if args.operation.startswith("auto") or args.operation == "finalize":
+        if args.approve_plan_sha256 or args.confirmation:
+            parser.error("Automatic/finalize operations do not accept caller-supplied approval")
+    elif args.operation.endswith("apply"):
         if not args.approve_plan_sha256 or not re.fullmatch(r"[a-f0-9]{64}", args.approve_plan_sha256):
             parser.error("Mutation requires exact reviewed plan SHA256")
         if args.confirmation != confirmation:
@@ -83,6 +98,16 @@ def main():
         request["approval"] = args.approve_plan_sha256
     elif args.approve_plan_sha256 or args.confirmation:
         parser.error("Preview cannot accept mutation approval")
+    if args.operation in {"apply", "rollback-apply", "verify-apply", "finalize", "auto-preview", "auto-apply"}:
+        try:
+            request["controller"] = {"run_id": int(os.environ["GITHUB_RUN_ID"]), "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                                     "source_sha": os.environ.get("DF_CONTROLLER_SOURCE_SHA") or os.environ["GITHUB_SHA"], "workflow": os.environ["DF_CONTROLLER_WORKFLOW"]}
+        except (KeyError, ValueError):
+            parser.error("Mutation/finalization requires the authenticated GitHub workflow context")
+    if args.operation in {"finalize", "auto-preview", "auto-apply"}:
+        request["github_token"] = os.environ.get("GH_TOKEN")
+        if not request["github_token"]:
+            parser.error("GitHub proof token required in environment; never pass it as an argument")
     # Never replace prior review/results. No credential data or backup bytes are
     # returned by the remote protocol or written to GitHub artifacts.
     if args.output.exists():
@@ -105,11 +130,11 @@ def main():
         plan = response["plan"]
         print("REVIEW ONLY. No cluster changes, backups, locks, migrations or restarts performed.")
         print("Plan SHA256:", response["plan_sha256"])
-        print("Schema:", plan["schema_revision"], "Keycloak:", plan["keycloak_version"])
+        print("Schema:", plan.get("schema_revision", plan["before"].get("schema_revision")), "Keycloak:", plan.get("keycloak_version", plan["before"].get("keycloak_version")))
         print("Live flags preserved:", json.dumps(plan["before"]["flags"], sort_keys=True))
         print("Observed Pod flags:", json.dumps(plan["before"].get("runtime_flags", {}), sort_keys=True))
         print("Application policies preserved:", json.dumps(plan["before"]["application_policies"], sort_keys=True))
-        for change in plan["changes"]:
+        for change in plan.get("changes", []):
             print("Deployment", change["name"], "UID", change["uid"], "replicas", change["replicas"])
             print("  From:", json.dumps(change["from_images"], sort_keys=True))
             print("  To:  ", json.dumps(change["to_images"], sort_keys=True))

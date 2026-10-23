@@ -20,6 +20,7 @@ from app.deployments.release import ReleaseError, bind_verified_image
 from app.deployments.rollback import RollbackError, release_files
 from app.deployments.state import transition
 from app.integrations.github.api import GitHubPhase6Error
+from app.integrations.github.compatibility import policy_permits
 from app.kubernetes.client import ClusterError
 from app.kubernetes.executor import apply_owned, rollout_status, service_health
 from app.kubernetes.gateway import GatewayError, call_kubernetes
@@ -169,6 +170,8 @@ def _context(db, run: DeploymentRun, *, observe_only: bool = False):
         raise ExecutionError("deployment_not_authorized")
     if not observe_only and record.kind == "standard" and policy.allowed_source_sha and policy.allowed_source_sha != (record.source_sha or record.merged_sha):
         raise ExecutionError("source_not_authorized_by_policy")
+    if not observe_only and record.kind == "standard" and not policy_permits(policy.source_compatibility_policy, build.compatibility_json):
+        raise ExecutionError("source_compatibility_policy_revoked")
     manifests = checked_manifests(
         files, digest=record.manifest_digest, namespace=profile["namespace"],
         application_id=str(record.application_id), registry=profile["registry"],

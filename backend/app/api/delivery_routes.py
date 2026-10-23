@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -43,8 +43,10 @@ Key = Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=12
 
 
 class DeploymentPolicyWrite(BaseModel):
+    model_config = {"extra": "forbid"}
     enabled: bool
     allowed_source_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    source_compatibility_policy: Literal["node-source-compatibility-v1", "node-handler-compatibility-v2"] | None = None
 
 
 class CleanupResource(BaseModel):
@@ -162,10 +164,14 @@ def release_status(application_id: UUID, identity: Actor):
             VerifiedBuild.verified_at.desc(), VerifiedBuild.run_id.desc(), VerifiedBuild.run_attempt.desc(),
         ).limit(1))
         job = db.scalar(select(DeliveryJob).where(DeliveryJob.verified_build_id == build.id, DeliveryJob.kind == "prepare")) if build else None
+        pending = db.scalar(select(DeploymentRun).where(DeploymentRun.verified_build_id == build.id).order_by(
+                            DeploymentRun.created_at.desc()).limit(1)) if build else None
         return {"pull_request_id": str(pr.id), "baseline_sha": pr.merged_sha,
                 "source_sha": pr.source_head_sha, "status": pr.source_status or pr.status,
                 "error_code": pr.source_error_code or pr.error_code,
                 "preparation": _job_document(job) if job else None,
+                "deployment": {"id": str(pending.id), "release_id": str(pending.release_id), "status": pending.status,
+                               "error_code": pending.error_code} if pending else None,
                 "build": {"id": str(build.id), "source_sha": build.source_sha or build.merged_sha,
                           "run_id": build.run_id, "run_attempt": build.run_attempt, "artifact_id": build.artifact_id,
                           "image_reference": f"{build.image_repository}@{build.image_digest}",
@@ -230,9 +236,13 @@ def get_deployment_policy(application_id: UUID, identity: Actor):
             DeploymentPolicy.environment_profile_id == "local-k3s",
         ))
         return {"enabled": bool(policy and policy.enabled),
+                "source_compatibility_policy": policy.source_compatibility_policy if policy else "node-source-compatibility-v1",
                 "allowed_source_sha": policy.allowed_source_sha if policy else None,
                 "execution_available": settings().deployment_execution_enabled,
                 "cleanup_available": settings().deployment_cleanup_enabled,
+                "authorization_state": ("execution_disabled" if not settings().deployment_execution_enabled else
+                                        "policy_disabled" if not policy or not policy.enabled else
+                                        "single_source" if policy.allowed_source_sha else "future_compatible_sources"),
                 "actor_id": policy.actor_id if policy else None}
 
 
@@ -261,12 +271,17 @@ def set_deployment_policy(application_id: UUID, body: DeploymentPolicyWrite, ide
                 policy.actor_id = identity.actor_id
             if "allowed_source_sha" in body.model_fields_set:
                 policy.allowed_source_sha = body.allowed_source_sha
+            if "source_compatibility_policy" in body.model_fields_set:
+                if body.source_compatibility_policy is None:
+                    raise HTTPException(422, "Select an explicit source compatibility policy")
+                policy.source_compatibility_policy = body.source_compatibility_policy
             return {"enabled": body.enabled, "actor_id": identity.actor_id,
+                    "source_compatibility_policy": policy.source_compatibility_policy or "node-source-compatibility-v1",
                     "allowed_source_sha": policy.allowed_source_sha}, 200
 
         response, code = idempotent(
             db, identity, f"applications/{application_id}/deployment-policy",
-            key, body.model_dump(), operation,
+            key, body.model_dump(exclude_unset=True), operation,
         )
     return JSONResponse(response, status_code=code)
 

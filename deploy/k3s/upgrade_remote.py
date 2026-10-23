@@ -1,4 +1,4 @@
-"""SSH-side image-only upgrade operator; stdlib only, never installed on server.
+"""Shared image-only operator: explicit SSH or separately installed fixed controller.
 
 Preview is read-only. Apply requires the exact current plan digest. Backups and
 receipts remain private on the server, never in Actions artifacts. No migration,
@@ -8,6 +8,7 @@ restore, policy/feature change, namespace deletion or automatic rollback exists.
 from __future__ import annotations
 
 import base64
+import datetime
 import fcntl
 import hashlib
 import json
@@ -25,7 +26,6 @@ import urllib.request
 from pathlib import Path
 
 from upgrade_protocol import (
-    HOST,
     NS,
     NS_UID,
     PART,
@@ -36,6 +36,8 @@ from upgrade_protocol import (
     encoded,
     image_patch,
     make_plan,
+    target_source,
+    verification_plan,
 )
 
 
@@ -168,7 +170,7 @@ def snapshot(*, origin=None):
         keycloak_version, observed = origin["before"]["keycloak_version"], False
     work = pending()
     policies = query("SELECT json_build_object('application_id',application_id,'enabled',enabled,"
-                     "'allowed_source_sha',allowed_source_sha) FROM deployment_policies ORDER BY application_id")
+                     "'allowed_source_sha',allowed_source_sha,'source_compatibility_policy',COALESCE(to_jsonb(deployment_policies)->>'source_compatibility_policy','node-source-compatibility-v1')) FROM deployment_policies ORDER BY application_id")
     applications = query("SELECT json_build_object('application_id',id,'name',name) FROM applications ORDER BY id")
     config = get("configmap", "deployflow-config")["data"]
     flags = {key: config.get(key) for key in ("DF_DEPLOYMENT_EXECUTION_ENABLED", "DF_DEPLOYMENT_CLEANUP_ENABLED")}
@@ -290,6 +292,7 @@ def unfinished(except_id=None):
     if not base.exists():
         return []
     result = []
+    resolved = resolved_receipts()
     for directory in base.iterdir():
         if re.fullmatch(r"[a-f0-9]{64}", directory.name) and directory.name != except_id:
             value = load_receipt(directory.name)
@@ -297,21 +300,51 @@ def unfinished(except_id=None):
                 # Explicit recovery may retry a failed rollback of this same
                 # original upgrade. The server lock still excludes a live peer.
                 continue
-            if value["status"] != "succeeded" and not value.get("reverted_by"):
+            if value["status"] != "succeeded" and not value.get("reverted_by") and not value.get("recovered_by") and directory.name not in resolved:
                 result.append(directory.name)
     return result
 
 
-def mark_reverted(origin, identifier):
-    related = []
-    for directory in private_base().iterdir():
-        if re.fullmatch(r"[a-f0-9]{64}", directory.name) and directory.name != identifier:
-            value = load_receipt(directory.name)
-            if value["id"] == origin["id"] or value["plan"].get("origin_receipt") == origin["id"]:
-                related.append(value)
-    for value in related:
-        value["reverted_by"] = identifier
-        save_receipt(receipt_path(value["id"]), value)
+def resolved_receipts():
+    """Derive recovery links from atomic successful receipts, never rewrite failure.
+
+    A crash after finalization cannot leave half a multi-file success update.
+    A successful verification may close a chain of failed verification attempts.
+    """
+    base = private_base()
+    records = {p.name: load_receipt(p.name) for p in base.iterdir()
+               if re.fullmatch(r"[a-f0-9]{64}", p.name)} if base.exists() else {}
+    resolved = {}
+    for identifier, receipt in records.items():
+        if receipt["status"] != "succeeded" or receipt["plan"]["operation"] not in {"verify", "rollback"}:
+            continue
+        cursor = receipt["plan"].get("origin_receipt")
+        child = receipt
+        seen = {identifier}
+        while cursor:
+            if cursor in seen or cursor not in records:
+                raise ValueError("Invalid recovery receipt ancestry")
+            seen.add(cursor)
+            ancestor = records[cursor]
+            if child["plan"]["operation"] == "verify" and child["targets"] != ancestor["targets"]:
+                raise ValueError("Verification ancestry targets differ")
+            resolved[cursor] = identifier
+            if child["plan"]["operation"] == "rollback":
+                # A completed rollback also closes older partial recovery
+                # attempts in this same family. Raw failed receipts stay intact.
+                family = {cursor}
+                while True:
+                    more = {key for key, value in records.items() if value["plan"].get("origin_receipt") in family}
+                    if more <= family:
+                        break
+                    family |= more
+                for key in family - {identifier}:
+                    if records[key]["status"] != "succeeded":
+                        resolved[key] = identifier
+            if ancestor["plan"]["operation"] not in {"verify", "rollback"}:
+                break
+            cursor, child = ancestor["plan"].get("origin_receipt"), ancestor
+    return resolved
 
 
 def save_receipt(path, value):
@@ -391,22 +424,6 @@ def verify_images(references):
     return result
 
 
-def public_checks():
-    out = {}
-    for path in ("/", "/api/v1/auth/config", "/identity/realms/deployflow-local/.well-known/openid-configuration"):
-        with urllib.request.urlopen("https://" + HOST + path, timeout=20) as response:
-            kind = response.headers.get("Content-Type", "")
-            if response.status != 200 or ("text/html" if path == "/" else "application/json") not in kind:
-                raise ValueError("Public platform endpoint failed verification")
-            if path != "/":
-                value = json.load(response)
-                if (path.startswith("/api") and value.get("mode") != "oidc") or (
-                        path.startswith("/identity") and value.get("issuer") != "https://" + HOST + "/identity/realms/deployflow-local"):
-                    raise ValueError("Public authentication configuration differs")
-            out[path] = 200
-    return out
-
-
 def verify_running(targets, verified):
     replica_sets = {r["metadata"]["uid"]: r for r in rows("replicasets")}
     pods = rows("pods")
@@ -438,6 +455,15 @@ def verify_running(targets, verified):
 
 
 def execute(request):
+    if request["operation"] == "status":
+        value = load_receipt(request["receipt_id"])
+        return {"receipt_id": value["id"], "recorded_status": value["status"],
+                "resolved_by": resolved_receipts().get(value["id"]), "origin_receipt": value["plan"].get("origin_receipt"),
+                "operation": value["plan"]["operation"], "current_health": "not observed by this historical receipt read"}
+    if request["operation"] in {"verify-preview", "verify-apply"}:
+        return recover_verification(request)
+    if request["operation"] == "finalize":
+        return finalize(request)
     rollback = request["operation"].startswith("rollback")
     origin = load_receipt(request["receipt_id"]) if rollback else None
     if origin and origin["plan"]["operation"] != "upgrade":
@@ -451,8 +477,6 @@ def execute(request):
         return {"plan_sha256": identifier, "plan": plan}
     if request.get("approval") != identifier:
         raise ValueError("Current plan differs from exact approval; preview/review again")
-    if not plan["changes"] and not origin:
-        return {"status": "no_changes", "plan_sha256": identifier}
     base = private_base(create=True)
     fd = os.open(base / "operator.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as lock:
@@ -467,14 +491,23 @@ def execute(request):
             targets[change["name"]]["images"] = change["to_images"]
         journal = {"id": identifier, "status": "preparing", "plan": plan, "before": plan["before"],
                    "release": release, "targets": targets, "applied": []}
+        journal["controller"] = request.get("controller")
+        journal["authorization"] = request.get("authorization", {"mode": "exact-plan", "plan_sha256": identifier})
         save_receipt(path, journal)
         try:
             if not plan["changes"]:
-                # Approved recovery acknowledgement after a pre-patch failure.
-                journal["status"] = "succeeded"
+                # Record admission even when images already match. Otherwise a
+                # later rollback followed by replay could re-admit this source.
+                # This path verifies without backups, table locks or patches.
+                if request.get("_mutation_guard"):
+                    request["_mutation_guard"]()
+                verify_running(targets, verify_images([i for t in targets.values() for i in t["images"].values()]))
+                journal["status"] = "awaiting_public_verification"
+                journal["cluster_verified_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 save_receipt(path, journal)
-                mark_reverted(origin, identifier)
-                return {"status": "succeeded", "receipt_id": identifier, "deployments": [], "operation": "rollback"}
+                return {"status": journal["status"], "receipt_id": identifier, "deployments": [], "operation": plan["operation"],
+                        "target_sources": {name: target_source(journal, name) for name in targets},
+                        "deployment_images": {name: target["images"] for name, target in targets.items()}}
             tables = query("SELECT json_build_object('name',tablename) FROM pg_tables WHERE schemaname='public' ORDER BY tablename")
             with WriteFence([row["name"] for row in tables]) as fence:
                 if digest(make_plan(snapshot(origin=origin), release, origin=origin)) != identifier:
@@ -486,6 +519,8 @@ def execute(request):
                 save_receipt(path, journal)
                 for change in plan["changes"]:
                     fence.check()
+                    if request.get("_mutation_guard"):
+                        request["_mutation_guard"]()
                     item = get("deployment", change["name"])
                     kube("patch", "deployment", change["name"], "-n", NS, "--type=json", "-p", json.dumps(image_patch(item, change)))
                     journal["applied"].append(change["name"])
@@ -498,7 +533,8 @@ def execute(request):
                 verify_running(targets, verified)
                 if protected() != plan["before"]["protected"]:
                     raise ValueError("Protected resources changed; investigate before further operations")
-                journal["public_checks"] = public_checks()
+                # The independent runner proves public HTTPS in its own completed
+                # job. Server hairpin connectivity is not a public acceptance gate.
                 fence.check()
                 # Both current DB/provider versions must still match, without DDL.
                 current = snapshot()
@@ -508,24 +544,110 @@ def execute(request):
                         or current["schema_fingerprints"] != plan["before"]["schema_fingerprints"]
                         or current["application_policies"] != plan["before"]["application_policies"]):
                     raise ValueError("Schema/provider/authorization context changed during upgrade")
-            journal["status"] = "succeeded"
+            journal["status"] = "awaiting_public_verification"
+            journal["cluster_verified_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             save_receipt(path, journal)
-            if origin:
-                mark_reverted(origin, identifier)
-            return {"status": "succeeded", "receipt_id": identifier, "operation": plan["operation"],
+            return {"status": journal["status"], "receipt_id": identifier, "operation": plan["operation"],
                     "source_sha": plan["source_sha"], "deployments": [c["name"] for c in plan["changes"]],
-                    "public_checks": journal["public_checks"],
+                    "deployment_images": {name: target["images"] for name, target in targets.items()},
+                    "target_sources": {name: target_source(journal, name) for name in targets},
+                    "authorization": journal["authorization"],
+                    "public_checks": "pending independent runner job and authenticated finalization",
                     "acceptance_limit": "Rollout, running digests and public endpoints verified; authenticated workflows/CD acceptance remain separate"}
         except Exception as exc:
             journal["status"] = "failed"
+            journal["failure"] = {"stage": "cluster_upgrade", "type": type(exc).__name__,
+                                  "code": str(exc) if type(exc) is ValueError else "operation_failed"}
             save_receipt(path, journal)
             exc.receipt_id = identifier
             raise
 
 
+def _locked_receipt(identifier):
+    # Caller holds this returned file's context until its receipt write finishes.
+    base = private_base()
+    fd = os.open(base / "operator.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    stream = os.fdopen(fd, "w")
+    try:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return stream
+    except OSError:
+        stream.close()
+        raise ValueError("Platform operator is busy") from None
+
+
+def recover_verification(request):
+    origin = load_receipt(request["receipt_id"])
+    if origin["id"] in resolved_receipts():
+        raise ValueError("Receipt already has a successful recovery")
+    ancestors = {origin["id"]}
+    cursor = origin["plan"].get("origin_receipt")
+    while cursor:
+        if cursor in ancestors:
+            raise ValueError("Invalid verification ancestry")
+        ancestors.add(cursor)
+        cursor = load_receipt(cursor)["plan"].get("origin_receipt")
+    if set(unfinished(origin["id"])) - ancestors:
+        raise ValueError("Unrelated unfinished operation blocks verification recovery")
+    plan = verification_plan(snapshot(), origin)
+    identifier = digest(plan)
+    if request["operation"] == "verify-preview":
+        return {"plan": plan, "plan_sha256": identifier}
+    if request.get("approval") != identifier:
+        raise ValueError("Verification recovery differs from approved plan")
+    with _locked_receipt(origin["id"]):
+        if origin["id"] in resolved_receipts():
+            raise ValueError("Receipt resolved after review")
+        if digest(verification_plan(snapshot(), load_receipt(origin["id"]))) != identifier:
+            raise ValueError("Verification recovery changed after lock")
+        verify_running(origin["targets"], verify_images([i for t in origin["targets"].values() for i in t["images"].values()]))
+        path = private_base() / identifier
+        path.mkdir(mode=0o700)
+        journal = {"id": identifier, "plan": plan, "before": plan["before"], "release": origin["release"],
+                   "targets": origin["targets"], "status": "awaiting_public_verification", "applied": [],
+                   "controller": request.get("controller"), "authorization": {"mode": "exact-recovery-plan", "plan_sha256": identifier}}
+        journal["cluster_verified_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        save_receipt(path, journal)
+    return {"status": journal["status"], "receipt_id": identifier, "operation": "verify", "origin_receipt": origin["id"]}
+
+
+def finalize(request):
+    from github_proof import GitHubProof
+
+    identifier = request["receipt_id"]
+    with _locked_receipt(identifier):
+        journal = load_receipt(identifier)
+        if identifier in resolved_receipts():
+            raise ValueError("Receipt already resolved by a later recovery")
+        if journal["status"] != "awaiting_public_verification" or journal.get("reverted_by") or journal.get("recovered_by"):
+            raise ValueError("Receipt is not awaiting independent verification")
+        if not journal.get("controller") or journal["controller"] != request.get("controller"):
+            raise ValueError("Finalization controller differs from original operation")
+        proof = GitHubProof(request.get("github_token")).public_job(journal["controller"], since=journal["cluster_verified_at"])
+        current = snapshot()
+        for key in ("protected", "schema_fingerprints", "schema_revision", "keycloak_version", "flags", "application_policies"):
+            if current[key] != journal["before"][key]:
+                raise ValueError("Finalization context changed: " + key)
+        if set(current["deployments"]) != set(journal["targets"]):
+            raise ValueError("Finalization inventory changed")
+        for name, row in current["deployments"].items():
+            expected_source = target_source(journal, name)
+            if (row["contract_sha256"] != journal["before"]["deployments"][name]["contract_sha256"]
+                    or row["source_sha"] != expected_source):
+                raise ValueError("Finalization workload/source changed")
+        verify_running(journal["targets"], verify_images([i for t in journal["targets"].values() for i in t["images"].values()]))
+        journal["public_checks"] = proof
+        journal["status"] = "succeeded"
+        save_receipt(receipt_path(identifier), journal)
+        return {"status": "succeeded", "receipt_id": identifier, "operation": journal["plan"]["operation"], "public_checks": proof,
+                "deployment_images": {name: target["images"] for name, target in journal["targets"].items()},
+                "target_sources": {name: row["source_sha"] for name, row in current["deployments"].items()}}
+
+
 def main():
     request = json.load(sys.stdin)
-    if request.get("operation") not in {"preview", "apply", "rollback-preview", "rollback-apply"}:
+    if request.get("operation") not in {"preview", "apply", "rollback-preview", "rollback-apply",
+                                        "verify-preview", "verify-apply", "finalize", "status"}:
         raise ValueError("Unknown upgrade operation")
     identity()
     print(json.dumps(execute(request)))

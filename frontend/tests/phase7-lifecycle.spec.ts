@@ -151,3 +151,108 @@ for (const scenario of ['ready', 'failed', 'unavailable', 'missing', 'stale', 'z
     expect(errors).toEqual([])
   })
 }
+
+for (const failSave of [false, true]) {
+  test(`reviews explicit future-source and handler authorization; save failure=${failSave}`, async ({ page }) => {
+    const errors: string[] = []
+    const consoleErrors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()) })
+    const source = 'd'.repeat(40)
+    let policy = { enabled: false, allowed_source_sha: source as string | null, source_compatibility_policy: 'node-source-compatibility-v1', execution_available: true, cleanup_available: false, actor_id: 'operator' }
+    const changes: unknown[] = []
+    let executionRequests = 0
+    await page.route('**/api/v1/**', async route => {
+      const path = new URL(route.request().url()).pathname
+      if (path === '/api/v1/auth/config') return route.fulfill({ json: { mode: 'development' } })
+      if (path === '/api/v1/me') return route.fulfill({ json: { actor_id: 'operator', organization_id: 'org', roles: ['deployer'], authentication: 'oidc' } })
+      if (path === `/api/v1/applications/${application.id}`) return route.fulfill({ json: application })
+      if (path.endsWith('/deployment-policy')) {
+        if (route.request().method() === 'PUT') {
+          const body = route.request().postDataJSON()
+          changes.push(body)
+          expect(route.request().headers()['idempotency-key']).toBeTruthy()
+          if (failSave) return route.fulfill({ status: 409, json: { detail: 'Deployment policy changed; review again' } })
+          policy = { ...policy, ...body }
+        }
+        return route.fulfill({ json: policy })
+      }
+      if (path.endsWith('/deployments')) return route.fulfill({ json: { deployments: [] } })
+      if (path.endsWith('/observation')) return route.fulfill({ json: { status: 'missing', observed_at: new Date().toISOString() } })
+      if (path.endsWith('/release-status')) return route.fulfill({ json: { status: 'verified', source_sha: source, baseline_sha: 'c'.repeat(40), deployment: { id: 'candidate-deployment', release_id: 'candidate-release', status: 'waiting_for_executor' } } })
+      if (path.endsWith('/execute')) executionRequests++
+      return route.fulfill({ status: 404, json: { detail: 'Unexpected mock endpoint' } })
+    })
+    await page.goto(`/applications/${application.id}`)
+    await page.getByRole('button', { name: 'Connect to local backend' }).click()
+    await expect(page).toHaveTitle(/DeployFlow/)
+    await expect(page.getByRole('heading', { name: 'Current application state' })).toBeVisible()
+    await expect(page.getByText(/Candidate deployment: waiting_for_executor/)).toBeVisible()
+    await page.getByRole('button', { name: 'Enable deployment for this application' }).click()
+    const review = page.getByRole('form', { name: 'Review deployment authorization' })
+    await expect(review.getByLabel('Approved source SHA')).toHaveValue(source)
+    await expect(review.getByRole('button', { name: 'Confirm deployment policy' })).toBeDisabled()
+    expect(changes).toEqual([])
+    await review.getByLabel('Source scope', { exact: true }).selectOption('future')
+    await review.getByLabel('Compatibility rules').selectOption('node-handler-compatibility-v2')
+    await expect(review.getByText(/preflight already in progress/)).toBeVisible()
+    await review.getByRole('checkbox').check()
+    await page.screenshot({ path: `/tmp/deployflow-automatic-policy-review-${failSave}.png`, fullPage: true })
+    await review.getByRole('button', { name: 'Confirm deployment policy' }).click()
+    await expect.poll(() => changes.length).toBe(1)
+    expect(changes[0]).toEqual({ enabled: true, allowed_source_sha: null, source_compatibility_policy: 'node-handler-compatibility-v2' })
+    if (failSave) {
+      await expect(page.getByText('Deployment policy changed; review again')).toBeVisible()
+      await expect(review).toBeVisible()
+      await expect(review.getByRole('button', { name: 'Confirm deployment policy' })).toBeEnabled()
+    } else {
+      await expect(review).toHaveCount(0)
+      await expect(page.getByText('Policy authorizes future compatible commits on the configured branch.')).toBeVisible()
+      await page.reload()
+      await expect(page.getByText('Policy authorizes future compatible commits on the configured branch.')).toBeVisible()
+      await expect(page.getByText(/Candidate deployment: waiting_for_executor/)).toBeVisible()
+      await page.getByRole('button', { name: 'Disable future automatic deployments' }).click()
+      await expect.poll(() => changes.length).toBe(2)
+      expect(changes[1]).toEqual({ enabled: false })
+    }
+    expect(executionRequests).toBe(0)
+    expect(errors).toEqual([])
+    // A rejected API request is expected to emit a browser network error.
+    expect(consoleErrors.filter(message => !failSave || !message.includes('409'))).toEqual([])
+    await expect(page.getByText('Vite Error')).toHaveCount(0)
+  })
+}
+
+test('dashboard distinguishes last success, pending release and disabled execution, then refreshes', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.clock.install()
+  let reads = 0
+  let progressed = false
+  await page.route('**/api/v1/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/v1/auth/config') return route.fulfill({ json: { mode: 'development' } })
+    if (path === '/api/v1/me') return route.fulfill({ json: { actor_id: 'operator', organization_id: 'org', roles: ['deployer'], authentication: 'oidc' } })
+    if (path === '/api/v1/services') return route.fulfill({ json: { namespace: 'deployflow-test', observed_at: new Date().toISOString(), workloads: [], services: [] } })
+    if (path === '/api/v1/applications') {
+      reads++
+      return route.fulfill({ json: [{ ...application, deployment_policy_enabled: true, deployment_execution_available: false,
+        last_successful_deployment: { source_sha: 'd'.repeat(40), image_reference: 'ghcr.io/example/fixture@sha256:old' },
+        latest_deployment: { source_sha: 'e'.repeat(40), image_reference: 'ghcr.io/example/fixture@sha256:new', status: progressed ? 'checking' : 'waiting_for_executor' },
+        source_verification: { status: 'verified' },
+      }] })
+    }
+    return route.fulfill({ status: 404, json: { detail: 'Unexpected mock endpoint' } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Connect to local backend' }).click()
+  await expect(page.getByText('Automatic policy: enabled · Execution: disabled')).toBeVisible()
+  await expect(page.getByText(/Last successful source: dddddddddddd · historical result/)).toBeVisible()
+  await expect(page.getByText('Latest release: waiting_for_executor')).toBeVisible()
+  progressed = true
+  await page.clock.fastForward(31000)
+  await expect(page.getByText('Latest release: checking')).toBeVisible()
+  expect(reads).toBeGreaterThan(1)
+  await page.screenshot({ path: '/tmp/deployflow-automatic-dashboard.png', fullPage: false })
+  expect(errors).toEqual([])
+})

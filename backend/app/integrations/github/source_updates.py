@@ -19,6 +19,7 @@ from app.persistence.database import Session
 from app.persistence.models import (
     Application,
     DeliveryJob,
+    DeploymentPolicy,
     GitHubWebhookDelivery,
     InfrastructurePlan,
     InfrastructurePlanFile,
@@ -89,7 +90,10 @@ def reconcile_source(identifier):
             if existing:
                 pr.source_status = "verified"
                 return  # Never queue again merely because a webhook was replayed.
-            compatibility = checked_source_compatibility(api, baseline=pr.merged_sha, source=source, files=files)
+            policy = db.scalar(select(DeploymentPolicy).where(DeploymentPolicy.application_id == plan.application_id,
+                               DeploymentPolicy.environment_profile_id == plan.environment_profile_id))
+            compatibility = checked_source_compatibility(api, baseline=pr.merged_sha, source=source, files=files,
+                              policy=policy.source_compatibility_policy if policy else "node-source-compatibility-v1")
             compatibility.update({"assessment_run_id": str(plan.analysis_run_id), "assessment_version": plan.assessment_version,
                                   "approval_id": str(approval.id), "bundle_digest": plan.bundle_digest})
             runs = api.workflow_runs(pr.base_branch, source)

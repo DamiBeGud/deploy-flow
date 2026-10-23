@@ -24,10 +24,17 @@ Add environment secrets (not environment variables):
 | Secret | Value |
 | --- | --- |
 | `K3S_SSH_HOST` | `91.89.185.146` |
-| `K3S_SSH_PORT` | `22` |
 | `K3S_SSH_USER` | `connectops` |
 | `K3S_SSH_PRIVATE_KEY` | Dedicated Actions private key, including its PEM/OpenSSH delimiters |
 | `K3S_SSH_KNOWN_HOSTS` | Previously verified host entry for the selected address/port |
+
+Set environment **variable** `K3S_SSH_PORT=22` (the workflows default to 22), and
+remove any old secret with that name. The port is not a credential. GitHub can
+suppress job outputs whose public hashes happen to contain a short secret such
+as `22`. Finalization therefore reads the receipt from the checksum-verified
+upgrade artifact for its exact controller run/attempt, independently of job
+outputs. Missing or invalid metadata produces a safe error artifact before SSH;
+inspect the prior receipt before recovery.
 
 Use a dedicated key, not a personal SSH key. Store its private copy outside Git,
 directory 0700/file 0600. Installing its public key on the server requires an exact
@@ -428,7 +435,11 @@ Ordinary upgrade also refuses a ConfigMap flag change that was not consistently
 loaded by its existing consumers; capability activation needs its own review.
 
 Apply refuses pending/running/blocked execution work and active analysis/GitHub/
-delivery jobs. It requires identical application schema revision and Keycloak
+delivery jobs. An unleased blocked **prepare** job with no DeploymentRun is a retained
+non-executing result, listed in preview; it remains blocked through worker restart
+and requires the product's explicit preparation-retry API. Blocked preflights,
+partial deployments, leased jobs and unknown states still prevent upgrade. No
+job/status field is rewritten to clear a maintenance guard. It requires identical application schema revision and Keycloak
 version. No automatic migration, database restore, identity import or account reset
 is implemented. Publish-time checks verify the identity image's actual version;
 registry checks bind allowed private repositories, exact index bytes and amd64
@@ -557,8 +568,9 @@ verification plan using that pending recovery receipt as the next origin. Rollba
    | `k3s-platform-automatic` | Dedicated `K3S_PLATFORM_OPERATOR_KEY` and host/port/user/known-host settings; no general SSH key |
    | `k3s` | Manual installation/recovery key; require reviewer protection before enabling automation |
 
-   The automatic environment needs `K3S_SSH_HOST`, `K3S_SSH_PORT`,
-   `K3S_SSH_USER`, `K3S_SSH_KNOWN_HOSTS`, and the dedicated operator key. It does not
+   The automatic environment needs secrets `K3S_SSH_HOST`, `K3S_SSH_USER`,
+   `K3S_SSH_KNOWN_HOSTS`, and the dedicated operator key, plus non-secret variable
+   `K3S_SSH_PORT`. It does not
    need `K3S_SSH_PRIVATE_KEY`. Limit deployment branches to main. Existing package
    Actions access must grant this repository Write for all three platform images.
    If reviewer protection cannot protect the manual environment, remove its broad
@@ -567,7 +579,9 @@ verification plan using that pending recovery receipt as the next origin. Rollba
    protect a broad key from a main workflow that can select its environment.
 5. After exact approval, install a root-owned controller checkout at
    `/opt/deployflow-platform/controller/`, preserving repository-relative paths.
-   Include all files in `automatic.PROTECTED_FILES`; `automatic.py` imports the
+   Include all files in `automatic.PROTECTED_FILES` and the public `deploy/k3s`
+   modules it imports; retain the referenced public realm template under
+   `backend/ops/local-oidc/`. `automatic.py` imports the
    trusted modules from that checkout. Directories must be root-owned and not
    group/world writable; runtime Python files are root-owned 0644. The SSH account
    must not be able to replace the checkout. Do not install candidate scripts

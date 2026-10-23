@@ -5,9 +5,13 @@ import datetime
 import hashlib
 import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 import urllib.error
+import zipfile
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
@@ -22,11 +26,54 @@ from github_proof import REPO, GitHubProof
 from prepare_automatic_policy import prepare
 from test_upgrade import NEW, SOURCE, fixtures
 from upgrade_protocol import digest, make_plan, verification_plan
+from workflow_upgrade import finalization_receipt
 
 CONTEXT = {"run_id": 123, "attempt": 1, "source_sha": SOURCE, "workflow": ".github/workflows/platform-upgrade.yml"}
 
 
 class ManualEntryTests(unittest.TestCase):
+    def test_ssh_port_is_not_a_secret_that_can_redact_receipt_job_outputs(self):
+        root = Path(__file__).resolve().parents[2]
+        for name in ("platform-k3s.yml", "platform-upgrade.yml", "platform-auto.yml"):
+            source = (root / ".github/workflows" / name).read_text()
+            self.assertNotIn("secrets.K3S_SSH_PORT", source)
+            self.assertIn("vars.K3S_SSH_PORT", source)
+
+    def test_missing_finalization_output_retains_safe_error_artifact_before_ssh(self):
+        path = Path(__file__).with_name("workflow_upgrade.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run([sys.executable, str(path), "finalize"], cwd=tmp,
+                                    env={"PATH": os.environ.get("PATH", ""), "RUNNER_TEMP": tmp}, capture_output=True, text=True, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            value = json.loads((Path(tmp) / "upgrade-review/result.json").read_text())
+            self.assertEqual(value, {"error": "finalization_metadata_unavailable", "operation": "finalize"})
+            self.assertIn("artifact context", result.stderr)
+
+    def test_receipt_with_short_secret_substring_comes_from_exact_run_artifact(self):
+        receipt = "22" * 32
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("result.json", json.dumps({"status": "awaiting_public_verification", "receipt_id": receipt}))
+        raw = stream.getvalue()
+        class Proof:
+            checksum = "sha256:" + hashlib.sha256(raw).hexdigest()
+            def run(self, context):
+                self.context = context
+            def read(self, path, **kwargs):
+                if path == "/actions/runs/123/artifacts?per_page=100":
+                    return {"artifacts": [{"id": 7, "name": "platform-upgrade-123-2", "digest": self.checksum}]}
+                if path == "/actions/artifacts/7/zip" and kwargs == {"raw": True}:
+                    return raw
+                raise AssertionError("Unexpected run/artifact request")
+        env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_SHA": SOURCE,
+               "DF_CONTROLLER_WORKFLOW": CONTEXT["workflow"]}
+        proof = Proof()
+        self.assertEqual(finalization_receipt(env, proof), receipt)
+        self.assertEqual(proof.context, CONTEXT | {"attempt": 2})
+        proof.checksum = "sha256:" + "0" * 64
+        with self.assertRaisesRegex(ValueError, "digest differs"):
+            finalization_receipt(env, proof)
+
     def test_remote_entry_dispatches_recovery_and_status_after_identity_check(self):
         for operation in ("verify-preview", "verify-apply", "finalize", "status"):
             request = {"operation": operation, "receipt_id": "a" * 64}

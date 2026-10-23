@@ -42,7 +42,6 @@ jobs:
     timeout-minutes: 25
     environment: k3s
     outputs:
-      receipt_id: ${{ steps.operation.outputs.receipt_id }}
       needs_verification: ${{ steps.operation.outputs.needs_verification }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -84,7 +83,7 @@ jobs:
           SSH_KEY: ${{ secrets.K3S_SSH_PRIVATE_KEY }}
           SSH_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
           SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
-          SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+          SSH_PORT: ${{ vars.K3S_SSH_PORT || '22' }}
           SSH_USER: ${{ secrets.K3S_SSH_USER }}
         run: python3 deploy/k3s/workflow_upgrade.py cluster
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -119,12 +118,11 @@ jobs:
           persist-credentials: false
       - name: Persist completion after authenticated proof and fresh cluster verification
         env:
-          RECEIPT_ID: ${{ needs.upgrade.outputs.receipt_id }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SSH_KEY: ${{ secrets.K3S_SSH_PRIVATE_KEY }}
           SSH_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
           SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
-          SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+          SSH_PORT: ${{ vars.K3S_SSH_PORT || '22' }}
           SSH_USER: ${{ secrets.K3S_SSH_USER }}
         run: python3 deploy/k3s/workflow_upgrade.py finalize
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

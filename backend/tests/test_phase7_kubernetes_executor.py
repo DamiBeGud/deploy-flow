@@ -192,3 +192,94 @@ def test_checker_proxy_rbac_matches_named_service_port(manifest):
         "apiGroups": [""], "resources": ["services/proxy"],
         "resourceNames": [f"{checker['metadata']['name']}:http"], "verbs": ["get"],
     }]
+
+
+def deployment_with_update_ownership(*, foreign=False, port=4587):
+    import copy
+
+    wire = {
+        'apiVersion': 'apps/v1', 'kind': 'Deployment',
+        'metadata': {'name': 'fixture', 'namespace': 'deployflow-test',
+                     'labels': {'app.kubernetes.io/managed-by': 'deployflow', 'app.kubernetes.io/instance': 'application-id'},
+                     'annotations': {'controller.example/retained': 'yes'}},
+        'spec': {'replicas': 1, 'template': {'spec': {'containers': [
+            {'name': 'fixture', 'image': 'registry/old@sha256:old', 'ports': [{'containerPort': port}],
+             'terminationMessagePath': '/dev/termination-log'},
+        ]}}},
+    }
+    wanted = copy.deepcopy(wire)
+    wanted['metadata'].pop('annotations')
+    wanted['spec']['template']['spec']['containers'][0].pop('terminationMessagePath')
+    wanted['spec']['template']['spec']['containers'][0]['env'] = []
+    wanted['spec']['template']['spec']['containers'][0]['image'] = 'registry/new@sha256:new'
+    fields = {'f:spec': {'f:template': {'f:spec': {'f:containers': {'k:{"name":"fixture"}': {'f:image': {}}}}}}}
+    entries = [SimpleNamespace(manager='deployflow-executor', operation='Update', fields_v1=fields)]
+    if foreign:
+        entries.append(SimpleNamespace(manager='another-controller', operation='Apply', fields_v1=fields))
+    old = existing()
+    old.metadata.managed_fields = entries
+    api = SimpleNamespace(sanitize_for_serialization=lambda _: copy.deepcopy(wire))
+    return api, old, wanted
+
+
+def test_legacy_image_update_uses_uid_and_version_fenced_json_patch(monkeypatch):
+    api, old, wanted = deployment_with_update_ownership()
+    calls = []
+
+    @contextmanager
+    def opened():
+        yield api
+
+    def patch(name, namespace, body, **kwargs):
+        calls.append((body, kwargs))
+        return old
+
+    instance = SimpleNamespace(read=lambda *_a, **_k: old, create=lambda *_a, **_k: pytest.fail('must not recreate'), patch=patch)
+    monkeypatch.setattr(executor, '_api_client', opened)
+    monkeypatch.setitem(executor._METHODS, 'Deployment', (lambda _: instance, 'read', 'create', 'patch'))
+    executor.apply_owned(wanted, 'application-id', 'owned-uid')
+    body, options = calls[0]
+    assert body == [
+        {'op': 'test', 'path': '/metadata/uid', 'value': 'owned-uid'},
+        {'op': 'test', 'path': '/metadata/resourceVersion', 'value': '17'},
+        {'op': 'replace', 'path': '/spec/template/spec/containers/0/image', 'value': 'registry/new@sha256:new'},
+    ]
+    assert options['_content_type'] == 'application/json-patch+json'
+    assert 'force' not in options
+
+
+@pytest.mark.parametrize('foreign,drift', [(True, False), (False, True)])
+def test_legacy_image_update_rejects_foreign_ownership_or_requirements_drift(foreign, drift):
+    from app.kubernetes.client import image_update_patch
+
+    api, old, wanted = deployment_with_update_ownership(foreign=foreign)
+    if drift:
+        wanted['spec']['template']['spec']['containers'][0]['ports'][0]['containerPort'] = 8080
+    with pytest.raises(ClusterError, match='resource_image_ownership_conflict|resource_requirements_need_review'):
+        image_update_patch(api, wanted, old)
+
+
+def test_validator_simulates_same_legacy_image_patch_without_live_write(monkeypatch):
+    from app.kubernetes import client as reader
+
+    api, old, wanted = deployment_with_update_ownership()
+    calls = []
+
+    @contextmanager
+    def opened():
+        yield api
+
+    def patch(name, namespace, body, **kwargs):
+        # An apply would reproduce the real Update-vs-Apply 409 discovered live.
+        if kwargs['_content_type'] != 'application/json-patch+json':
+            raise ApiException(status=409)
+        assert kwargs['dry_run'] == 'All'
+        assert 'force' not in kwargs
+        calls.append(body)
+
+    instance = SimpleNamespace(read_namespaced_deployment=lambda *_a, **_k: old, patch_namespaced_deployment=patch)
+    monkeypatch.setattr(reader, '_api_client', opened)
+    monkeypatch.setattr(reader.client, 'AppsV1Api', lambda _: instance)
+    result = reader.validate_dry_run([wanted], 'application-id')
+    assert result['status'] == 'passed'
+    assert calls[0][-1]['path'] == '/spec/template/spec/containers/0/image'

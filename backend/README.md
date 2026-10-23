@@ -200,6 +200,13 @@ immediately before mutation. Enabling a flag alone does not execute existing
 `waiting_for_executor` runs; an operator explicitly selects a prepared run.
 Future eligible releases can queue automatically after preflight.
 
+For POST-created Deployments, compatible image updates use a JSON patch fenced by
+UID/resourceVersion after checking the approved non-image fields and DeployFlow's
+image ownership. Kubernetes distinguishes Update and Apply ownership even when
+manager names match; no forced ownership transfer is used. Foreign image ownership
+or changed non-image requirements block for review. The validator simulates the
+same patch with `dry_run=All` using its own identity. Other applies remain nonforced.
+
 The policy's optional `allowed_source_sha` bounds standard releases to one exact
 commit. Omitting the field preserves the bound; explicit `null` removes it and
 authorizes future compatible commits. Removing a bound needs a separate policy

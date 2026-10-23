@@ -60,6 +60,30 @@ class PostgreSQLWriteFenceTests(unittest.TestCase):
             self.sql("INSERT INTO jobs VALUES(1)", success=True)
             self.sql("DELETE FROM jobs", success=True)
 
+    def test_only_unleased_blocked_preparation_without_deployment_is_inactive(self):
+        self.sql("CREATE TABLE alembic_version(version_num text); INSERT INTO alembic_version VALUES('synthetic'); "
+                 "CREATE TABLE pending_jobs(id int); CREATE TABLE analysis_runs(status text); "
+                 "CREATE TABLE github_jobs(status text); CREATE TABLE execution_jobs(status text); "
+                 "CREATE TABLE delivery_jobs(status text NOT NULL,kind text NOT NULL,deployment_run_id text,lease_token text,lease_expires_at timestamptz); "
+                 "INSERT INTO delivery_jobs VALUES('blocked','prepare',NULL,NULL,NULL)", success=True)
+        try:
+            with patch.object(upgrade_remote, "psql_command", return_value=self.command):
+                self.assertEqual(upgrade_remote.pending()["delivery"], 0)
+                self.sql("INSERT INTO delivery_jobs VALUES "
+                         "('blocked','preflight','run',NULL,NULL),"
+                         "('blocked','prepare',NULL,'lease',NULL),"
+                         "('blocked','prepare',NULL,NULL,now()),"
+                         "('queued','prepare',NULL,NULL,NULL),"
+                         "('retry_wait','prepare',NULL,NULL,NULL),"
+                         "('running','prepare',NULL,'lease',now()),"
+                         "('blocked','prepare','run',NULL,NULL),"
+                         "('unknown','prepare',NULL,NULL,NULL),"
+                         "('completed','prepare',NULL,NULL,NULL),"
+                         "('failed','prepare',NULL,NULL,NULL)", success=True)
+                self.assertEqual(upgrade_remote.pending()["delivery"], 8)
+        finally:
+            self.sql("DROP TABLE delivery_jobs,alembic_version,pending_jobs,analysis_runs,github_jobs,execution_jobs", success=True)
+
     def test_exception_releases_locks_and_existing_writer_prevents_fence(self):
         with patch.object(upgrade_remote, "psql_command", return_value=self.command):
             with self.assertRaisesRegex(ValueError, "synthetic rollout failure"), upgrade_remote.WriteFence(["jobs"], seconds=30):

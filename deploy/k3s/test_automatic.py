@@ -26,6 +26,25 @@ from upgrade_protocol import digest, make_plan, verification_plan
 CONTEXT = {"run_id": 123, "attempt": 1, "source_sha": SOURCE, "workflow": ".github/workflows/platform-upgrade.yml"}
 
 
+class ManualEntryTests(unittest.TestCase):
+    def test_remote_entry_dispatches_recovery_and_status_after_identity_check(self):
+        for operation in ("verify-preview", "verify-apply", "finalize", "status"):
+            request = {"operation": operation, "receipt_id": "a" * 64}
+            with self.subTest(operation=operation), patch("sys.stdin", io.StringIO(json.dumps(request))), \
+                    patch("sys.stdout", new_callable=io.StringIO) as output, patch.object(remote, "identity") as identity, \
+                    patch.object(remote, "execute", return_value={"accepted": operation}) as execute:
+                execute.side_effect = lambda value, op=operation: {"accepted": op} if identity.called else self.fail("Identity not checked")
+                remote.main()
+                execute.assert_called_once_with(request)
+                self.assertEqual(json.loads(output.getvalue()), {"accepted": operation})
+
+    def test_manual_entry_rejects_automatic_operation(self):
+        with patch("sys.stdin", io.StringIO('{"operation":"auto-apply"}')), patch.object(remote, "identity") as identity:
+            with self.assertRaisesRegex(ValueError, "Unknown upgrade operation"):
+                remote.main()
+            identity.assert_not_called()
+
+
 class ProofTests(unittest.TestCase):
     def controller(self):
         return {"repository": {"full_name": REPO}, "head_branch": "main", "head_sha": SOURCE,

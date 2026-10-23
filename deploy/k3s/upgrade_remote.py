@@ -646,7 +646,8 @@ def finalize(request):
 
 def main():
     request = json.load(sys.stdin)
-    if request.get("operation") not in {"preview", "apply", "rollback-preview", "rollback-apply"}:
+    if request.get("operation") not in {"preview", "apply", "rollback-preview", "rollback-apply",
+                                        "verify-preview", "verify-apply", "finalize", "status"}:
         raise ValueError("Unknown upgrade operation")
     identity()
     print(json.dumps(execute(request)))

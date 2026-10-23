@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -79,8 +80,10 @@ def inspection(namespace):
     if config:
         for flag in ("DF_DEPLOYMENT_EXECUTION_ENABLED", "DF_DEPLOYMENT_CLEANUP_ENABLED"):
             print(flag, config.get("data", {}).get(flag, "missing"))
-    migrated = get("job", "deployflow-migrate-c3a71d9e4208", NS)
-    if migrated and migrated.get("status", {}).get("succeeded") == 1:
+    migrated = [job for job in list_objects("jobs")
+                if owned(job) and job["metadata"]["name"].startswith("deployflow-migrate-")
+                and job.get("status", {}).get("succeeded") == 1]
+    if migrated:
         print("Schema:", query("SELECT version_num FROM alembic_version").strip())
         print("Durable work and enabled policies:", query(
             "SELECT 'analysis', count(*) FROM pending_jobs UNION ALL "
@@ -112,6 +115,22 @@ def completed_job(name):
     job = get("job", name, NS)
     if not job or job.get("status", {}).get("succeeded") != 1:
         raise ValueError("Prerequisite setup Job has not completed")
+
+
+def workload_revision(items):
+    revisions = set()
+    for item in items:
+        for init in item["spec"]["template"]["spec"].get("initContainers", []):
+            if init["name"] != "schema-ready":
+                continue
+            command = init.get("command", [])
+            match = re.search(r"== '([a-f0-9]{12})'$", command[-1]) if command[:2] == ["python", "-c"] else None
+            if not match:
+                raise ValueError("Unknown schema readiness contract")
+            revisions.add(match[1])
+    if len(revisions) != 1:
+        raise ValueError("Workload schema revisions differ or are missing")
+    return revisions.pop()
 
 
 def apply(stage, document, namespace):
@@ -147,7 +166,7 @@ def apply(stage, document, namespace):
         for name in ("postgres", "identity-postgres", "redis"):
             kubectl("rollout", "status", "statefulset/" + name, "-n", NS, "--timeout=180s")
     if stage == "workloads":
-        completed_job("deployflow-migrate-c3a71d9e4208")
+        completed_job("deployflow-migrate-" + workload_revision(items))
         completed_job("deployflow-identity-setup")
         # Refuse startup that could execute restored work, even with deployment disabled.
         result = query("SELECT count(*) FROM (SELECT id FROM applications UNION ALL SELECT run_id AS id FROM pending_jobs) q")

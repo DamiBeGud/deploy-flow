@@ -17,7 +17,7 @@ from check_publication import check
 from operate import secret_document, ssh_command
 from prepare_registry_secret import prepare as prepare_pull
 from prepare_secrets import prepare
-from render import IMAGE_REPOSITORIES, NAMESPACE, PULL_SECRET, render
+from render import IMAGE_REPOSITORIES, NAMESPACE, PULL_SECRET, REVISION, render
 
 IMAGES = {role: repo + "@sha256:" + str(i) * 64
           for i, (role, repo) in enumerate(IMAGE_REPOSITORIES.items(), 1)}
@@ -25,6 +25,18 @@ SOURCE = "a" * 40
 
 
 class BundleTests(unittest.TestCase):
+    def test_fresh_install_migration_and_workload_revision_match(self):
+        self.assertEqual(render("migration", IMAGES)["items"][0]["metadata"]["name"], "deployflow-migrate-" + REVISION)
+        self.assertEqual(remote.workload_revision(render("workloads", IMAGES)["items"]), REVISION)
+
+    def test_mixed_or_missing_workload_schema_is_rejected(self):
+        workloads = render("workloads", IMAGES)["items"]
+        workloads[0]["spec"]["template"]["spec"]["initContainers"][0]["command"][-1] += " changed"
+        with self.assertRaises(ValueError):
+            remote.workload_revision(workloads)
+        with self.assertRaises(ValueError):
+            remote.workload_revision([])
+
     def test_bundle_binds_source_images_every_stage_and_exact_renderer(self):
         bundle = create(IMAGES, SOURCE)
         self.assertEqual(validate(bundle), bundle)

@@ -290,7 +290,7 @@ def migration(images):
     main["envFrom"] = [{"secretRef": {"name": "deployflow-runtime"}}]
     template = pod("migrate", main)
     template["spec"]["restartPolicy"] = "Never"
-    return [resource("Job", "deployflow-migrate-c3a71d9e4208", api_version="batch/v1",
+    return [resource("Job", "deployflow-migrate-" + REVISION, api_version="batch/v1",
                      spec={"backoffLimit": 3, "activeDeadlineSeconds": 300, "template": template})]
 
 

@@ -1,0 +1,699 @@
+{
+  "recorded_at": "2026-10-23T09:30:00Z",
+  "kind": "live-operational-acceptance",
+  "status": "Core Phase 7 acceptance passed for the selected hosted internal Node fixture; platform automatic update, rollback and replay passed",
+  "snapshot_limit": "At this checkpoint the platform is deliberately rolled back to a4ec32c after acceptance. A new forward documentation commit will be used to restore latest main through the enabled automatic path; consult later Actions receipts for newer running source.",
+  "authority": "User explicitly authorized continuing implementation, Git writes and the deployment sequence. Historical approvals do not grant future standing authority.",
+  "environment": {
+    "public_origin": "https://deployflow.damibegud.cloud",
+    "hostname": "homeserver1",
+    "platform_namespace": "deployflow-system",
+    "platform_namespace_uid": "d611539e-df7d-4826-b76d-2bd0c4d97225",
+    "application_namespace": "deployflow-test",
+    "application_namespace_uid": "84a720fd-dc36-4592-a2bb-12c8f54ddc7c",
+    "schema_revision": "e4b92f7a6103",
+    "execution_enabled": true,
+    "cleanup_enabled": false,
+    "cleaner_present": false
+  },
+  "platform_policy": {
+    "id": "0dc56523ffe92244cb106af97e797cf05cde4cea4e3968ac7fc545626e7b2acf",
+    "controller_sha": "a4ec32c6664158aa10696de9eb3055004e326bb4",
+    "baseline_sha": "a4ec32c6664158aa10696de9eb3055004e326bb4",
+    "source_scope": "future-compatible",
+    "expires_at": "2026-12-22T08:00:00Z",
+    "publication_enabled": true,
+    "automatic_upgrade_enabled": true,
+    "ssh_key": "Dedicated root-pinned forced-command key; no arbitrary shell access; manual operator key remains protected separately"
+  },
+  "managed_application": {
+    "name": "node-express-service2",
+    "id": "2202caf2-759b-4fd2-84c2-58f8fac226ba",
+    "environment_profile": "local-k3s",
+    "repository": "https://github.com/DamiBeGud/deployflow-node-express-fixture",
+    "configured_branch": "main",
+    "infrastructure_pr": 15,
+    "infrastructure_pr_id": "1756d531-ec1e-45b6-b251-212968dbf6ae",
+    "approval_id": "c32407ad-6f0d-41c2-802c-7271ed3e1ea2",
+    "bundle_digest": "299e7b63db67e66dcc685849d17af56437968fcef956fabd135abc07ee462495",
+    "policy_enabled": true,
+    "allowed_source_sha": null,
+    "source_compatibility_policy": "node-source-compatibility-v1",
+    "other_application_policies": "Disabled; not automatically activated",
+    "lineage": [
+      {
+        "id": "607c97a6-2b6f-4a31-b70d-fbf70ac7c01b",
+        "release_id": "4a949ede-3412-42ed-a12b-d6b6b9f86aca",
+        "release_digest": "2b6c76c3779ec74b0437f92502bfda0c3941155c61966b875073b5db4b9cd690",
+        "source_sha": "6a31e8a015dfb181101b53625be344705c483d0e",
+        "baseline_sha": "6a31e8a015dfb181101b53625be344705c483d0e",
+        "kind": "standard",
+        "previous_release_id": null,
+        "rollback_target_release_id": null,
+        "image_reference": "ghcr.io/damibegud/deployflow-node-express-fixture@sha256:d6b121b81541cf4b69e3388f51c2615ba3613ee2654926db4a90d1adaa867946",
+        "status": "succeeded",
+        "rollout": {
+          "name": "node-express-service2",
+          "status": "ready",
+          "generation": 1,
+          "observed_at": "2026-10-23T07:53:36.216983+00:00",
+          "ready_replicas": 1,
+          "desired_replicas": 1,
+          "updated_replicas": 1,
+          "available_replicas": 1,
+          "observed_generation": 1
+        },
+        "health": {
+          "path": "/healthz",
+          "status": "passed",
+          "service": "node-express-service2",
+          "observed_at": "2026-10-23T07:53:36.247875+00:00"
+        },
+        "purpose": "New hosted baseline; manually authorized execution",
+        "workflow_run": 39835670930,
+        "attempt": 1,
+        "artifact_id": 12450247871,
+        "workflow_url": "https://github.com/DamiBeGud/deployflow-node-express-fixture/actions/runs/39835670930",
+        "independent_service_http": {
+          "/": {
+            "http_status": 200,
+            "release": "phase7-release-2"
+          },
+          "/api/info": {
+            "http_status": 200,
+            "release": "phase7-release-2"
+          },
+          "/healthz": {
+            "http_status": 200,
+            "status": "ok"
+          }
+        }
+      },
+      {
+        "id": "fe2e20f1-35ff-4d9c-a94b-5ca1920e0df9",
+        "release_id": "14bf1f82-8016-462d-9730-aa78ddad375d",
+        "release_digest": "9071d6bfe9f834a99d221c7b01a8ec8ca710a0b3038345dc295707b514a86dcc",
+        "source_sha": "fc51858dd58f11d05428c9bacd8340cb367a40df",
+        "baseline_sha": "6a31e8a015dfb181101b53625be344705c483d0e",
+        "kind": "standard",
+        "previous_release_id": "4a949ede-3412-42ed-a12b-d6b6b9f86aca",
+        "rollback_target_release_id": null,
+        "image_reference": "ghcr.io/damibegud/deployflow-node-express-fixture@sha256:925c226529583d314d9909a89df051f8004e7e22982f12c64b7d72d8b4d43f67",
+        "status": "succeeded",
+        "rollout": {
+          "name": "node-express-service2",
+          "status": "ready",
+          "generation": 2,
+          "observed_at": "2026-10-23T08:37:08.651818+00:00",
+          "ready_replicas": 1,
+          "desired_replicas": 1,
+          "updated_replicas": 1,
+          "available_replicas": 1,
+          "observed_generation": 2
+        },
+        "health": {
+          "path": "/healthz",
+          "status": "passed",
+          "service": "node-express-service2",
+          "observed_at": "2026-10-23T08:37:08.672751+00:00"
+        },
+        "purpose": "First source-update attempt blocked; explicit preparation recovery after admission correction; NOT automatic acceptance",
+        "workflow_run": 39921109263,
+        "attempt": 1,
+        "artifact_id": 12486184664,
+        "workflow_url": "https://github.com/DamiBeGud/deployflow-node-express-fixture/actions/runs/39921109263",
+        "independent_service_http": {
+          "/": {
+            "http_status": 200,
+            "release": "phase7-release-3",
+            "cdTest": "hosted-k3s-cd-20261023"
+          },
+          "/api/info": {
+            "http_status": 200,
+            "release": "phase7-release-3",
+            "cdTest": "hosted-k3s-cd-20261023"
+          },
+          "/healthz": {
+            "http_status": 200,
+            "status": "ok"
+          }
+        }
+      },
+      {
+        "id": "741a73e7-22a9-4fff-9095-b40a39f48c39",
+        "release_id": "e5d4c298-58ae-43a3-8e6f-ba7a83625470",
+        "release_digest": "4f09372aacc50fb58730f7c4f730cc29e09b99628a56c8783697a35394dd6c0f",
+        "source_sha": "588521041c51e0a0ff36f0bb62c04faee3668dbd",
+        "baseline_sha": "6a31e8a015dfb181101b53625be344705c483d0e",
+        "kind": "standard",
+        "previous_release_id": "14bf1f82-8016-462d-9730-aa78ddad375d",
+        "rollback_target_release_id": null,
+        "image_reference": "ghcr.io/damibegud/deployflow-node-express-fixture@sha256:03ada7fc15222973fdf0e2d7d4673301894669f9246466db89ab37224e5cde17",
+        "status": "succeeded",
+        "rollout": {
+          "name": "node-express-service2",
+          "status": "ready",
+          "generation": 3,
+          "observed_at": "2026-10-23T08:43:06.658954+00:00",
+          "ready_replicas": 1,
+          "desired_replicas": 1,
+          "updated_replicas": 1,
+          "available_replicas": 1,
+          "observed_generation": 3
+        },
+        "health": {
+          "path": "/healthz",
+          "status": "passed",
+          "service": "node-express-service2",
+          "observed_at": "2026-10-23T08:43:06.681217+00:00"
+        },
+        "purpose": "Genuinely automatic PR #17 merge; no manual reconcile or execute",
+        "workflow_run": 39926381824,
+        "attempt": 1,
+        "artifact_id": 12489008073,
+        "workflow_url": "https://github.com/DamiBeGud/deployflow-node-express-fixture/actions/runs/39926381824",
+        "independent_service_http": {
+          "/": {
+            "http_status": 200,
+            "release": "phase7-release-4",
+            "cdTest": "hosted-k3s-cd-20261023-pr"
+          },
+          "/api/info": {
+            "http_status": 200,
+            "release": "phase7-release-4",
+            "cdTest": "hosted-k3s-cd-20261023-pr"
+          },
+          "/healthz": {
+            "http_status": 200,
+            "status": "ok"
+          }
+        }
+      },
+      {
+        "id": "2d091feb-fc70-4822-a919-e70f02ca55e1",
+        "release_id": "0503c2d1-7c3b-4e60-9255-6906768a7242",
+        "release_digest": "9071d6bfe9f834a99d221c7b01a8ec8ca710a0b3038345dc295707b514a86dcc",
+        "source_sha": "fc51858dd58f11d05428c9bacd8340cb367a40df",
+        "baseline_sha": "6a31e8a015dfb181101b53625be344705c483d0e",
+        "kind": "rollback",
+        "previous_release_id": "e5d4c298-58ae-43a3-8e6f-ba7a83625470",
+        "rollback_target_release_id": "14bf1f82-8016-462d-9730-aa78ddad375d",
+        "image_reference": "ghcr.io/damibegud/deployflow-node-express-fixture@sha256:925c226529583d314d9909a89df051f8004e7e22982f12c64b7d72d8b4d43f67",
+        "status": "succeeded",
+        "rollout": {
+          "name": "node-express-service2",
+          "status": "ready",
+          "generation": 4,
+          "observed_at": "2026-10-23T08:50:23.550124+00:00",
+          "ready_replicas": 1,
+          "desired_replicas": 1,
+          "updated_replicas": 1,
+          "available_replicas": 1,
+          "observed_generation": 4
+        },
+        "health": {
+          "path": "/healthz",
+          "status": "passed",
+          "service": "node-express-service2",
+          "observed_at": "2026-10-23T08:50:23.571407+00:00"
+        },
+        "purpose": "Manual DeployFlow rollback creates a new release",
+        "workflow_run": 39921109263,
+        "attempt": 1,
+        "artifact_id": 12486184664,
+        "workflow_url": "https://github.com/DamiBeGud/deployflow-node-express-fixture/actions/runs/39921109263"
+      },
+      {
+        "id": "5fb36ce3-53c8-4572-98fb-9a95e833e04b",
+        "release_id": "f5f74251-6a48-4909-99d5-0ab3ab1854ef",
+        "release_digest": "0e1e5bac45e676c874e76b689b23851f8dbd958e74e6dd5bade92e42b96a683d",
+        "source_sha": "e580de3fb48868e5b089abf26c0d9d4d99b67d94",
+        "baseline_sha": "6a31e8a015dfb181101b53625be344705c483d0e",
+        "kind": "standard",
+        "previous_release_id": "0503c2d1-7c3b-4e60-9255-6906768a7242",
+        "rollback_target_release_id": null,
+        "image_reference": "ghcr.io/damibegud/deployflow-node-express-fixture@sha256:d5907185724d7c1c32a42e40143361055446bda9921577264d06660af1b31b1c",
+        "status": "succeeded",
+        "rollout": {
+          "name": "node-express-service2",
+          "status": "ready",
+          "generation": 5,
+          "observed_at": "2026-10-23T09:08:55.062683+00:00",
+          "ready_replicas": 1,
+          "desired_replicas": 1,
+          "updated_replicas": 1,
+          "available_replicas": 1,
+          "observed_generation": 5
+        },
+        "health": {
+          "path": "/healthz",
+          "status": "passed",
+          "service": "node-express-service2",
+          "observed_at": "2026-10-23T09:08:55.097174+00:00"
+        },
+        "purpose": "Genuinely automatic direct main push; no manual reconcile or execute",
+        "workflow_run": 39929481800,
+        "attempt": 1,
+        "artifact_id": 12490353222,
+        "workflow_url": "https://github.com/DamiBeGud/deployflow-node-express-fixture/actions/runs/39929481800",
+        "independent_service_http": {
+          "/": {
+            "http_status": 200,
+            "release": "phase7-release-5",
+            "cdTest": "hosted-k3s-cd-20261023-direct"
+          },
+          "/api/info": {
+            "http_status": 200,
+            "release": "phase7-release-5",
+            "cdTest": "hosted-k3s-cd-20261023-direct"
+          },
+          "/healthz": {
+            "http_status": 200,
+            "status": "ok"
+          }
+        }
+      }
+    ]
+  },
+  "webhook": {
+    "app_id": 4957845,
+    "installation_id": 162024583,
+    "url": "https://deployflow.damibegud.cloud/webhooks/github",
+    "tls_verification": true,
+    "signed_completion_deliveries": [
+      {
+        "id": 3849890403434110976,
+        "guid": "9cb0f6a0-cebd-11f1-85fc-6a456f66e132",
+        "event": "workflow_run",
+        "action": "completed",
+        "status_code": 202,
+        "delivered_at": "2026-10-23T08:42:01.273Z",
+        "repository_id": 1372078565,
+        "source_sha": "588521041c51e0a0ff36f0bb62c04faee3668dbd",
+        "run_id": 39926381824,
+        "signature_present": true
+      },
+      {
+        "id": 3849893723271913472,
+        "guid": "3641d4d0-cec1-11f1-9786-dc7982debec8",
+        "event": "workflow_run",
+        "action": "completed",
+        "status_code": 202,
+        "delivered_at": "2026-10-23T09:07:47.187Z",
+        "repository_id": 1372078565,
+        "source_sha": "e580de3fb48868e5b089abf26c0d9d4d99b67d94",
+        "run_id": 39929481800
+      }
+    ],
+    "manual_reconciliation_used_for_release4_or_release5": false
+  },
+  "platform_lineage": [
+    {
+      "receipt_id": "1639afbd91b8667dafcc21e9bf90071c7cb30e9e1f7d8fe33dcaed3d856fc95d",
+      "operation": "upgrade",
+      "status": "succeeded",
+      "public_checks": {
+        "attempt": 2,
+        "completed_at": "2026-10-23T09:03:52Z",
+        "job_id": 120332687721,
+        "run_id": 39926817561,
+        "source_sha": "a4ec32c6664158aa10696de9eb3055004e326bb4",
+        "vantage": "independent-github-runner"
+      },
+      "purpose": "Corrected bounded workflow rerun; setup acceptance",
+      "source_sha": "a4ec32c6664158aa10696de9eb3055004e326bb4",
+      "images": {
+        "api": "ghcr.io/damibegud/deployflow-backend@sha256:ef6efecfbe025fd4ac500afd48750ec79fb5a9faf8885639a2d91537931fd74a",
+        "frontend": "ghcr.io/damibegud/deployflow-frontend@sha256:78edc50b880318cb5623c3338d990dcf458310922434abc1a84edc7302ea40af",
+        "keycloak": "ghcr.io/damibegud/deployflow-keycloak@sha256:19d823cc61a9634a029a69e3c2ec9a9ba5919a95795a337631023c81aa52cddd"
+      },
+      "workflow_url": "https://github.com/DamiBeGud/deploy-flow/actions/runs/39926817561"
+    },
+    {
+      "receipt_id": "7d3c858e74b6e2d3724b4227bbaf7724f821279acf94962326228d4f3d84cfd4",
+      "operation": "upgrade",
+      "status": "succeeded",
+      "public_checks": {
+        "attempt": 1,
+        "completed_at": "2026-10-23T09:15:52Z",
+        "job_id": 120337526574,
+        "run_id": 39930290883,
+        "source_sha": "c7c9eb268b9cde544812c2390df9079009bbcca9",
+        "vantage": "independent-github-runner"
+      },
+      "purpose": "Genuine PR #5 main merge -> publication -> automatic workflow_run -> public verification -> durable success",
+      "source_sha": "c7c9eb268b9cde544812c2390df9079009bbcca9",
+      "images": {
+        "api": "ghcr.io/damibegud/deployflow-backend@sha256:14b224a113b9116d46601b321e3b74f17c69f495042f12db943203e6eec3835c",
+        "frontend": "ghcr.io/damibegud/deployflow-frontend@sha256:bcbd965d845e7edd6930db9e5b8386b14edf613deb4a12427cf324337900701f",
+        "keycloak": "ghcr.io/damibegud/deployflow-keycloak@sha256:7a5cea31e1211d474ed32aaa4044e3845c1993112bdc6acc9cf28e572362ac13"
+      },
+      "workflow_url": "https://github.com/DamiBeGud/deploy-flow/actions/runs/39930290883"
+    },
+    {
+      "receipt_id": "4a2f7033a94733ad5c5f463b25277d7bca220ed6a87dda5150779e869ff62be3",
+      "operation": "rollback",
+      "status": "succeeded",
+      "public_checks": {
+        "attempt": 1,
+        "completed_at": "2026-10-23T09:22:15Z",
+        "job_id": 120340093395,
+        "run_id": 39930989454,
+        "source_sha": "c7c9eb268b9cde544812c2390df9079009bbcca9",
+        "vantage": "independent-github-runner"
+      },
+      "purpose": "Manual platform image rollback; no schema/data restore",
+      "source_sha": "a4ec32c6664158aa10696de9eb3055004e326bb4",
+      "images": {
+        "api": "ghcr.io/damibegud/deployflow-backend@sha256:ef6efecfbe025fd4ac500afd48750ec79fb5a9faf8885639a2d91537931fd74a",
+        "frontend": "ghcr.io/damibegud/deployflow-frontend@sha256:78edc50b880318cb5623c3338d990dcf458310922434abc1a84edc7302ea40af",
+        "keycloak": "ghcr.io/damibegud/deployflow-keycloak@sha256:19d823cc61a9634a029a69e3c2ec9a9ba5919a95795a337631023c81aa52cddd"
+      },
+      "workflow_url": "https://github.com/DamiBeGud/deploy-flow/actions/runs/39930989454"
+    }
+  ],
+  "platform_replay_after_rollback": {
+    "workflow_run": 39930290883,
+    "attempt": 2,
+    "result": {
+      "reason": "No replay or redeployment; inspect original receipt for recovery",
+      "receipt_id": "7d3c858e74b6e2d3724b4227bbaf7724f821279acf94962326228d4f3d84cfd4",
+      "status": "already_admitted"
+    },
+    "conclusion": "success; public/finalization skipped because no new mutation",
+    "all_twelve_deployments_remained_at_source": "a4ec32c6664158aa10696de9eb3055004e326bb4",
+    "schema_and_pending": {
+      "schema_revision": "e4b92f7a6103",
+      "analysis": 0,
+      "analysis_runs": 0,
+      "github": 0,
+      "delivery": 0,
+      "execution": 0
+    }
+  },
+  "managed_worker_restart": {
+    "restarted": [
+      {
+        "name": "dispatcher",
+        "uid": "9a776f00-a62c-44e3-9d18-5b8af69be6e4",
+        "image": "ghcr.io/damibegud/deployflow-backend@sha256:2372ec11045b798be89917d0b9e41980743116321ebe650e8c4efb092cac6a34"
+      },
+      {
+        "name": "github-worker",
+        "uid": "c3af7049-db36-4476-a1e3-c25555f6bf4d",
+        "image": "ghcr.io/damibegud/deployflow-backend@sha256:2372ec11045b798be89917d0b9e41980743116321ebe650e8c4efb092cac6a34"
+      },
+      {
+        "name": "delivery-worker",
+        "uid": "9cba56a8-0fb7-46c8-b85c-e93049c223bb",
+        "image": "ghcr.io/damibegud/deployflow-backend@sha256:2372ec11045b798be89917d0b9e41980743116321ebe650e8c4efb092cac6a34"
+      },
+      {
+        "name": "kube-deployer",
+        "uid": "c880db9d-ce96-4cc3-a758-419c4e7caf4b",
+        "image": "ghcr.io/damibegud/deployflow-backend@sha256:2372ec11045b798be89917d0b9e41980743116321ebe650e8c4efb092cac6a34"
+      }
+    ],
+    "pending_after": {
+      "schema_revision": "e4b92f7a6103",
+      "analysis": 0,
+      "analysis_runs": 0,
+      "github": 0,
+      "delivery": 0,
+      "execution": 0
+    }
+  },
+  "managed_broker_replay": {
+    "replayed": [
+      {
+        "queue": "execution",
+        "job_id": "6b7a7bc1-fe68-49bd-8a19-5f369007dbee",
+        "message_id": "7d6b2f8a-1228-4d66-84fb-2e84d8e6e232"
+      },
+      {
+        "queue": "delivery",
+        "job_id": "129789d0-a6d0-4638-bba0-86e470da0547",
+        "message_id": "9e1e1fd5-e03d-48fe-9909-453a7df564d0"
+      },
+      {
+        "queue": "delivery",
+        "job_id": "a9ebed46-5009-42b5-8faf-42fc6006671d",
+        "message_id": "cd2b0cf0-5212-4282-a387-dcea47c7d6d3"
+      },
+      {
+        "queue": "github",
+        "job_id": "c434fa55-d954-4e73-b7e7-5c08edf283f1",
+        "message_id": "ec5b2169-be81-4e78-b117-22a8ba01b02a"
+      },
+      {
+        "queue": "github",
+        "job_id": "9e051c55-ee13-4a34-b4db-c973c68882c2",
+        "message_id": "960573b5-ade2-423e-8c44-7ee23ed15b67"
+      },
+      {
+        "queue": "github",
+        "job_id": "1eec4a3e-65ad-452f-9f6f-26e53217cee0",
+        "message_id": "febca236-9c0d-4316-9032-41ecb6d78f53"
+      }
+    ],
+    "queues_drained": true,
+    "completed_job_status_and_attempts_unchanged": true,
+    "deployment_count_before": 4,
+    "deployment_count_after": 4
+  },
+  "managed_webhook_replay_after_rollback": {
+    "redeliveries": [
+      {
+        "id": 3849892569890684928,
+        "guid": "9cb0f6a0-cebd-11f1-85fc-6a456f66e132",
+        "status_code": 202,
+        "redelivery": true,
+        "response": {
+          "accepted": true,
+          "duplicate": true
+        }
+      }
+    ],
+    "deployment_count": 4,
+    "current_rollback_deployment": "2d091feb-fc70-4822-a919-e70f02ca55e1",
+    "image": "ghcr.io/damibegud/deployflow-node-express-fixture@sha256:925c226529583d314d9909a89df051f8004e7e22982f12c64b7d72d8b4d43f67",
+    "health": {
+      "/": {
+        "http_status": 200,
+        "release": "phase7-release-3",
+        "cdTest": "hosted-k3s-cd-20261023"
+      },
+      "/api/info": {
+        "http_status": 200,
+        "release": "phase7-release-3",
+        "cdTest": "hosted-k3s-cd-20261023"
+      },
+      "/healthz": {
+        "http_status": 200,
+        "status": "ok"
+      }
+    }
+  },
+  "browser": {
+    "mode": "Real public OIDC authorization-code S256 PKCE; private temporary acceptance account; 1440x900 desktop Chromium",
+    "page_errors": 0,
+    "reload_restored_ready": true,
+    "separation_verified": "Current rollback image differs from newer historical candidate; current observation is fresh while immutable rollout snapshot is labelled historical/stale",
+    "screenshots": [
+      {
+        "path": "automatic-release5-20261023.png",
+        "sha256": "5914497052c5676208f541203b412fbf21e0b5757f28feb53e83a34106697938"
+      },
+      {
+        "path": "automatic-rollback-20261023.png",
+        "sha256": "08fb5bb43e3d18d4800e8a2dc54898456f3c8bdfbf162719d48878ca754d58c3"
+      }
+    ]
+  },
+  "identity_boundary_checks": {
+    "checks": [
+      {
+        "identity": "kube-reader",
+        "verb": "list",
+        "resource": "deployments",
+        "namespace": "deployflow-test",
+        "allowed": true
+      },
+      {
+        "identity": "kube-reader",
+        "verb": "patch",
+        "resource": "deployments",
+        "namespace": "deployflow-test",
+        "allowed": false
+      },
+      {
+        "identity": "kube-reader",
+        "verb": "get",
+        "resource": "secrets",
+        "namespace": "deployflow-test",
+        "allowed": false
+      },
+      {
+        "identity": "kube-reader",
+        "verb": "list",
+        "resource": "deployments",
+        "namespace": "default",
+        "allowed": false
+      },
+      {
+        "identity": "kube-validator",
+        "verb": "patch",
+        "resource": "deployments",
+        "namespace": "deployflow-test",
+        "allowed": true
+      },
+      {
+        "identity": "kube-validator",
+        "verb": "get",
+        "resource": "secrets",
+        "namespace": "deployflow-test",
+        "allowed": false
+      },
+      {
+        "identity": "kube-validator",
+        "verb": "patch",
+        "resource": "deployments",
+        "namespace": "default",
+        "allowed": false
+      },
+      {
+        "identity": "kube-deployer",
+        "verb": "create",
+        "resource": "deployments",
+        "namespace": "deployflow-test",
+        "allowed": true
+      },
+      {
+        "identity": "kube-deployer",
+        "verb": "delete",
+        "resource": "deployments",
+        "namespace": "deployflow-test",
+        "allowed": false
+      },
+      {
+        "identity": "kube-deployer",
+        "verb": "get",
+        "resource": "secrets",
+        "namespace": "deployflow-system",
+        "allowed": false
+      }
+    ],
+    "cleaner_absent": true
+  },
+  "unrelated_resources": {
+    "recorded_unrelated_resources": 250,
+    "changed_or_missing": [],
+    "added": [
+      [
+        "deployflow-test",
+        "ConfigMap",
+        "node-express-service2-config"
+      ],
+      [
+        "deployflow-test",
+        "Deployment",
+        "node-express-service2"
+      ],
+      [
+        "deployflow-test",
+        "Service",
+        "node-express-service2"
+      ]
+    ],
+    "only_authorized_application_additions": true,
+    "limit": "Identity/spec/data fingerprints for listed kinds; excludes Pods, transient status, Secret values and unrecorded kinds"
+  },
+  "important_failures_and_recoveries": [
+    {
+      "failure": "2026-10-22 server-to-own-origin HTTPS timeout",
+      "original_receipt": "616c5c087d8b3925cbc121f570611fd668e72ce28aec0cf63bccd395aef2ebce",
+      "original_status": "failed; immutable",
+      "verification_only_child_receipt": "e0a864f1ef2b1bfb1b3a569339018343f587f34d367443e4f17ae0360793bc0e",
+      "recovery_workflow": 39918122666,
+      "outcome": "Succeeded after independent HTTPS verification; no resource apply or original status rewrite"
+    },
+    {
+      "failure": "Executor could not reach validator under default-deny ingress",
+      "fix": "Only NetworkPolicy/allow-kube-validator added kube-deployer selector on TCP8001; no RBAC expansion",
+      "outcome": "Baseline retries progressed through monitoring to succeeded"
+    },
+    {
+      "failure": "POST Update ownership conflicted with later SSA image change",
+      "fix": "UID/resourceVersion-fenced image-only JSON patch after non-image intent and ownership validation; separate validator dry-run",
+      "outcome": "First attempt recovered through explicit release-preparation API; later two source updates genuinely automatic"
+    },
+    {
+      "failure": "Short SSH port secret caused GitHub suppression of receipt-valued job output",
+      "fix": "Port is environment variable; finalizer reads checksum-verified same-run/attempt metadata artifact",
+      "setup_workflow": 39923967280,
+      "setup_attempt": 2,
+      "setup_receipt": "93d62722b5dc31902a350123668a0a5b434ce4140fd357fadb86191086f2e2ae",
+      "outcome": "Original setup Actions finalizer failed; intended finalize protocol succeeded manually. Corrected bounded run and genuine main merge later passed all jobs"
+    }
+  ],
+  "database_and_credentials": {
+    "schema_transition": "c3a71d9e4208 -> e4b92f7a6103; additive migration under authorized maintenance",
+    "backup_validation": "Both database custom archives catalog-listed and fully read to SQL before schema/upgrade operations; current archives not restored in a disposable DB",
+    "backup_location": "Private server $HOME/.deployflow-upgrades/<receipt-or-operation>/; directory0700/files0600; not Git or Actions artifacts",
+    "restore_limit": "No live restore, downgrade or off-host disaster-recovery test. Image rollback cannot reverse future incompatible schema/data changes.",
+    "kubernetes_tokens": "Separate projected rotating reader/validator/deployer credentials; no manual TokenRequest",
+    "registry_credential_expiry": "Existing server read-only GHCR credential; expiry not reported",
+    "private_material": "SSH keys, passwords, App PEM and backups outside Git; no credential values in this evidence"
+  },
+  "tests": [
+    {
+      "cwd": "backend",
+      "command": "DF_TEST_IMAGE=sha256:47b2787a01f93371114ccbd5426ea1b4628e8b50446bb6735fe23a55ebbceb24 sh scripts/test_phase7_isolated.sh",
+      "result": "199 passed; one existing anyio deprecation warning; 20.80 seconds",
+      "isolation": "Disposable owned DB/container/network; no live GitHub/Kubernetes write credentials"
+    },
+    {
+      "cwd": ".",
+      "command": "DF_UPGRADE_TEST_POSTGRES=1 python3 -m unittest discover -s deploy/k3s -p 'test_*.py' -q",
+      "result": "103 passed, including 4 real isolated PostgreSQL tests; 4.362 seconds"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run lint; npm run build",
+      "result": "Passed"
+    },
+    {
+      "cwd": "frontend",
+      "command": "PLAYWRIGHT_BASE_URL=http://127.0.0.1:5176 npm run test:e2e -- tests/phase7-lifecycle.spec.ts tests/oidc-callback.spec.ts",
+      "result": "12 passed; mocked APIs/OIDC; separate from real hosted browser acceptance"
+    },
+    {
+      "cwd": "Isolated fixture worktree",
+      "command": "npm test",
+      "result": "3 passed for each source marker update"
+    },
+    {
+      "cwd": ".",
+      "command": "Ruff changed Python; actionlint -shellcheck= on four workflows; offline migration SQL; git diff --check",
+      "result": "Passed; ShellCheck not installed; SQL rendering network disabled"
+    }
+  ],
+  "limits_and_followups": [
+    "Cleanup disabled and unproven; no cleaner identity or destructive inventory deletion test.",
+    "External managed-application DNS/Ingress/TLS not applicable: selected fixture is internal-only. Platform HTTPS was verified independently.",
+    "Only Node deployment contracts supported; conservative compatibility may require reassessment for real source/dependency/runtime/port/health/config changes.",
+    "Root automatic policy expires 2026-12-22T08:00:00Z. Protected controller/workflow/infra/dependency/schema changes require fresh review; stale policy safely blocks.",
+    "Single-node local-path storage; same-server backups; no HA/off-host restore proof.",
+    "Temporary acceptance user must be disabled after final verification; original operator account unchanged.",
+    "Two high npm audit findings in existing development/build dependencies (source-map-js and Vite); separate dependency update, not an inferred production exploit.",
+    "Planning sibling checkout was read-only and its old checkpoint is superseded for this hosted environment by this record.",
+    "Original dirty fixture checkout preserved; isolated worktree used for new commits. Preexisting fixture PRs #14 and #16 unchanged."
+  ],
+  "documentation_verification": {
+    "relative_links_and_anchors": 96,
+    "errors": 0,
+    "all_evidence_json_parsed": true,
+    "diff_check": "Passed",
+    "credentials_scan": "Gitleaks8.30.1 redacted current nonignored public snapshot; nine reviewed false positives (eight unchanged synthetic-key/hash, one public schema revision in prose); no credential findings; not a zero-raw-findings claim"
+  }
+}

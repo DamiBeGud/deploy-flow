@@ -23,9 +23,9 @@ webhooks, eligible CI, compatible source changes, and deployment authorization.
 DeployFlow itself has a separate [platform upgrade flow](deploy/k3s/automation.md#7-upgrade-the-installed-platform-after-merging-main).
 An optional [automatic main-to-cluster path](deploy/k3s/automation.md#8-automatic-platform-and-managed-application-deployment)
 now supports publication, policy admission, image rollout, independent public
-verification and durable completion. Its activation gates default off. Automatic
-platform authorization and each application's deployment policy are separate;
-merging this implementation does not enable either.
+verification and durable completion. Its activation gates default off for new
+installations. The selected hosted installation has automatic platform upgrades
+enabled; each managed application's deployment policy remains separate.
 
 ## Fresh local development
 
@@ -72,9 +72,12 @@ deliberately configure the desired mode in the ignored `backend/.env`.
 
 ## Maturity
 
-The last recorded local-k3s acceptance demonstrated a healthy baseline release,
-durable success, and matching UI. Real subsequent automatic deployment, manual
-rollback, and worker replay after rollback remain unproven. **Phase 7 is not
-complete.** See the dated evidence record for the exact environment and limits.
+On **2026-10-23**, hosted acceptance passed for automatic platform upgrades and
+one internal Node fixture: reviewed baseline, automatic PR-merge and direct-push
+updates, healthy durable completion, real signed-in UI, rollback, and safe replay.
+See the [acceptance record](backend/ops/phase7-operational-closure.md) for exact
+sources, images, policies and limits. Cleanup is disabled and unproven. Conservative
+compatibility rules, single-node storage and policy expiry still apply; this is
+not a general production-readiness claim.
 The Compose stack and local Keycloak profile are development infrastructure;
 production hosting is not supplied by the frontend dev server.

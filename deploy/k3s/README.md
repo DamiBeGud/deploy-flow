@@ -1,65 +1,46 @@
 # Hosting DeployFlow in k3s
 
-**Public UI/API/OIDC endpoints verified; full login and application-release acceptance pending.** These resources host
-the platform itself. Managed applications remain in `deployflow-test`.
-All live actions require the [operational approval boundaries](../../backend/ops/README.md#approval-boundaries).
+**Hosted acceptance passed on 2026-10-23** for public HTTPS, real OIDC sign-in,
+automatic main-to-cluster platform upgrades, platform rollback/replay, and one
+managed application's automatic updates, rollback, worker restart/replay and UI.
+These resources host the platform itself; managed applications use `deployflow-test`.
+See the [current acceptance record](../../backend/ops/phase7-operational-closure.md)
+for immutable identifiers, screenshots, failed attempts and recovery outcomes.
 
-**Latest capability review (19:33 UTC):** two applications now exist and one
-preflight-passed release waits for execution. Both feature gates remain false;
-no application policy/execution job exists. The separate cleanup identity/worker
-and exact activation patches are prepared offline, not applied. Webhooks still
-target the old receiver and fail with 502; main pushes do not upgrade this
-populated platform. Follow the [activation and upgrade limits](automation.md#6-enable-execution-and-cleanup-on-the-installed-platform)
-and [review evidence](../../backend/ops/evidence/hosting-capabilities-review-20261022.json).
+Current hosted configuration at that checkpoint:
 
-**Latest platform upgrade (2026-10-22): images applied; workflow verification failed.**
-PR #1 merged and GitHub publication/preview passed. The approved workflow replaced
-all twelve platform Deployment images. Post-failure read-only checks verified
-ready/available replicas, running digests, unchanged schemas/protected resources,
-and public HTTPS from the operator computer. The server itself times out connecting
-to its public endpoint, so the durable receipt remains failed. No automatic rollback
-or success override occurred. Do not blindly rerun apply. See
-[current upgrade evidence](../../backend/ops/evidence/hosting-upgrade-20261022.json)
-and the [upgrade/recovery guide](automation.md#7-upgrade-the-installed-platform-after-merging-main).
-Explicit verification recovery needs a reviewed implementation and new scoped
-approval; rollback remains separately approved. Feature activation and application
-CD acceptance remain pending.
+- Application schema `e4b92f7a6103`; execution enabled; cleanup disabled and absent.
+- Automatic platform publication and upgrades enabled. A pinned root-owned
+  controller and future-compatible policy authorize unchanged deployment contracts
+  until **2026-12-22 08:00 UTC**; protected changes need fresh review.
+- Only `node-express-service2` authorizes future compatible application commits;
+  other registrations remain disabled. No global automatic-application switch exists.
+- GitHub App notifications reach the signed hosted webhook. Both a real fixture
+  PR merge and a direct main push produced healthy releases without reconciliation.
+- Single-node local-path storage and same-server backups remain availability limits;
+  current backup checks are not a full disaster-restore rehearsal.
 
-The installation observations below predate that capability review. The explicitly
-approved 34-object foundation was applied on 2026-10-22.
-Three new PVCs are Bound. After separate approval, seven runtime/bootstrap Secrets
-were created; the three data-service Pods are Ready, authenticated SQL/Redis checks
-pass, and the two empty database backups passed isolated restoration. Execution/
-cleanup remain disabled. The separately approved migration Job completed and
-PostgreSQL stores `c3a71d9e4208` (29 tables; zero application/job/policy work).
-The separately approved identity setup Job completed; account/role/PKCE metadata
-was verified without querying password hashes. After separate approval, all twelve
-platform Deployments reached `1/1` Ready and available with zero restarts on
-2026-10-22. API health, frontend API proxy, provider discovery, real MCP reader
-observations and credential-denial checks passed. After separate approval, the
-hostname switched to the real platform at **18:21 UTC**. Let's Encrypt certificate
-`deployflow-tls` is Ready (expires 2027-01-20); public HTTPS UI/API/discovery/JWKS,
-401 for unauthenticated application reads and 404 for identity admin/master paths
-passed. Desktop Chromium rendered the UI and opened the actual S256 PKCE login
-form without console/request errors or credentials submitted. The API Pod can
-fetch public JWKS. Execution/cleanup remain false; no application/job/policy work
-exists. Of 111 earlier unrelated resource records, 110 remain unchanged and the
-approved old mockup Ingress was removed. Full first login, authenticated API/SSE,
-signed webhook and application-release acceptance remain pending. Current results:
-[foundation evidence](../../backend/ops/evidence/hosting-foundation-20261022.json) and
-[data-service evidence](../../backend/ops/evidence/hosting-data-services-20261022.json) and
-[migration evidence](../../backend/ops/evidence/hosting-migration-20261022.json) and
-[identity evidence](../../backend/ops/evidence/hosting-identity-20261022.json) and
-[workload evidence](../../backend/ops/evidence/hosting-workloads-20261022.json) and
-[public hosting evidence](../../backend/ops/evidence/hosting-public-20261022.json).
+Follow the [installation/upgrade guide](automation.md) for reusable procedures.
+Live operations require [scoped authority](../../backend/ops/README.md#approval-boundaries);
+this dated record grants none.
 
-For GitHub environment settings, CI/publication, stage-by-stage installation and
-the hostname reversal procedure, follow the [installation automation guide](automation.md).
-Pushes run checks by default. Optional automatic publication/upgrades need the
-[separate activation procedure](automation.md#8-automatic-platform-and-managed-application-deployment);
-its gates and server policy remain off until explicitly approved. Installation initially used main `54f0498`. Publication and the first hosted-runner
-upgrade attempt used merged main `9ae460d7`; its final verification failed as
-recorded above. A complete successful hosted-runner upgrade remains unproven.
+### Historical fresh installation — 2026-10-22
+
+The fresh foundation, three PVCs, seven private runtime/bootstrap credential objects,
+`c3a71d9e4208` migration, identity setup and twelve platform Deployments passed
+staged checks before the hostname switched at **18:21 UTC**. Certificate
+`deployflow-tls` was Ready, expiring 2027-01-20. Execution and cleanup were both
+false at installation. The first image-upgrade workflow later applied its images
+but failed its server-to-own-public-origin HTTPS check; its failed receipt is
+preserved and was resolved by a separate verification-only child on 2026-10-23.
+This is historical installation evidence, not the current flag/schema state:
+[foundation](../../backend/ops/evidence/hosting-foundation-20261022.json),
+[data services](../../backend/ops/evidence/hosting-data-services-20261022.json),
+[migration](../../backend/ops/evidence/hosting-migration-20261022.json),
+[identity](../../backend/ops/evidence/hosting-identity-20261022.json),
+[workloads](../../backend/ops/evidence/hosting-workloads-20261022.json),
+[public route](../../backend/ops/evidence/hosting-public-20261022.json),
+[first upgrade failure](../../backend/ops/evidence/hosting-upgrade-20261022.json).
 
 ## Selected installation
 

@@ -177,12 +177,12 @@ rechecked before preparation, queueing and mutation. Preparation may continue wi
 an explicitly selected policy whose execution is disabled.
 
 Migration `e4b92f7a6103` adds the non-null policy selector with default v1. It does
-not enable policies or clear source bounds. It is prepared and isolated-tested,
-**not applied to the hosted database**. The hosted renderer now expects this
-revision; image-only upgrades refuse the live older schema until a separately
-reviewed migration/compatible fallback is approved. Recover the existing failed
-platform receipt before any schema change; see the
-[activation sequence](../deploy/k3s/automation.md#8-automatic-platform-and-managed-application-deployment).
+not enable policies or clear source bounds. It passed isolated migration tests
+and was applied to the selected hosted database on 2026-10-23 after backup and
+verification-only recovery of the earlier failed platform operation. Image-only
+upgrades require matching schema; they never run migrations. See the
+[activation sequence](../deploy/k3s/automation.md#8-automatic-platform-and-managed-application-deployment)
+and [dated acceptance](ops/phase7-operational-closure.md).
 
 
 Ordering is current branch head and forward ancestry, serialized per application.
@@ -242,8 +242,8 @@ DF_TEST_IMAGE=deployflow-backend:docs-test sh scripts/test_phase7_isolated.sh
 DF_TEST_IMAGE=deployflow-backend:docs-test sh scripts/test_phase7_isolated.sh   ruff check app tests scripts migrations
 ~~~
 
-The historical test results and known lint issue are in the
-[acceptance record](ops/phase7-operational-closure.md#recorded-tests).
+Recorded test commands and results are in the
+[acceptance record](ops/phase7-operational-closure.md#checks-run-for-the-final-implementation).
 The `tests` Compose profile uses the normal project's PostgreSQL server with a
 separate test database; it is not the same isolation as this runner.
 

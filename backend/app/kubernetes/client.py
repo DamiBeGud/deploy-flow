@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from contextlib import contextmanager
@@ -13,6 +14,65 @@ from kubernetes import config as kube_config
 from kubernetes.client.exceptions import ApiException
 
 NAMESPACE = "deployflow-test"
+DEPLOYMENT_FIELD_MANAGER = "deployflow-executor"
+
+
+def image_update_patch(api, item: dict, existing) -> list[dict] | None:
+    """Bridge POST-created Deployment ownership without forcing SSA conflicts.
+
+    Compatible source releases change only the image. Preserve defaults/foreign
+    fields; reject other intended changes or foreign image ownership. The validator
+    uses this same patch with dry_run=All under its separate identity.
+    """
+    if item["kind"] != "Deployment":
+        return None
+    owners = []
+    for entry in getattr(existing.metadata, "managed_fields", None) or []:
+        fields = entry.fields_v1 or {}
+        containers = fields.get("f:spec", {}).get("f:template", {}).get("f:spec", {}).get("f:containers", {})
+        if any("f:image" in value for key, value in containers.items() if key.startswith("k:")):
+            owners.append((entry.manager, entry.operation))
+    if (DEPLOYMENT_FIELD_MANAGER, "Update") not in owners:
+        return None
+    if any(manager != DEPLOYMENT_FIELD_MANAGER for manager, _ in owners):
+        raise ClusterError("resource_image_ownership_conflict")
+    wire = api.sanitize_for_serialization(existing)
+
+    def project(current, desired):
+        if isinstance(desired, dict):
+            if not isinstance(current, dict) or set(desired) - set(current):
+                raise ClusterError("resource_requirements_need_review")
+            return {key: project(current[key], value) for key, value in desired.items()}
+        if isinstance(desired, list):
+            if not isinstance(current, list) or len(current) != len(desired):
+                raise ClusterError("resource_requirements_need_review")
+            return [project(a, b) for a, b in zip(current, desired)]
+        return current
+
+    desired = copy.deepcopy(item["spec"])
+    for container in desired["template"]["spec"]["containers"]:
+        if container.get("env") == []:
+            container.pop("env")  # The API omits this known empty-list default.
+    current = project(wire["spec"], desired)
+    changes = []
+    for index, container in enumerate(desired["template"]["spec"]["containers"]):
+        previous = current["template"]["spec"]["containers"][index]
+        if previous["name"] != container["name"]:
+            raise ClusterError("resource_requirements_need_review")
+        if previous["image"] != container["image"]:
+            changes.append({"op": "replace", "path": f"/spec/template/spec/containers/{index}/image", "value": container["image"]})
+        previous["image"] = container["image"]
+    if current != desired:
+        raise ClusterError("resource_requirements_need_review")
+    for key in ("labels", "annotations"):
+        expected = item["metadata"].get(key, {})
+        if project(wire["metadata"].get(key, {}), expected) != expected:
+            raise ClusterError("resource_requirements_need_review")
+    return [
+        {"op": "test", "path": "/metadata/uid", "value": existing.metadata.uid},
+        {"op": "test", "path": "/metadata/resourceVersion", "value": existing.metadata.resource_version},
+        *changes,
+    ]
 
 
 class ClusterError(Exception):
@@ -214,19 +274,23 @@ def validate_dry_run(manifests: list[dict], application_id: str) -> dict:
                 except ApiException as exc:
                     if exc.status != 404:
                         raise
+                    existing = None
                 else:
                     labels = (existing.metadata.labels or {})
                     if labels.get("app.kubernetes.io/instance") != application_id:
                         raise ClusterError("resource_ownership_conflict")
+                    if labels.get("app.kubernetes.io/managed-by") != "deployflow":
+                        raise ClusterError("resource_ownership_conflict")
+                patch = image_update_patch(api, item, existing) if existing is not None else None
                 try:
                     getattr(instance, patch_method)(
                         name,
                         NAMESPACE,
-                        item,
+                        patch if patch is not None else item,
                         dry_run="All",
-                        field_manager="deployflow-validator",
+                        field_manager=DEPLOYMENT_FIELD_MANAGER,
                         field_validation="Strict",
-                        _content_type="application/apply-patch+yaml",
+                        _content_type="application/json-patch+json" if patch is not None else "application/apply-patch+yaml",
                         _request_timeout=8,
                     )
                 except ApiException as exc:

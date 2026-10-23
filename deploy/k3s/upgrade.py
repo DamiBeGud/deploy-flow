@@ -134,6 +134,7 @@ def main():
         print("Live flags preserved:", json.dumps(plan["before"]["flags"], sort_keys=True))
         print("Observed Pod flags:", json.dumps(plan["before"].get("runtime_flags", {}), sort_keys=True))
         print("Application policies preserved:", json.dumps(plan["before"]["application_policies"], sort_keys=True))
+        print("Retained non-executing preparation results:", json.dumps(plan["before"].get("retained_blocked_preparations", []), sort_keys=True))
         for change in plan.get("changes", []):
             print("Deployment", change["name"], "UID", change["uid"], "replicas", change["replicas"])
             print("  From:", json.dumps(change["from_images"], sort_keys=True))

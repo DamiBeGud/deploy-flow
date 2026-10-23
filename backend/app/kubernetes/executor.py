@@ -7,7 +7,14 @@ import json
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 
-from app.kubernetes.client import NAMESPACE, ClusterError, _api_client, _failure
+from app.kubernetes.client import (
+    DEPLOYMENT_FIELD_MANAGER,
+    NAMESPACE,
+    ClusterError,
+    _api_client,
+    _failure,
+    image_update_patch,
+)
 
 _METHODS = {
     "ConfigMap": (client.CoreV1Api, "read_namespaced_config_map", "create_namespaced_config_map", "patch_namespaced_config_map"),
@@ -86,7 +93,7 @@ def apply_owned(item: dict, application_id: str, expected_uid: str | None = None
                 if expected_uid:
                     raise ClusterError("resource_disappeared")
                 result = getattr(instance, create_method)(
-                    NAMESPACE, item, field_manager="deployflow-executor", field_validation="Strict",
+                    NAMESPACE, item, field_manager=DEPLOYMENT_FIELD_MANAGER, field_validation="Strict",
                     _request_timeout=8,
                 )
             else:
@@ -100,11 +107,13 @@ def apply_owned(item: dict, application_id: str, expected_uid: str | None = None
                     **item["metadata"], "uid": existing.metadata.uid,
                     "resourceVersion": existing.metadata.resource_version,
                 }}
-                result = getattr(instance, patch_method)(
-                    name, NAMESPACE, body, field_manager="deployflow-executor", force=False,
-                    field_validation="Strict", _content_type="application/apply-patch+yaml",
-                    _request_timeout=8,
-                )
+                patch = image_update_patch(api, item, existing)
+                options = {"field_manager": DEPLOYMENT_FIELD_MANAGER, "field_validation": "Strict", "_request_timeout": 8}
+                if patch is None:
+                    options.update(force=False, _content_type="application/apply-patch+yaml")
+                else:
+                    options.update(_content_type="application/json-patch+json")
+                result = getattr(instance, patch_method)(name, NAMESPACE, patch if patch is not None else body, **options)
             return {"kind": kind, "name": name, "uid": result.metadata.uid,
                     "generation": result.metadata.generation or 1}
     except ApiException as exc:

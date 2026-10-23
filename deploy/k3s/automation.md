@@ -428,7 +428,11 @@ Ordinary upgrade also refuses a ConfigMap flag change that was not consistently
 loaded by its existing consumers; capability activation needs its own review.
 
 Apply refuses pending/running/blocked execution work and active analysis/GitHub/
-delivery jobs. It requires identical application schema revision and Keycloak
+delivery jobs. An unleased blocked **prepare** job with no DeploymentRun is a retained
+non-executing result, listed in preview; it remains blocked through worker restart
+and requires the product's explicit preparation-retry API. Blocked preflights,
+partial deployments, leased jobs and unknown states still prevent upgrade. No
+job/status field is rewritten to clear a maintenance guard. It requires identical application schema revision and Keycloak
 version. No automatic migration, database restore, identity import or account reset
 is implemented. Publish-time checks verify the identity image's actual version;
 registry checks bind allowed private repositories, exact index bytes and amd64
@@ -567,7 +571,9 @@ verification plan using that pending recovery receipt as the next origin. Rollba
    protect a broad key from a main workflow that can select its environment.
 5. After exact approval, install a root-owned controller checkout at
    `/opt/deployflow-platform/controller/`, preserving repository-relative paths.
-   Include all files in `automatic.PROTECTED_FILES`; `automatic.py` imports the
+   Include all files in `automatic.PROTECTED_FILES` and the public `deploy/k3s`
+   modules it imports; retain the referenced public realm template under
+   `backend/ops/local-oidc/`. `automatic.py` imports the
    trusted modules from that checkout. Directories must be root-owned and not
    group/world writable; runtime Python files are root-owned 0644. The SSH account
    must not be able to replace the checkout. Do not install candidate scripts

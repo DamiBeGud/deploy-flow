@@ -567,7 +567,9 @@ verification plan using that pending recovery receipt as the next origin. Rollba
    protect a broad key from a main workflow that can select its environment.
 5. After exact approval, install a root-owned controller checkout at
    `/opt/deployflow-platform/controller/`, preserving repository-relative paths.
-   Include all files in `automatic.PROTECTED_FILES`; `automatic.py` imports the
+   Include all files in `automatic.PROTECTED_FILES` and the public `deploy/k3s`
+   modules it imports; retain the referenced public realm template under
+   `backend/ops/local-oidc/`. `automatic.py` imports the
    trusted modules from that checkout. Directories must be root-owned and not
    group/world writable; runtime Python files are root-owned 0644. The SSH account
    must not be able to replace the checkout. Do not install candidate scripts

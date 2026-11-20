@@ -15,6 +15,7 @@ from app.bootstrap.contracts import (
     IMAGE_BINDING_NAME,
     INFRASTRUCTURE_PLAN_SCHEMA_VERSION,
 )
+from app.bootstrap.node_runtime import select_node_runtime
 
 MANAGED_PATHS = {
     "Dockerfile",
@@ -155,8 +156,14 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
                 }
             )
 
+    try:
+        node_image, node_version = select_node_runtime(
+            assessment.get("runtime", {}).get("version"), profile["node_base_image"]
+        )
+    except ValueError as exc:
+        raise PlanError(str(exc)) from exc
     docker_lines = [
-            f"FROM {profile['node_base_image']}",
+        f"FROM {node_image}",
             "WORKDIR /app",
             "COPY package.json package-lock.json ./",
             f"RUN {json.dumps(install)}",
@@ -182,7 +189,7 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     )
     workflow_steps = [
         {"uses": profile["checkout_action"]},
-        {"uses": profile["setup_node_action"], "with": {"node-version": "20", "cache": "npm"}},
+        {"uses": profile["setup_node_action"], "with": {"node-version": node_version, "cache": "npm"}},
         {"run": " ".join(install)},
     ]
     if test:
@@ -376,6 +383,7 @@ PY"""
             "registry",
             "namespace",
             "selector-port-consistency",
+            "node-runtime-compatibility",
         ],
         "provisional_image": f"{image}:{image_tag}",
         "image_binding": {

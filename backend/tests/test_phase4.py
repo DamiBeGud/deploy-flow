@@ -171,6 +171,44 @@ def test_node_image_has_verified_numeric_non_root_user():
     assert deployment["spec"]["template"]["spec"]["securityContext"]["runAsNonRoot"] is True
 
 
+@pytest.mark.parametrize(
+    ("declaration", "expected"),
+    [
+        (None, "20"),
+        (">=20", "20"),
+        (">=22 <26", "22"),
+        ("^22.0.0 || 24.x", "22"),
+        ("22 - 24", "22"),
+        (">22.x <25", "24"),
+        ("24", "24"),
+    ],
+)
+def test_bundle_uses_same_compatible_node_version_in_docker_and_ci(declaration, expected):
+    analysis = assessment()
+    analysis["runtime"] = {"version": declaration}
+    bundle = render(analysis, intent(), profile())
+    assert bundle.files["Dockerfile"].splitlines()[0] == f"FROM node:{expected}-bookworm-slim"
+    jobs = yaml.safe_load(bundle.files[".github/workflows/deployflow.yml"])["jobs"]
+    setup = next(step for step in jobs["test"]["steps"] if step.get("uses") == "actions/setup-node@v4")
+    assert setup["with"]["node-version"] == expected
+
+
+@pytest.mark.parametrize("declaration", [">=26", ">=22.12 <23", "22.0.0-rc.1", "latest"])
+def test_rejects_unavailable_or_unsupported_node_range(declaration):
+    analysis = assessment()
+    analysis["runtime"] = {"version": declaration}
+    with pytest.raises(PlanError, match=r"engines\.node"):
+        render(analysis, intent(), profile())
+
+
+def test_explicit_patch_profile_can_satisfy_a_narrow_range():
+    analysis = assessment()
+    analysis["runtime"] = {"version": ">=22.12 <23"}
+    bundle = render(analysis, intent(), {**profile(), "node_base_image": "node:22.22.0-bookworm-slim"})
+    assert bundle.files["Dockerfile"].startswith("FROM node:22.22.0-bookworm-slim\n")
+    assert "node-version: 22.22.0" in bundle.files[".github/workflows/deployflow.yml"]
+
+
 def test_config_change_rolls_pods_without_changing_image():
     original = render(assessment(), intent(), profile())
     changed_intent = copy.deepcopy(intent())

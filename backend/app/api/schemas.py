@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.analysis.contracts import CommandArgument
 from app.bootstrap.contracts import (
     BUILD_SPECIFICATION_SCHEMA_VERSION,
     DEPLOYMENT_INTENT_SCHEMA_VERSION,
@@ -124,10 +125,12 @@ class BuildSpecification(StrictModel):
     branch: str = Field(min_length=1, max_length=255)
     image: str = Field(min_length=3, max_length=255)
     build_context: Literal["."] = "."
-    install_command: list[str] = Field(min_length=1, max_length=8)
-    test_command: list[str] | None = Field(default=None, max_length=8)
-    build_command: list[str] | None = Field(default=None, max_length=8)
-    start_command: list[str] = Field(min_length=1, max_length=8)
+    # A draft may leave unresolved commands empty. The renderer requires them
+    # before generating executable artifacts.
+    install_command: list[CommandArgument] = Field(max_length=8)
+    test_command: list[CommandArgument] | None = Field(default=None, max_length=8)
+    build_command: list[CommandArgument] | None = Field(default=None, max_length=8)
+    start_command: list[CommandArgument] = Field(max_length=8)
 
     @field_validator("branch")
     @classmethod

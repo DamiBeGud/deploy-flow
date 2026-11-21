@@ -23,7 +23,12 @@ class RepositoryTools:
         relative = candidate.relative_to(self.root)
         if any(part in IGNORED or part == ".git" for part in relative.parts):
             raise ValueError("path_denied")
-        if candidate.name in SENSITIVE or candidate.suffix in {".pem", ".key"}:
+        if (
+            candidate.name in SENSITIVE
+            or any(part.lower().startswith((".env.", ".env-")) for part in relative.parts)
+            or candidate.name.lower() in {".npmrc", ".netrc", "kubeconfig", "id_ed25519"}
+            or candidate.suffix.lower() in {".pem", ".key", ".p12", ".pfx", ".jks"}
+        ):
             raise ValueError("path_denied")
         return candidate
 

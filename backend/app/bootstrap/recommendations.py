@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 
+from app.analysis.command_inference import (
+    PHASE_FIELDS,
+    command_blocker,
+    command_inference,
+    scanner_commands,
+)
 from app.bootstrap.contracts import (
     BUILD_SPECIFICATION_SCHEMA_VERSION,
     DEPLOYMENT_INTENT_SCHEMA_VERSION,
@@ -31,15 +38,17 @@ def resolve_field_recommendations(intent: dict, recommendations: dict[str, dict]
         item["effective_value"] = effective
         item["overridden"] = effective != item["recommended_value"]
         item["origin"] = "user_supplied" if item["overridden"] else recommendation_origin
+        if "selector" in item:
+            item["recommendation_selector"] = item.get("recommendation_selector", item["selector"])
+            item["selector"] = "user" if item["overridden"] else item["recommendation_selector"]
         resolved[field_path] = item
     return resolved
 
 
 def recommend(assessment: dict, profile: dict, revision: str, assessment_version: int) -> dict:
     review = assessment.get("review", {})
-    build = assessment.get("build", {})
     workflow = assessment.get("workflow", {})
-    runtime = assessment.get("runtime", {})
+    family = review.get("runtime") or "unknown"
     configuration = assessment.get("configuration", {})
     variables = sorted(
         set(
@@ -68,7 +77,9 @@ def recommend(assessment: dict, profile: dict, revision: str, assessment_version
         return {"file_path": source.get("file_path"), "line_start": source.get("line_start")}
 
     def configuration_item(name: str) -> dict | None:
-        if name == "PORT" or any(marker in name for marker in secret_markers):
+        if name in {"PORT", "DATABASE_URL", "REDIS_URL", "CELERY_BROKER_URL"} or any(
+            marker in name for marker in secret_markers
+        ):
             return None
         finding = next(
             (
@@ -111,14 +122,32 @@ def recommend(assessment: dict, profile: dict, revision: str, assessment_version
 
     application_configuration = [item for name in variables if (item := configuration_item(name))]
     evidence = "repository evidence" if assessment.get("evidence") else "Kubernetes policy default"
+    repository = assessment.get("repository", {})
+    slug = "/".join(str(repository.get(key) or "") for key in ("owner", "name")).lower()
+    registry = profile.get("registry", "").rstrip("/")
+    repository_image = family in {"python", "ruby", "java"} and bool(
+        re.fullmatch(r"[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*", slug)
+    ) and bool(registry)
+    image = f"{registry}/{slug.rsplit('/', 1)[1]}" if repository_image and "/" in registry else (
+        f"{registry}/{slug}" if repository_image else profile["default_image"]
+    )
+    inference = command_inference(assessment)
+    resolutions = inference.get("commands", {})
+    commands = {
+        field: text.split() if text else None for field, text in scanner_commands(assessment).items()
+    }
+    for phase, resolution in resolutions.items():
+        commands[PHASE_FIELDS[phase]] = resolution.get("argv")
+    port = inference.get("port") or review.get("port")
+    health = (inference.get("health") or {}).get("path") or review.get("health_path")
     intent = {
         "schema_version": DEPLOYMENT_INTENT_SCHEMA_VERSION,
         "version": 0,
         "assessment_version": assessment_version,
         "environment_profile_id": profile["id"],
         "connectivity": {
-            "port": review.get("port") or 3000,
-            "health_path": review.get("health_path") or "/healthz",
+            "port": port or 3000,
+            "health_path": health or "/healthz",
             "replicas": 1,
             "resources": {
                 "requests": {"cpu": "100m", "memory": "128Mi"},
@@ -140,22 +169,16 @@ def recommend(assessment: dict, profile: dict, revision: str, assessment_version
         "build": {
             "schema_version": BUILD_SPECIFICATION_SCHEMA_VERSION,
             "branch": revision,
-            "image": profile["default_image"],
+            "image": image,
             "build_context": ".",
-            "install_command": (build.get("install_command") or "npm ci").split(),
-            "test_command": (workflow.get("test_command") or "npm test").split(),
-            "build_command": (workflow.get("build_command") or "").split() or None,
-            "start_command": (runtime.get("command") or "npm start").split(),
+            "install_command": commands["install_command"] or [],
+            "test_command": commands["test_command"],
+            "build_command": commands["build_command"],
+            "start_command": commands["start_command"] or [],
         },
     }
-    port_from_repository = bool(review.get("port"))
-    health_from_repository = bool(review.get("health_path"))
-    command_evidence = {
-        "install_command": bool(build.get("install_command")),
-        "test_command": bool(workflow.get("test_command")),
-        "build_command": bool(workflow.get("build_command")),
-        "start_command": bool(runtime.get("command")),
-    }
+    port_from_repository = bool(port)
+    health_from_repository = bool(health)
     field_recommendations = {
         "connectivity.port": {
             "recommended_value": intent["connectivity"]["port"],
@@ -226,30 +249,76 @@ def recommend(assessment: dict, profile: dict, revision: str, assessment_version
             "evidence": None,
         },
         "build.image": {
-            "recommended_value": profile["default_image"],
+            "recommended_value": image,
             "origin": "policy_default",
-            "source": "Kubernetes environment profile",
+            "source": "Allowed registry and analyzed repository" if repository_image else "Kubernetes environment profile",
             "confidence": 1.0,
             "explanation": "Allowlisted container registry and image repository for this environment.",
             "evidence": None,
         },
     }
-    for command_name in ("install_command", "test_command", "build_command", "start_command"):
-        from_repository = command_evidence[command_name]
+    if inference.get("port") and (entry := resolutions["start"]["selected"]):
+        field_recommendations["connectivity.port"].update(
+            source="Agent recommendation from production bind",
+            explanation="The Service port must match the launcher bind.",
+            evidence=entry["source"],
+            evidence_ids=entry["candidate"]["evidence_ids"],
+            selector="agent",
+        )
+    if entry := inference.get("health"):
+        field_recommendations["connectivity.health_path"].update(
+            source="Agent recommendation from application route",
+            evidence=entry["source"],
+            evidence_ids=entry["evidence_ids"],
+            selector="agent",
+        )
+    for phase, command_name in PHASE_FIELDS.items():
+        from_repository = bool(commands[command_name])
         category = {
             "install_command": "workflow.install_command",
             "test_command": "workflow.test_command",
-            "build_command": "build.command",
+            "build_command": "workflow.build_command",
             "start_command": "runtime.command",
         }[command_name]
-        field_recommendations[f"build.{command_name}"] = {
+        recommendation = {
             "recommended_value": intent["build"][command_name],
             "origin": "inferred" if from_repository else "policy_default",
-            "source": "repository evidence" if from_repository else "supported Node.js default",
-            "confidence": 0.95 if from_repository else 0.6,
-            "explanation": f"Reviewed {command_name.replace('_', ' ')} represented as an argument array.",
+            "source": "repository evidence" if from_repository else "No command detected",
+            "confidence": 0.95 if from_repository else 0,
+            "explanation": (
+                f"Source-backed {command_name.replace('_', ' ')}."
+                if from_repository else "Review this field if the application requires this command."
+            ),
             "evidence": finding_evidence(category),
         }
+        if resolution := resolutions.get(phase):
+            selected = resolution.get("selected")
+            recommendation.update(
+                selector=resolution["selector"],
+                status=resolution["status"],
+                source=(
+                    "Agent recommendation from repository declaration" if selected
+                    else "Scanner convention" if resolution["selector"] == "scanner"
+                    else "Review required" if resolution["status"] != "missing" or phase != "build"
+                    else "No optional build detected"
+                ),
+                explanation=resolution["reason"],
+                alternatives=[
+                    {
+                        "argv": item["candidate"]["argv"],
+                        "context": item["candidate"]["context"],
+                        "evidence": item["source"],
+                        "reason": item["reason"],
+                    }
+                    for item in resolution["alternatives"]
+                ],
+            )
+            if selected:
+                recommendation.update(
+                    evidence=selected["source"],
+                    evidence_ids=selected["candidate"]["evidence_ids"],
+                )
+        field_recommendations[f"build.{command_name}"] = recommendation
     for item in application_configuration:
         field_recommendations[f"connectivity.environment.{item['name']}"] = {
             "recommended_value": item["recommended_value"],
@@ -260,20 +329,41 @@ def recommend(assessment: dict, profile: dict, revision: str, assessment_version
             "evidence": item["evidence"],
         }
     intent["field_recommendations"] = resolve_field_recommendations(intent, field_recommendations)
+    generation_blocker = None
+    if family == "ruby":
+        generation_blocker = (
+            "Rails commands were detected. Deployment requires approved database and secret "
+            "references and a migration procedure for this target."
+        )
+        if workflow.get("migration_command") == "bundle exec rails db:migrate":
+            generation_blocker += " Source migration command: bundle exec rails db:migrate."
+    elif family not in {"nodejs", "python", "java"}:
+        generation_blocker = next(
+            iter(assessment.get("unknowns", [])), "No supported runtime was detected."
+        )
+    elif family != "nodejs" and (not port_from_repository or not health_from_repository):
+        generation_blocker = "Bundle generation needs a source-backed service port and health route."
+    elif family != "nodejs" and (
+        configuration.get("required_variables")
+        or assessment.get("dependencies", {}).get("detected_services")
+    ):
+        generation_blocker = "Detected service dependencies need approved configuration bindings."
+    generation_blocker = generation_blocker or command_blocker(inference)
     return {
         "intent": intent,
+        "generation_blocker": generation_blocker,
         "recommendations": {
             "runtime": {
-                "value": review.get("runtime") or "nodejs",
+                "value": family,
                 "source": evidence,
                 "confidence": 0.95 if assessment.get("evidence") else 0.6,
             },
-            "network": {"source": evidence, "confidence": 0.9 if review.get("port") else 0.6},
+            "network": {"source": evidence, "confidence": 0.9 if port else 0.6},
             "resources": {"source": "Kubernetes policy default", "confidence": 0.7},
             "exposure": {"source": "Kubernetes policy default", "confidence": 0.8},
             "commands": {
-                "source": evidence,
-                "confidence": 0.95 if build.get("install_command") else 0.6,
+                "source": "repository evidence" if any(commands.values()) else "No commands detected",
+                "confidence": 0.95 if any(commands.values()) else 0,
             },
         },
         "application_configuration": application_configuration,

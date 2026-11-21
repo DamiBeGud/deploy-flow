@@ -5,15 +5,24 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 from dataclasses import dataclass
 
 import yaml
 
+from app.analysis.command_inference import command_blocker, command_inference
 from app.bootstrap.contracts import (
     BUILD_SPECIFICATION_SCHEMA_VERSION,
     DEPLOYMENT_INTENT_SCHEMA_VERSION,
     IMAGE_BINDING_NAME,
     INFRASTRUCTURE_PLAN_SCHEMA_VERSION,
+)
+from app.bootstrap.native_runtime import (
+    NATIVE_DOCKERIGNORE,
+    NATIVE_UID,
+    RUNTIME_SCRATCH_MOUNT,
+    RUNTIME_SCRATCH_VOLUME,
+    native_build,
 )
 from app.bootstrap.node_runtime import select_node_runtime
 
@@ -59,10 +68,10 @@ def _yaml(value: dict) -> str:
     return rendered
 
 
-def _command(value: list[str], field: str) -> list[str]:
+def _command(value: list[str], field: str, runtime: str) -> list[str]:
     if not value or len(value) > 8 or any(not isinstance(part, str) or not part for part in value):
         raise PlanError(f"invalid_{field}")
-    if value[0] not in {"npm", "node"} or any(
+    if (runtime == "nodejs" and value[0] not in {"npm", "node"}) or any(
         any(token in part for token in ";&|`$><\n\r") for part in value
     ):
         raise PlanError(f"unsafe_{field}")
@@ -84,8 +93,25 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     # block an otherwise safe bundle.
     if assessment.get("completion") not in {"complete", "partial"}:
         raise PlanError("assessment_requires_review")
-    if assessment.get("review", {}).get("runtime") != "nodejs":
+    runtime = assessment.get("review", {}).get("runtime")
+    if runtime == "ruby":
+        raise PlanError("rails_requires_approved_database_and_secret_references_and_migration")
+    if runtime not in {"nodejs", "python", "java"}:
         raise PlanError("unsupported_runtime")
+    inference = command_inference(assessment)
+    if blocker := command_blocker(inference):
+        raise PlanError(blocker)
+    if runtime != "nodejs" and (
+        not (inference.get("port") or assessment["review"].get("port"))
+        or not (inference.get("health") or assessment["review"].get("health_path"))
+    ):
+        raise PlanError("native_service_requires_source_evidence_for_port_and_health_path")
+    if runtime != "nodejs" and (
+        assessment.get("configuration", {}).get("required_variables")
+        or assessment.get("dependencies", {}).get("detected_services")
+    ):
+        raise PlanError("native_service_requires_configuration_bindings")
+
     # Documents created by the first Phase 4 vertical slice predate explicit
     # version fields and are treated as v1 during the local migration period.
     if (
@@ -103,12 +129,12 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         != BUILD_SPECIFICATION_SCHEMA_VERSION
     ):
         raise PlanError("unsupported_build_schema")
-    install = _command(build["install_command"], "install_command")
-    test = _command(build["test_command"], "test_command") if build.get("test_command") else None
+    install = _command(build["install_command"], "install_command", runtime)
+    test = _command(build["test_command"], "test_command", runtime) if build.get("test_command") else None
     build_command = (
-        _command(build["build_command"], "build_command") if build.get("build_command") else None
+        _command(build["build_command"], "build_command", runtime) if build.get("build_command") else None
     )
-    start = _command(build["start_command"], "start_command")
+    start = _command(build["start_command"], "start_command", runtime)
     port = intent["connectivity"]["port"]
     if not isinstance(port, int) or not 1 <= port <= 65535:
         raise PlanError("invalid_port")
@@ -125,9 +151,35 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     replicas = intent["connectivity"]["replicas"]
     if not isinstance(replicas, int) or not 1 <= replicas <= profile["max_replicas"]:
         raise PlanError("invalid_replicas")
-    resources = intent["connectivity"]["resources"]
-    environment = {"PORT": str(port), "HOST": "0.0.0.0", "NODE_ENV": "production"}
+    # JSONB can return keys in a different order from the recommendation.
+    resources = {
+        key: dict(sorted(values.items()))
+        for key, values in sorted(intent["connectivity"]["resources"].items())
+    }
+    native = None
+    if runtime != "nodejs":
+        inferred_start = inference.get("commands", {}).get("start", {})
+        verified_gunicorn = (
+            inferred_start.get("selector") == "agent" and inferred_start.get("argv") == start
+        )
+        try:
+            native = native_build(
+                runtime, assessment.get("runtime", {}).get("version"),
+                port, install, test, build_command, start, verified_gunicorn=verified_gunicorn,
+            )
+        except ValueError as exc:
+            raise PlanError(str(exc)) from exc
+    environment = {"PORT": str(port), "HOST": "0.0.0.0"}
+    if native is None:
+        environment["NODE_ENV"] = "production"
     environment.update(intent["connectivity"].get("environment", {}))
+    if native:
+        if any(
+            key in environment and environment[key] != value
+            for key, value in native.environment.items()
+        ):
+            raise PlanError("native_runtime_environment_conflict")
+        environment.update(native.environment)
     if any(re.search(r"(?i)(secret|token|password|api[_-]?key)", key) for key in environment):
         raise PlanError("sensitive_environment_value")
     secret_env = []
@@ -156,48 +208,52 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
                 }
             )
 
-    try:
-        node_image, node_version = select_node_runtime(
-            assessment.get("runtime", {}).get("version"), profile["node_base_image"]
-        )
-    except ValueError as exc:
-        raise PlanError(str(exc)) from exc
-    docker_lines = [
-        f"FROM {node_image}",
-            "WORKDIR /app",
-            "COPY package.json package-lock.json ./",
-            f"RUN {json.dumps(install)}",
-            "COPY . .",
-    ]
-    if build_command:
-        docker_lines.append(f"RUN {json.dumps(build_command)}")
-    dockerfile = "\n".join(
-        docker_lines + [
-            # Kubernetes cannot verify a named image user with runAsNonRoot.
-            # Fail the build if a custom base has a different node identity,
-            # rather than silently running it with another account's UID.
-            "RUN " + json.dumps([
-                "sh", "-c",
-                f'test "$(id -u node)" = {NODE_RUNTIME_UID} && '
-                f'test "$(id -g node)" = {NODE_RUNTIME_GID}',
-            ]),
-            f"USER {NODE_RUNTIME_UID}:{NODE_RUNTIME_GID}",
-            f"EXPOSE {port}",
-            f"CMD {json.dumps(start)}",
-            "",
-        ]
-    )
-    workflow_steps = [
-        {"uses": profile["checkout_action"]},
-        {"uses": profile["setup_node_action"], "with": {"node-version": node_version, "cache": "npm"}},
-        {"run": " ".join(install)},
-    ]
-    if test:
-        workflow_steps.append({"run": " ".join(test)})
+    if native:
+        dockerfile = native.dockerfile
+        workflow_steps = [{"uses": profile["checkout_action"]}, *native.ci_steps]
     else:
-        workflow_steps.append({"run": "echo 'No test command was confirmed for this repository'; exit 1"})
-    if build_command:
-        workflow_steps.append({"run": " ".join(build_command)})
+        try:
+            node_image, node_version = select_node_runtime(
+                assessment.get("runtime", {}).get("version"), profile["node_base_image"]
+            )
+        except ValueError as exc:
+            raise PlanError(str(exc)) from exc
+        docker_lines = [
+            f"FROM {node_image}",
+                "WORKDIR /app",
+                "COPY package.json package-lock.json ./",
+                f"RUN {json.dumps(install)}",
+                "COPY . .",
+        ]
+        if build_command:
+            docker_lines.append(f"RUN {json.dumps(build_command)}")
+        dockerfile = "\n".join(
+            docker_lines + [
+                # Kubernetes cannot verify a named image user with runAsNonRoot.
+                # Fail the build if a custom base has a different node identity,
+                # rather than silently running it with another account's UID.
+                "RUN " + json.dumps([
+                    "sh", "-c",
+                    f'test "$(id -u node)" = {NODE_RUNTIME_UID} && '
+                    f'test "$(id -g node)" = {NODE_RUNTIME_GID}',
+                ]),
+                f"USER {NODE_RUNTIME_UID}:{NODE_RUNTIME_GID}",
+                f"EXPOSE {port}",
+                f"CMD {json.dumps(start)}",
+                "",
+            ]
+        )
+        workflow_steps = [
+            {"uses": profile["checkout_action"]},
+            {"uses": profile["setup_node_action"], "with": {"node-version": node_version, "cache": "npm"}},
+            {"run": shlex.join(install)},
+        ]
+        if test:
+            workflow_steps.append({"run": shlex.join(test)})
+        else:
+            workflow_steps.append({"run": "echo 'No test command was confirmed for this repository'; exit 1"})
+        if build_command:
+            workflow_steps.append({"run": shlex.join(build_command)})
     workflow_steps.append({"run": "docker build --file Dockerfile ."})
     artifact_script = """python3 - <<'PY'
 import json
@@ -320,6 +376,17 @@ PY"""
             },
         },
     }
+    if runtime == "java" or start[0] == "gunicorn":
+        pod = deployment["spec"]["template"]["spec"]
+        pod["securityContext"]["fsGroup"] = NATIVE_UID
+        pod["volumes"] = [RUNTIME_SCRATCH_VOLUME]
+        pod["containers"][0]["volumeMounts"] = [RUNTIME_SCRATCH_MOUNT]
+    if runtime == "java":
+        pod["containers"][0]["startupProbe"] = {
+            "httpGet": {"path": health, "port": "http"},
+            "periodSeconds": 2,
+            "failureThreshold": 30,
+        }
     service = {
         "apiVersion": "v1",
         "kind": "Service",
@@ -332,7 +399,7 @@ PY"""
     }
     files = {
         "Dockerfile": dockerfile,
-        ".dockerignore": "node_modules\n.git\n.env\n",
+        ".dockerignore": NATIVE_DOCKERIGNORE if native else "node_modules\n.git\n.env\n",
         ".github/workflows/deployflow.yml": _yaml(workflow),
         "deploy/kubernetes/configmap.yaml": _yaml(config),
         "deploy/kubernetes/deployment.yaml": _yaml(deployment),
@@ -383,7 +450,7 @@ PY"""
             "registry",
             "namespace",
             "selector-port-consistency",
-            "node-runtime-compatibility",
+            "native-runtime-compatibility" if native else "node-runtime-compatibility",
         ],
         "provisional_image": f"{image}:{image_tag}",
         "image_binding": {
@@ -394,4 +461,6 @@ PY"""
             "final_reference_kind": "digest",
         },
     }
+    if native:
+        validation["runtime_template"] = native.template
     return GeneratedBundle(files, canonical_digest(files), validation)

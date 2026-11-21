@@ -2,28 +2,38 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
 from time import monotonic
 
-from app.agents.provider import ModelAction, ModelProvider, ModelProviderError, ModelUsage
+from app.agents.provider import (
+    DeepSeekResponsesProvider,
+    ModelAction,
+    ModelProvider,
+    ModelProviderError,
+    ModelUsage,
+    ScriptedProvider,
+)
 from app.agents.repository_mcp import (
     TOOL_DEFINITIONS,
     GatewayResult,
     RepositoryGateway,
     ToolGatewayError,
 )
+from app.analysis.command_inference import COMMAND_PROMPT, SourceExcerpt, infer_commands
 from app.analysis.contracts import (
     AssessmentDraftV2,
+    AssessmentDraftV3,
     AssessmentQuestion,
     FindingV2,
     InfrastructureAssessmentV2,
-    assessment_v2_schema,
 )
 from app.skills.registry import SkillBundle
 
 PROMPT_VERSION = "phase3-agent-v1"
+COMMAND_PROMPT_VERSION = "phase3-agent-v2-command-inference"
 
 
 class AgentError(Exception):
@@ -80,6 +90,11 @@ class HarnessOutcome:
     tool_output_bytes: int
     returned_model: str | None
     status: str
+    prompt_version: str = PROMPT_VERSION
+    response_ids: tuple[str, ...] = ()
+    fallback_used: bool = False
+    prompt_sha256: str | None = None
+    provider_kind: str = "unknown"
 
 
 def _instructions(skills: list[SkillBundle]) -> str:
@@ -104,7 +119,10 @@ def _contains_secret(value: object) -> bool:
     )
 
 
-def _merge(base: dict, draft: AssessmentDraftV2, extra_evidence: list[dict]) -> tuple[dict, str]:
+def _merge(
+    base: dict, draft: AssessmentDraftV2, extra_evidence: list[dict],
+    command_sources: dict[str, SourceExcerpt] | None = None,
+) -> tuple[dict, str]:
     evidence = [*base.get("evidence", []), *extra_evidence]
     evidence_ids = {item["id"] for item in evidence}
     findings = list(base.get("findings", []))
@@ -141,8 +159,17 @@ def _merge(base: dict, draft: AssessmentDraftV2, extra_evidence: list[dict]) -> 
     }
     if document["incomplete_reason"]:
         document["completion"] = "partial"
+    if isinstance(draft, AssessmentDraftV3) and command_sources is not None:
+        for candidate in draft.command_candidates:
+            if _contains_secret(candidate.argv) or any(
+                re.search(r"(?i)://|^--?(?:password|token|secret|api[-_]?key|private[-_]?key)\b", item)
+                for item in candidate.argv
+            ):
+                raise AgentError("assessment_secret_detected")
+        document["command_inference"] = infer_commands(base, draft, command_sources)
     status = "needs_input" if any(question["required"] for question in questions) else "completed"
-    return InfrastructureAssessmentV2.model_validate(document).model_dump(), status
+    excluded = set() if "command_inference" in document else {"command_inference"}
+    return InfrastructureAssessmentV2.model_validate(document).model_dump(exclude=excluded), status
 
 
 async def run_agent(
@@ -152,6 +179,7 @@ async def run_agent(
     facts: dict,
     skills: list[SkillBundle],
     budget: AgentBudget,
+    infer_delivery_commands: bool = False,
 ) -> HarnessOutcome:
     started = monotonic()
     base = facts["document"]
@@ -167,6 +195,14 @@ async def run_agent(
     traces: list[ToolTrace] = []
     extra_evidence: list[dict] = []
     returned_model = None
+    response_ids = []
+    command_sources: dict[str, SourceExcerpt] = {}
+    draft_model = AssessmentDraftV3 if infer_delivery_commands else AssessmentDraftV2
+    prompt_version = COMMAND_PROMPT_VERSION if infer_delivery_commands else PROMPT_VERSION
+    instructions = _instructions(skills)
+    if infer_delivery_commands:
+        instructions += COMMAND_PROMPT
+    output_schema = draft_model.model_json_schema()
     repair_used = False
     content_read = False
     while True:
@@ -178,16 +214,18 @@ async def run_agent(
         choice = "auto"
         try:
             action: ModelAction = await provider.respond(
-                instructions=_instructions(skills),
+                instructions=instructions,
                 history=history,
                 tools=TOOL_DEFINITIONS,
                 tool_choice=choice,
-                output_schema=assessment_v2_schema(),
+                output_schema=output_schema,
             )
         except ModelProviderError as exc:
             raise AgentError(exc.code, retryable=exc.retryable, diagnostic=exc.diagnostic) from exc
         budget.add_usage(action.usage)
         returned_model = action.usage.returned_model or returned_model
+        if action.usage.response_id:
+            response_ids.append(action.usage.response_id)
         history.extend(action.history_items)
         if action.calls:
             for call in action.calls:
@@ -201,6 +239,15 @@ async def run_agent(
                     extra_evidence.extend(result.evidence)
                     if result.evidence:
                         content_read = True
+                    if (
+                        infer_delivery_commands and name == "repo_read_file"
+                        and not result.output.get("truncated")
+                        and isinstance(result.output.get("text"), str)
+                    ):
+                        for item in result.evidence:
+                            command_sources[item["id"]] = SourceExcerpt(
+                                item["file_path"], item["line_start"], result.output["text"]
+                            )
                     model_output = {
                         "result": result.output,
                         "evidence_ids": [item["id"] for item in result.evidence],
@@ -252,8 +299,8 @@ async def run_agent(
             )
             continue
         try:
-            draft = AssessmentDraftV2.model_validate_json(action.text)
-            document, status = _merge(base, draft, extra_evidence)
+            draft = draft_model.model_validate_json(action.text)
+            document, status = _merge(base, draft, extra_evidence, command_sources)
             return HarnessOutcome(
                 document,
                 extra_evidence,
@@ -262,6 +309,14 @@ async def run_agent(
                 gateway.used_bytes,
                 returned_model,
                 status,
+                prompt_version,
+                tuple(response_ids),
+                prompt_sha256=hashlib.sha256(instructions.encode()).hexdigest(),
+                provider_kind=(
+                    "deepseek" if isinstance(provider, DeepSeekResponsesProvider)
+                    else "scripted" if isinstance(provider, ScriptedProvider)
+                    else "unknown"
+                ),
             )
         except Exception as exc:
             if repair_used:

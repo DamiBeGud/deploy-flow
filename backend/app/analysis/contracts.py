@@ -1,6 +1,6 @@
 """Versioned, provider-independent analysis documents."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -76,6 +76,60 @@ class AssessmentDraftV2(StrictModel):
     unknowns: list[str] = Field(default_factory=list, max_length=50)
 
 
+CommandPhase = Literal["install", "test", "build", "start"]
+CommandArgument = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[^\x00\r\n;&|`$<>]+$")]
+
+
+class CommandCandidate(StrictModel):
+    phase: CommandPhase
+    runtime_family: Literal["nodejs", "python", "ruby", "java"]
+    working_directory: str = Field(
+        min_length=1, max_length=128, pattern=r"^(?:\.|[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)*)$"
+    )
+    context: Literal["production", "development", "unspecified"]
+    argv: list[CommandArgument] = Field(min_length=1, max_length=8)
+    evidence_ids: list[str] = Field(min_length=1, max_length=12)
+
+
+class AssessmentDraftV3(AssessmentDraftV2):
+    command_candidates: list[CommandCandidate] = Field(max_length=16)
+
+
+class SourceLocation(StrictModel):
+    file_path: str
+    line_start: int
+
+
+class VerifiedCommand(StrictModel):
+    candidate: CommandCandidate
+    source: SourceLocation
+    supported: bool
+    reason: str
+
+
+class CommandResolution(StrictModel):
+    status: Literal["selected", "missing", "conflict", "unsupported"]
+    selector: Literal["agent", "scanner"] | None = None
+    reason: str
+    argv: list[str] | None = None
+    selected: VerifiedCommand | None = None
+    alternatives: list[VerifiedCommand] = Field(default_factory=list)
+
+
+class InferredHealth(StrictModel):
+    path: str
+    source: SourceLocation
+    evidence_ids: list[str]
+
+
+class CommandInference(StrictModel):
+    schema_version: Literal["command-inference-v1"] = "command-inference-v1"
+    source_sha: str
+    commands: dict[CommandPhase, CommandResolution]
+    port: int | None = Field(default=None, ge=1, le=65535)
+    health: InferredHealth | None = None
+
+
 class InfrastructureAssessmentV2(StrictModel):
     schema_version: Literal["infrastructure-assessment-v2"] = "infrastructure-assessment-v2"
     mode: Literal["deterministic", "agent"]
@@ -101,6 +155,7 @@ class InfrastructureAssessmentV2(StrictModel):
     findings: list[FindingV2] = Field(default_factory=list)
     evidence: list[EvidenceDocument] = Field(default_factory=list)
     summary: str | None = Field(default=None, max_length=4000)
+    command_inference: CommandInference | None = None
 
 
 def assessment_v2_schema() -> dict:

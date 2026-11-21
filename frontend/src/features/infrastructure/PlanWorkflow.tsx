@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FileCode2, ShieldCheck } from 'lucide-react'
 import type { Analysis, Application } from '../../shared/contracts'
 import { command, errorMessage, request } from '../../shared/api'
@@ -9,16 +9,32 @@ import { ClusterValidation } from './ClusterValidation'
 import { RecommendationHint } from './RecommendationHint'
 
 type Stage = 'connectivity' | 'workflow'
-type Profile = { id: 'local-k3s'; namespace: string; default_image: string; hostname_suffix: string }
-const words = (value: string) => value.trim().split(/\s+/).filter(Boolean)
-const optionalWords = (value: string) => {
-  const result = words(value)
-  return result.length ? result : null
+type Profile = { id: 'local-k3s'; namespace: string; hostname_suffix: string }
+type CommandField = 'install_command' | 'test_command' | 'build_command' | 'start_command'
+
+function commandText(argv: string[] | null) {
+  return argv?.some(value => /[\s'"\\]|^\[/.test(value)) ? JSON.stringify(argv) : argv?.join(' ') ?? ''
 }
-const commandValue = (value: string[] | null) => value?.join(' ') || ''
+
+function parseCommand(input: string): string[] | null {
+  const value = input.trim()
+  if (!value) return []
+  if (value.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return Array.isArray(parsed) && parsed.every(item => typeof item === 'string' && item.length > 0)
+        ? parsed
+        : null
+    } catch {
+      return null
+    }
+  }
+  if (/['"\\]/.test(value)) return null
+  return value.split(/\s+/)
+}
 
 type ConfigurationRecommendation = { name: string; required: boolean; recommended_value: string | null; purpose: string; source: string; confidence: number; evidence: { file_path: string; line_start: number | null } | null }
-type Recommendation = { intent: DeploymentIntent; recommendations: Record<string, { source: string; confidence: number }>; application_configuration: ConfigurationRecommendation[] }
+type Recommendation = { intent: DeploymentIntent; generation_blocker?: string | null; recommendations: Record<string, { source: string; confidence: number }>; application_configuration: ConfigurationRecommendation[] }
 
 function writableIntent(intent: DeploymentIntent) {
   return {
@@ -57,6 +73,8 @@ export function PlanWorkflow({ application, run, canWrite, stage, plan, onContin
   const [intent, setIntent] = useState<DeploymentIntent | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [generationBlocker, setGenerationBlocker] = useState<string | null>(null)
+  const [commandErrors, setCommandErrors] = useState<Partial<Record<CommandField, boolean>>>({})
   const [recommendations, setRecommendations] = useState<Recommendation['recommendations']>({})
   const [applicationConfiguration, setApplicationConfiguration] = useState<ConfigurationRecommendation[]>([])
   const [editingConfiguration, setEditingConfiguration] = useState<Set<string>>(() => new Set())
@@ -81,10 +99,24 @@ export function PlanWorkflow({ application, run, canWrite, stage, plan, onContin
         build: { ...recommendation.intent.build, ...saved.build },
         field_recommendations: saved.field_recommendations || recommendation.intent.field_recommendations,
       } : recommendation.intent
-      setProfile(selected); setIntent(nextIntent); setRecommendations(recommendation.recommendations); setApplicationConfiguration(recommendation.application_configuration); onIntentChange(nextIntent)
+      setProfile(selected); setIntent(nextIntent); setGenerationBlocker(recommendation.generation_blocker ?? null); setRecommendations(recommendation.recommendations); setApplicationConfiguration(recommendation.application_configuration); onIntentChange(nextIntent)
     }).catch(exception => { if (!cancelled) setError(errorMessage(exception)) })
     return () => { cancelled = true }
   }, [application.id, run.id, onIntentChange])
+
+  function setCommandError(field: CommandField, invalid: boolean) {
+    setCommandErrors(current => ({ ...current, [field]: invalid }))
+  }
+
+  function updateCommand(field: CommandField, argv: string[]) {
+    updateIntent(current => ({
+      ...current,
+      build: {
+        ...current.build,
+        [field]: argv.length || field === 'install_command' || field === 'start_command' ? argv : null,
+      },
+    }))
+  }
 
   function updateIntent(update: (current: DeploymentIntent) => DeploymentIntent) {
     if (!intent) return
@@ -118,6 +150,8 @@ export function PlanWorkflow({ application, run, canWrite, stage, plan, onContin
   }
   if (!intent || !profile) return <section className="wizard-card"><div className="wizard-step"><p role="status">Loading delivery settings…</p></div></section>
   const controlsDisabled = !canWrite || busy
+  const commandInputInvalid = Object.values(commandErrors).some(Boolean)
+  const bundleBlocker = generationBlocker || (!intent.build.install_command.length || !intent.build.start_command.length ? 'Review and fill the missing install or start command before generating a bundle.' : null)
 
   return <section className="wizard-card"><div className="wizard-step infrastructure-step">
     <div className="step-intro"><h2>{stage === 'connectivity' ? 'AI Kubernetes recommendation' : 'Kubernetes bundle review'}</h2><p>DeployFlow selected these Kubernetes settings from repository evidence and Kubernetes policy. You only need to edit a value when you want an override.</p></div>
@@ -133,11 +167,12 @@ export function PlanWorkflow({ application, run, canWrite, stage, plan, onContin
         <div className="section-divider"><span>Application configuration</span></div>{applicationConfiguration.length ? <><p className="section-note">Each value appears once. Service port includes the repository’s <code>PORT</code> setting, so it is not duplicated here.</p><div className="configuration-cards">{applicationConfiguration.map(item => { const fieldPath = `connectivity.environment.${item.name}`; const fieldRecommendation = intent.field_recommendations[fieldPath]; const value = intent.connectivity.environment[item.name] ?? ''; const editing = editingConfiguration.has(item.name); return <article className="configuration-card" key={item.name}><div><b>{item.name}{item.required ? ' · required' : ' · optional'}</b><p>{item.purpose}</p><RecommendationHint recommendation={fieldRecommendation} effectiveValue={intent.connectivity.environment[item.name] ?? null} onReset={() => updateIntent(current => { const environment = { ...current.connectivity.environment }; const recommended = current.field_recommendations[fieldPath].recommended_value; if (recommended === null) delete environment[item.name]; else environment[item.name] = String(recommended); return { ...current, connectivity: { ...current.connectivity, environment } } })} /></div>{editing ? <div className="configuration-override"><Field label={`Override ${item.name}`}><input value={value} onChange={event => updateIntent(current => ({ ...current, connectivity: { ...current.connectivity, environment: { ...current.connectivity.environment, [item.name]: event.target.value } } }))} /></Field><button className="button button-ghost" type="button" onClick={() => setEditingConfiguration(previous => new Set([...previous].filter(name => name !== item.name)))}>Done</button></div> : <div className="configuration-value"><code>{value || 'No value inferred'}</code><button className="button button-secondary" type="button" onClick={() => setEditingConfiguration(previous => new Set([...previous, item.name]))}>Override</button></div>}</article> })}</div></> : <p className="section-note">No additional safe application configuration was detected.</p>}
         <p className="section-note">No approved database, cache, queue, or service connections are configured for this local profile.</p>
       </> : <>
-        <div className="section-divider"><span>Container and target</span></div><p className="section-note">Kubernetes namespace: <b>{profile.namespace}</b> · Recommended image: <b>{profile.default_image}</b> · Commands: {recommendations.commands?.source || 'AI recommendation'}</p><div className="form-grid"><RecommendedInput label="Base branch" fieldPath="build.branch" value={intent.build.branch} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, branch: value } })} /><RecommendedInput label="Application image" fieldPath="build.image" value={intent.build.image} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, image: value } })} /><RecommendedInput label="Install command" fieldPath="build.install_command" value={commandValue(intent.build.install_command)} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, install_command: words(value) } })} /><RecommendedInput label="Test command" fieldPath="build.test_command" value={commandValue(intent.build.test_command)} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, test_command: optionalWords(value) } })} /><RecommendedInput label="Build command" fieldPath="build.build_command" value={commandValue(intent.build.build_command)} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, build_command: optionalWords(value) } })} /><RecommendedInput label="Start command" fieldPath="build.start_command" value={commandValue(intent.build.start_command)} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, start_command: words(value) } })} /></div>
+        <div className="section-divider"><span>Container and target</span></div><p className="section-note">Kubernetes namespace: <b>{profile.namespace}</b> · Recommended image: <b>{String(intent.field_recommendations['build.image']?.recommended_value ?? intent.build.image)}</b> · Commands: {recommendations.commands?.source || 'Review required'}</p><div className="form-grid"><RecommendedInput label="Base branch" fieldPath="build.branch" value={intent.build.branch} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, branch: value } })} /><RecommendedInput label="Application image" fieldPath="build.image" value={intent.build.image} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, image: value } })} /><CommandInput label="Install command" field="install_command" intent={intent} onChange={updateCommand} setError={setCommandError} /><CommandInput label="Test command" field="test_command" intent={intent} onChange={updateCommand} setError={setCommandError} /><CommandInput label="Build command" field="build_command" intent={intent} onChange={updateCommand} setError={setCommandError} /><CommandInput label="Start command" field="start_command" intent={intent} onChange={updateCommand} setError={setCommandError} /></div>
       </>}
     </fieldset>
+    {stage === 'workflow' && bundleBlocker && <p className="section-note" role="status">{bundleBlocker}</p>}
     {stage === 'workflow' && plan && <section className="plan-preview"><h3><ShieldCheck size={18} /> Bundle {plan.status}</h3><p>Digest: <code>{plan.bundle_digest}</code></p><p>Image binding: {plan.validation.image_binding.preview_reference} · provisional until CI supplies a verified digest</p><p>Checks: {plan.validation.checks.join(', ')}</p><ClusterValidation plan={plan} onPlanChange={onPlanChange} canWrite={canWrite} /><PlanFileReview key={plan.id} plan={plan} /><p className="section-note">Continue to Review to approve this exact bundle and create its GitHub pull request.</p></section>}
-    <div className="wizard-actions infrastructure-actions"><button className="button button-secondary" type="button" disabled={controlsDisabled} onClick={() => void save()}>{stage === 'connectivity' ? 'Save connectivity' : 'Save delivery settings'}</button>{stage === 'connectivity' ? <button className="button button-primary" type="button" disabled={controlsDisabled} onClick={() => void saveAndContinue()}>Save and continue</button> : <><button className="button button-primary" type="button" disabled={controlsDisabled} onClick={() => void generate()}><FileCode2 size={16} />Generate bundle</button><button className="button button-secondary" type="button" disabled={controlsDisabled} onClick={() => void saveAndContinue()}>Save and review</button></>}</div>
+    <div className="wizard-actions infrastructure-actions"><button className="button button-secondary" type="button" disabled={controlsDisabled || commandInputInvalid} onClick={() => void save()}>{stage === 'connectivity' ? 'Save connectivity' : 'Save delivery settings'}</button>{stage === 'connectivity' ? <button className="button button-primary" type="button" disabled={controlsDisabled || commandInputInvalid} onClick={() => void saveAndContinue()}>Save and continue</button> : <><button className="button button-primary" type="button" disabled={controlsDisabled || commandInputInvalid || Boolean(bundleBlocker)} onClick={() => void generate()}><FileCode2 size={16} />Generate bundle</button><button className="button button-secondary" type="button" disabled={controlsDisabled || commandInputInvalid} onClick={() => void saveAndContinue()}>Save and review</button></>}</div>
   </div></section>
 }
 
@@ -150,6 +185,46 @@ function RecommendedInput({ label, fieldPath, value, intent, updateIntent, onCha
   onChange: (current: DeploymentIntent, value: string) => DeploymentIntent
 }) {
   const recommendation = intent.field_recommendations[fieldPath]
-  const effectiveValue = fieldPath.endsWith('_command') ? optionalWords(value) : value
-  return <div className="recommended-field"><Field label={label}><input required={fieldPath !== 'build.test_command' && fieldPath !== 'build.build_command'} value={value} onChange={event => updateIntent(current => onChange(current, event.target.value))} /></Field><RecommendationHint recommendation={recommendation} effectiveValue={effectiveValue} onReset={() => updateIntent(current => { const recommended = current.field_recommendations[fieldPath].recommended_value; const nextValue = Array.isArray(recommended) ? recommended.join(' ') : String(recommended ?? ''); return onChange(current, nextValue) })} /></div>
+  return <div className="recommended-field"><Field label={label}><input required value={value} onChange={event => updateIntent(current => onChange(current, event.target.value))} /></Field><RecommendationHint recommendation={recommendation} effectiveValue={value} onReset={() => updateIntent(current => onChange(current, String(current.field_recommendations[fieldPath].recommended_value ?? '')))} /></div>
+}
+
+function CommandInput({ label, field, intent, onChange, setError }: {
+  label: string
+  field: CommandField
+  intent: DeploymentIntent
+  onChange: (field: CommandField, argv: string[]) => void
+  setError: (field: CommandField, invalid: boolean) => void
+}) {
+  const argv = intent.build[field]
+  const value = commandText(argv)
+  const [draft, setDraft] = useState(value)
+  const emitted = useRef(value)
+  const error = parseCommand(draft) === null
+  const recommendation = intent.field_recommendations[`build.${field}`]
+
+  useEffect(() => {
+    if (emitted.current !== value) {
+      emitted.current = value
+      setDraft(value)
+    }
+  }, [value])
+
+  function change(input: string) {
+    setDraft(input)
+    const parsed = parseCommand(input)
+    setError(field, parsed === null)
+    if (parsed) {
+      emitted.current = commandText(parsed)
+      onChange(field, parsed)
+    }
+  }
+
+  return <div className="recommended-field">
+    <Field label={label}><input aria-invalid={error || undefined} value={draft} onChange={event => change(event.target.value)} /></Field>
+    {error && <p role="alert">Enter space-separated arguments, or use a JSON string array when an argument contains spaces or quotes.</p>}
+    <RecommendationHint recommendation={recommendation} effectiveValue={argv} onReset={() => {
+      const recommended = recommendation?.recommended_value
+      change(Array.isArray(recommended) ? commandText(recommended) : '')
+    }} />
+  </div>
 }

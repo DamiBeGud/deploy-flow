@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # Phase 2 `.env` files. New configuration uses analysis_mode instead.
     analysis_provider: Literal["github", "fake"] | None = None
     analysis_mode: Literal["fake", "deterministic", "agent"] | None = None
+    agent_delivery_recommendations_enabled: bool = False
     model_provider: Literal["deepseek"] = "deepseek"
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"

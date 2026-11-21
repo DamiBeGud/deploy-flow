@@ -10,6 +10,9 @@ export type FieldRecommendation = {
   explanation: string
   evidence: { file_path: string; line_start: number | null } | null
   overridden: boolean
+  status?: 'selected' | 'missing' | 'conflict' | 'unsupported'
+  selector?: 'agent' | 'scanner' | 'user' | null
+  alternatives?: { argv: string[]; context: string; evidence: { file_path: string; line_start: number }; reason: string }[]
 }
 
 type Resources = { requests: Record<string, string>; limits: Record<string, string> }

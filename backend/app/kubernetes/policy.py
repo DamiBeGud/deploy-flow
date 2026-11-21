@@ -7,6 +7,7 @@ import hashlib
 import yaml
 
 from app.bootstrap.generator import canonical_digest
+from app.bootstrap.native_runtime import RUNTIME_SCRATCH_MOUNT, RUNTIME_SCRATCH_VOLUME
 
 KINDS = {
     "deploy/kubernetes/configmap.yaml": ("v1", "ConfigMap"),
@@ -76,12 +77,20 @@ def checked_manifests(
         or pod.get("nodeName")
         or pod.get("runtimeClassName")
         or pod.get("imagePullSecrets")
-        or pod.get("volumes")
         or len(containers) != 1
     ):
         raise ManifestPolicyError("deployment_policy_denied")
     pod_security = pod.get("securityContext") or {}
     container = containers[0]
+    # The JVM and Gunicorn need a writable temporary directory. Allow only
+    # the generated, size-bounded pod-local mount at /tmp.
+    volumes = pod.get("volumes") or []
+    mounts = container.get("volumeMounts") or []
+    if container.get("volumeDevices") or (volumes, mounts) not in (
+        ([], []),
+        ([RUNTIME_SCRATCH_VOLUME], [RUNTIME_SCRATCH_MOUNT]),
+    ):
+        raise ManifestPolicyError("deployment_policy_denied")
     security = container.get("securityContext") or {}
     if (
         pod_security.get("runAsNonRoot") is not True

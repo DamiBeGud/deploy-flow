@@ -16,5 +16,11 @@ export function RecommendationHint({ recommendation, effectiveValue, onReset }: 
   return <div className={`recommendation-hint ${overridden ? 'recommendation-overridden' : ''}`}>
     <span><b>{overridden ? 'User override' : recommendation.source}</b> · {Math.round(recommendation.confidence * 100)}% · {recommendation.explanation}{evidence ? ` · ${evidence}` : ''}</span>
     {overridden ? <button type="button" onClick={onReset}>Reset to recommendation</button> : null}
+    {Boolean(recommendation.alternatives?.length) && <details>
+      <summary>Other source commands</summary>
+      <ul>{recommendation.alternatives?.map((item, index) => <li key={index}>
+        <code>{item.argv.join(' ')}</code> · {item.context} · {item.evidence.file_path}:{item.evidence.line_start} · {item.reason}
+      </li>)}</ul>
+    </details>}
   </div>
 }

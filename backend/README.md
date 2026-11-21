@@ -52,6 +52,7 @@ outside Git and outside the build context.
 | Configuration | Behavior |
 | --- | --- |
 | `DF_ANALYSIS_MODE` | `fake` for simulation, `deterministic` by default, `agent` for explicitly enabled model calls |
+| `DF_AGENT_DELIVERY_RECOMMENDATIONS_ENABLED` | Defaults to `false`. Enables typed, evidence-backed command recommendations for new agent analyses. |
 | `DF_GITHUB_APP_ID`, `DF_GITHUB_INSTALLATION_ID`, `DF_GITHUB_PRIVATE_KEY_PATH` | Installed GitHub App; key path must be absolute and private |
 | `GHCR_REGISTRY`, `GHCR_IMAGE` | Compose maps these to backend `DF_GHCR_*` settings; image names, not credentials |
 | `DF_DEEPSEEK_API_KEY`, `DF_DEEPSEEK_MODEL`, `DF_DEEPSEEK_REASONING_EFFORT` | Agent-only credentials/options; defaults are `deepseek-flash` and `high` |
@@ -67,6 +68,14 @@ Agent mode sends selected repository excerpts to DeepSeek, can incur charges,
 and uses only reviewed skills and bounded read-only tools. It records provenance
 and usage and may return `needs_input`. `DF_ANALYSIS_PROVIDER` is a legacy bridge;
 new configuration should use `DF_ANALYSIS_MODE`.
+
+For an agent command trial, enable both `DF_ANALYSIS_MODE=agent` and
+`DF_AGENT_DELIVERY_RECOMMENDATIONS_ENABLED=true` in the isolated analysis
+worker environment and start a fresh analysis. Approved command candidates
+retain the cited source location and saved argv. The FastAPI renderer accepts
+the reviewed Gunicorn ASGI-worker shape when verified against the pinned
+entry point and requirements. A candidate outside the supported command
+patterns stays available for review and can block bundle generation.
 
 For a disposable development stack only, from `backend/`:
 

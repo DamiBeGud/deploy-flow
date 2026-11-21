@@ -5,9 +5,11 @@ from pathlib import Path
 
 from app.analysis.contracts import InfrastructureAssessmentV2
 from app.repository.archive import excerpt_hash
+from app.repository.native import detect_native
 
 IGNORED = {".git", "node_modules", "vendor", ".venv", "dist", "build", "coverage"}
 SENSITIVE = {".env", ".pem", ".key", "id_rsa"}
+SCANNER_VERSION = "phase3-v3"
 
 
 @dataclass
@@ -59,11 +61,14 @@ class Scanner:
             yield path
 
     def scan(self, *, repository: dict, application_name: str) -> ScanResult:
+        self.evidence.clear()
         paths = list(self._files())
         names = {p.relative_to(self.root).as_posix() for p in paths}
         languages = []
         if any(p.suffix in {".js", ".mjs", ".cjs"} for p in paths):
             languages.append("javascript")
+        if any(p.suffix in {".ts", ".mts", ".cts"} for p in paths):
+            languages.append("typescript")
         package = self._package()
         findings = []
 
@@ -85,6 +90,7 @@ class Scanner:
             "manifest_kinds": [],
             "generated_paths": [],
         }
+        native, unsupported = detect_native(self.root, paths)
         if package:
             package_path, manifest = package
             manifest_text = package_path.read_text(encoding="utf-8", errors="replace")
@@ -118,7 +124,8 @@ class Scanner:
                     ("build", "workflow.build_command"),
                 ):
                     if key in scripts:
-                        finding(category, f"npm {key}", "explicit", 0.99, [package_ev])
+                        command = "npm run build" if key == "build" else f"npm {key}"
+                        finding(category, command, "explicit", 0.99, [package_ev])
                 for dependency, kind in (
                     ("pg", "postgresql"),
                     ("redis", "redis"),
@@ -132,7 +139,7 @@ class Scanner:
         env_names: set[str] = set()
         ports: list[int] = []
         health: list[str] = []
-        for path in paths:
+        for path in paths if not (native or unsupported) else ():
             relative_parts = path.relative_to(self.root).parts
             if (
                 "test" in relative_parts
@@ -181,11 +188,19 @@ class Scanner:
                         [self._add_evidence(path, number, line, "node.listen.v1")],
                     )
                 default_port = re.search(r"(?:DEFAULT_)?PORT\s*=\s*(\d{1,5})", line)
+                if not default_port:
+                    default_port = re.search(
+                        r"""process\.env\.PORT\s*(?:\?\?|\|\|)\s*['"]?(\d{1,5})\b""",
+                        line,
+                    )
                 if default_port:
-                    ports.append(int(default_port.group(1)))
+                    port = int(default_port.group(1))
+                    if not 1 <= port <= 65535:
+                        continue
+                    ports.append(port)
                     finding(
                         "network.port",
-                        int(default_port.group(1)),
+                        port,
                         "inferred",
                         0.85,
                         [self._add_evidence(path, number, line, "node.port-default.v1")],
@@ -194,70 +209,108 @@ class Scanner:
         node_supported = any(
             f["category"] == "runtime" and f["value"] == "nodejs" for f in findings
         )
-        unknowns = (
-            []
-            if node_supported
-            else [
-                "No supported Node/npm service was detected; only generic repository inventory is available."
-            ]
-        )
-        if not node_supported:
-            findings.append(
-                {
-                    "id": "finding-1",
-                    "category": "workload_type",
-                    "value": "unknown",
-                    "status": "unknown",
-                    "confidence": 0.0,
-                    "evidence_ids": [],
-                }
-            )
+        if node_supported and native:
+            native = None
+            unsupported = "Multiple supported root runtimes require application selection."
+        if unsupported or native:
+            node_supported = False
+            findings.clear()
+            self.evidence.clear()
+            ports.clear()
+            health.clear()
+            env_names.clear()
+        if native:
+            languages = [native.runtime]
+            evidence = {}
+            for item in native.findings:
+                key = (item.path, item.line, item.excerpt)
+                if key not in evidence:
+                    evidence[key] = self._add_evidence(
+                        self.root / item.path,
+                        item.line,
+                        item.excerpt,
+                        f"native.{native.runtime}.v1",
+                    )
+                finding(item.category, item.value, "inferred", 0.9, [evidence[key]])
+
+        def value(category):
+            return next((item["value"] for item in findings if item["category"] == category), None)
+
+        runtime = value("runtime")
+        install = value("workflow.install_command")
+        start = value("runtime.command")
+        if native:
+            ports = [port] if (port := value("network.port")) is not None else []
+            health = [probe] if (probe := value("health_check")) else []
+        unknowns = []
+        if not runtime:
+            unknowns.append(unsupported or "No supported root application layout was detected.")
+            finding("workload_type", "unknown", "unknown", 0.0, [])
+        if native:
+            for missing, label in (
+                (not start, "start command"),
+                (not ports, "service port"),
+                (not health, "health path"),
+            ):
+                if missing:
+                    unknowns.append(f"No unambiguous {label} was found for this runtime.")
         document = {
             "schema_version": "infrastructure-assessment-v2",
             "mode": "deterministic",
-            "completion": "complete" if node_supported else "partial",
-            "incomplete_reason": None if node_supported else "unsupported_stack",
+            "completion": "partial" if unknowns else "complete",
+            "incomplete_reason": (
+                "unsupported_stack"
+                if not runtime
+                else "insufficient_evidence"
+                if unknowns
+                else None
+            ),
             "repository": repository,
             "application": {
                 "name": application_name,
-                "workload_type": "web_service" if node_supported else "unknown",
+                "workload_type": "web_service" if runtime else "unknown",
             },
             "detected_stack": {
                 "languages": languages,
-                "frameworks": ["express"] if any(f["value"] == "express" for f in findings) else [],
+                "frameworks": [framework]
+                if (framework := native.framework if native else value("framework"))
+                else [],
             },
             "build": {
-                "install_command": "npm ci"
-                if "package-lock.json" in names and node_supported
-                else None,
+                "install_command": install,
                 "artifact": None,
             },
             "runtime": {
-                "name": "nodejs" if node_supported else None,
-                "command": "npm start"
-                if any(f["category"] == "runtime.command" for f in findings)
-                else None,
-                "version": next(
-                    (f["value"] for f in findings if f["category"] == "runtime.version"), None
-                ),
+                "name": runtime,
+                "command": start,
+                "version": value("runtime.version"),
+                **({"application_target": target} if (target := value("runtime.application_target")) else {}),
             },
             "review": {
-                "runtime": "nodejs" if node_supported else "unknown",
+                "runtime": runtime or "unknown",
                 "port": min(ports) if ports else None,
                 "health_path": health[0] if health else None,
             },
             "network": {"ports": sorted(set(ports))},
-            "dependencies": {"databases": [], "caches": [], "queues": [], "external_services": []},
-            "configuration": {"required_variables": [], "optional_variables": sorted(env_names)},
+            "dependencies": {
+                "databases": [],
+                "caches": [],
+                "queues": [],
+                "external_services": [],
+                **({"detected_services": native.service_dependencies} if native else {}),
+            },
+            "configuration": {
+                "required_variables": native.required_variables if native else [],
+                "optional_variables": sorted(env_names),
+            },
             "storage": [],
             "health_checks": sorted(set(health)),
             "workflow": {
-                "test_command": "npm test"
-                if any(f["category"] == "workflow.test_command" for f in findings)
-                else None,
-                "build_command": "npm build"
-                if any(f["category"] == "workflow.build_command" for f in findings)
-                else None,
+                "test_command": value("workflow.test_command"),
+                "build_command": value("workflow.build_command"),
+                **(
+                    {"migration_command": migration} if (migration := value("workflow.migration_command")) else {}
+                ),
             },
             "bootstrap": delivery,
             "risks": [],
@@ -268,7 +321,9 @@ class Scanner:
             "evidence": [item.document() for item in self.evidence],
             "summary": "Deterministic repository scan; no application code was executed.",
         }
-        validated = InfrastructureAssessmentV2.model_validate(document).model_dump()
+        validated = InfrastructureAssessmentV2.model_validate(document).model_dump(
+            exclude={"command_inference"}
+        )
         return ScanResult(
             document=validated,
             facts={
@@ -276,7 +331,7 @@ class Scanner:
                 "paths": sorted(names),
                 "languages": languages,
                 "repository": repository,
-                "scanner_version": "phase3-v1",
+                "scanner_version": SCANNER_VERSION,
                 "document": validated,
             },
         )
@@ -286,6 +341,7 @@ class Scanner:
         if not path.is_file():
             return None
         try:
-            return path, json.loads(path.read_text(encoding="utf-8"))
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            return (path, manifest) if isinstance(manifest, dict) else None
         except (OSError, json.JSONDecodeError):
             return None

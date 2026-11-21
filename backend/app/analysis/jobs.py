@@ -10,7 +10,14 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 
-from app.agents.harness import AgentBudget, AgentError, HarnessOutcome, run_agent
+from app.agents.harness import (
+    COMMAND_PROMPT_VERSION,
+    PROMPT_VERSION,
+    AgentBudget,
+    AgentError,
+    HarnessOutcome,
+    run_agent,
+)
 from app.agents.provider import DeepSeekResponsesProvider
 from app.agents.repository_mcp import repository_gateway
 from app.analysis.service import fake_assessment
@@ -30,7 +37,7 @@ from app.persistence.models import (
 from app.repository.archive import extract_tarball
 from app.repository.errors import RepositoryError
 from app.repository.github import GitHubClient
-from app.repository.scanner import Scanner
+from app.repository.scanner import SCANNER_VERSION, Scanner
 from app.skills.registry import SkillBundle, SkillMetadata, SkillRegistry
 from app.telemetry.events import TERMINAL, emit
 
@@ -286,7 +293,8 @@ async def _run_agent(
             tool_timeout_seconds=config.agent_tool_timeout_seconds,
         ) as gateway:
             return await run_agent(
-                provider=provider, gateway=gateway, facts=facts, skills=skills, budget=budget
+                provider=provider, gateway=gateway, facts=facts, skills=skills, budget=budget,
+                infer_delivery_commands=config.agent_delivery_recommendations_enabled,
             )
     except BaseExceptionGroup as exc:
         # anyio wraps an error raised inside the MCP context manager in an
@@ -319,9 +327,9 @@ def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: Har
         )
     run.assessment_version = 1
     run.incomplete_reason = outcome.document.get("incomplete_reason")
-    run.model_provider = "deepseek"
-    run.model_name = outcome.returned_model or settings().deepseek_model
-    run.prompt_version = "phase3-agent-v1"
+    run.model_provider = outcome.provider_kind
+    run.model_name = outcome.returned_model
+    run.prompt_version = outcome.prompt_version
     run.agent_turns = outcome.budget.used_turns
     run.agent_tool_calls = outcome.budget.used_tool_calls
     run.agent_input_tokens = outcome.budget.used_input_tokens
@@ -329,13 +337,21 @@ def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: Har
     run.agent_tool_output_bytes = outcome.tool_output_bytes
     run.agent_latency_ms = outcome.budget.used_latency_ms
     run.reproducibility_json = {
-        "scanner_version": "phase3-v1",
+        "scanner_version": (run.scanner_facts_json or {}).get("scanner_version", "phase3-v1"),
         "github_api_version": settings().github_api_version,
         "commit_sha": run.commit_sha,
-        "provider": "deepseek",
+        "provider": outcome.provider_kind,
         "requested_model": settings().deepseek_model,
         "returned_model": run.model_name,
         "prompt_version": run.prompt_version,
+        "prompt_sha256": outcome.prompt_sha256,
+        "provider_response_ids": list(outcome.response_ids),
+        "fallback_used": outcome.fallback_used,
+        "settings": {
+            "reasoning_effort": settings().deepseek_reasoning_effort,
+            "max_output_tokens": settings().agent_response_max_tokens,
+        },
+        "projection_version": (outcome.document.get("command_inference") or {}).get("schema_version"),
         "skills": [
             {
                 "id": bundle.metadata.id,
@@ -354,7 +370,7 @@ def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: Har
     }
     db.add(
         AssessmentVersion(
-            run_id=run.id, version=1, document=outcome.document, actor_id="deepseek-agent"
+            run_id=run.id, version=1, document=outcome.document, actor_id=f"{outcome.provider_kind}-agent"
         )
     )
     _audit(
@@ -474,7 +490,7 @@ def execute_repository(identifier: UUID, token: UUID):
                 current.assessment_version = 1
                 current.incomplete_reason = scan.document["incomplete_reason"]
                 current.reproducibility_json = {
-                    "scanner_version": "phase3-v1",
+                    "scanner_version": SCANNER_VERSION,
                     "github_api_version": settings().github_api_version,
                     "commit_sha": resolved.commit_sha,
                 }
@@ -548,6 +564,12 @@ def execute_repository(identifier: UUID, token: UUID):
                 0,
                 None,
                 "completed",
+                prompt_version=(
+                    COMMAND_PROMPT_VERSION if settings().agent_delivery_recommendations_enabled
+                    else PROMPT_VERSION
+                ),
+                fallback_used=True,
+                provider_kind="deepseek",
             )
         with Session.begin() as db:
             current = db.scalar(

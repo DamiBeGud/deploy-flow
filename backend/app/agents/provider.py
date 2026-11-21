@@ -24,6 +24,7 @@ class ModelUsage:
     output_tokens: int = 0
     latency_ms: int = 0
     returned_model: str | None = None
+    response_id: str | None = None
 
 
 @dataclass
@@ -176,6 +177,7 @@ class DeepSeekResponsesProvider:
                 output_tokens=int(usage.get("output_tokens") or 0),
                 latency_ms=int((time.monotonic() - started) * 1000),
                 returned_model=body.get("model"),
+                response_id=body.get("id"),
             ),
         )
 

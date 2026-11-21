@@ -25,6 +25,7 @@ from app.bootstrap.native_runtime import (
     native_build,
 )
 from app.bootstrap.node_runtime import select_node_runtime
+from app.bootstrap.postgres import postgres_for_source
 
 MANAGED_PATHS = {
     "Dockerfile",
@@ -106,7 +107,8 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         or not (inference.get("health") or assessment["review"].get("health_path"))
     ):
         raise PlanError("native_service_requires_source_evidence_for_port_and_health_path")
-    if runtime != "nodejs" and (
+    postgres = postgres_for_source(assessment, profile.get("application_id", ""))
+    if runtime != "nodejs" and not postgres and (
         assessment.get("configuration", {}).get("required_variables")
         or assessment.get("dependencies", {}).get("detected_services")
     ):
@@ -148,6 +150,13 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     image = build["image"]
     if not image.startswith(profile["registry"].rstrip("/") + "/"):
         raise PlanError("image_registry_denied")
+    if postgres and (
+        image != postgres.image_repository(profile["registry"])
+        or intent["connectivity"]["exposure"]["kind"] != "internal"
+        or "DATABASE_URL" in intent["connectivity"].get("environment", {})
+        or intent["connectivity"].get("connections")
+    ):
+        raise PlanError("approved_postgres_binding_mismatch")
     replicas = intent["connectivity"]["replicas"]
     if not isinstance(replicas, int) or not 1 <= replicas <= profile["max_replicas"]:
         raise PlanError("invalid_replicas")
@@ -166,6 +175,7 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
             native = native_build(
                 runtime, assessment.get("runtime", {}).get("version"),
                 port, install, test, build_command, start, verified_gunicorn=verified_gunicorn,
+                migration_module=postgres.migration_module if postgres else None,
             )
         except ValueError as exc:
             raise PlanError(str(exc)) from exc
@@ -182,7 +192,7 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         environment.update(native.environment)
     if any(re.search(r"(?i)(secret|token|password|api[_-]?key)", key) for key in environment):
         raise PlanError("sensitive_environment_value")
-    secret_env = []
+    secret_env = postgres.secret_env() if postgres else []
     for connection in intent["connectivity"].get("connections", []):
         prefix = connection["name"].upper().replace("-", "_")
         environment.update(
@@ -369,7 +379,16 @@ PY"""
                                 "capabilities": {"drop": ["ALL"]},
                             },
                             "readinessProbe": {"httpGet": {"path": health, "port": "http"}},
-                            "livenessProbe": {"httpGet": {"path": health, "port": "http"}},
+                            "livenessProbe": {
+                                "httpGet": {"path": postgres.liveness_path if postgres else health, "port": "http"}
+                            },
+                            **({
+                                "startupProbe": {
+                                    "httpGet": {"path": postgres.liveness_path, "port": "http"},
+                                    "failureThreshold": 15,
+                                    "periodSeconds": 5,
+                                }
+                            } if postgres else {}),
                         }
                     ],
                 },

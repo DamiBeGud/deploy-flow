@@ -613,7 +613,8 @@ def kubernetes_recommendation(app_id: UUID, analysis_run_id: UUID, identity: Act
             raise HTTPException(409, "Assessment has no reviewable version")
         try:
             result = recommend(
-                assessment.document, local_k3s_profile(), run.revision, run.assessment_version
+                assessment.document, local_k3s_profile(), run.revision, run.assessment_version,
+                application_id=str(app_id),
             )
             latest_version = db.scalar(
                 select(DeploymentIntentVersion.version)
@@ -669,7 +670,8 @@ def put_deployment_intent(app_id: UUID, body: DeploymentIntentWrite, identity: A
                 exclude={"expected_version", "analysis_run_id", "expected_assessment_version"}
             )
             recommendation = recommend(
-                assessment.document, local_k3s_profile(), run.revision, run.assessment_version
+                assessment.document, local_k3s_profile(), run.revision, run.assessment_version,
+                application_id=str(app_id),
             )
             document["field_recommendations"] = resolve_field_recommendations(
                 document, recommendation["intent"]["field_recommendations"]

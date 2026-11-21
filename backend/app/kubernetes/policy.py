@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import re
 
 import yaml
 
 from app.bootstrap.generator import canonical_digest
 from app.bootstrap.native_runtime import RUNTIME_SCRATCH_MOUNT, RUNTIME_SCRATCH_VOLUME
+from app.bootstrap.postgres import configured_postgres
 
 KINDS = {
     "deploy/kubernetes/configmap.yaml": ("v1", "ConfigMap"),
@@ -128,7 +130,24 @@ def checked_manifests(
     ]:
         raise ManifestPolicyError("configmap_reference_denied")
     if container.get("env"):
-        raise ManifestPolicyError("secret_reference_denied")
+        postgres = configured_postgres()
+        if (
+            not postgres
+            or namespace != "deployflow-test"
+            or str(postgres.application_id) != application_id
+            or postgres.application_name != deployment["metadata"]["name"]
+            or container.get("command")
+            or container.get("args")
+            or container["env"] != postgres.secret_env()
+            or "DATABASE_URL" in config["data"]
+            or "Ingress" in by_kind
+            or not re.fullmatch(
+                re.escape(postgres.image_repository(registry))
+                + rf"(?::{postgres.source_sha}|@sha256:[0-9a-f]{{64}})",
+                container["image"],
+            )
+        ):
+            raise ManifestPolicyError("secret_reference_denied")
     if "Ingress" in by_kind:
         ingress = by_kind["Ingress"]
         ingress_spec = ingress.get("spec") or {}

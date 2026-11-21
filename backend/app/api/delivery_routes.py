@@ -18,6 +18,7 @@ from app.deployments.preparation import ReleasePreparationError, _source
 from app.deployments.queue import queue_execution
 from app.deployments.rollback import RollbackError, queue_rollback
 from app.deployments.state import ACTIVE_STATES, transition
+from app.integrations.github.compatibility import REVIEWED_PR
 from app.kubernetes.policy import ManifestPolicyError
 from app.persistence.commands import application_for, idempotent
 from app.persistence.database import Session
@@ -46,7 +47,7 @@ class DeploymentPolicyWrite(BaseModel):
     model_config = {"extra": "forbid"}
     enabled: bool
     allowed_source_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
-    source_compatibility_policy: Literal["node-source-compatibility-v1", "node-handler-compatibility-v2"] | None = None
+    source_compatibility_policy: Literal["node-source-compatibility-v1", "node-handler-compatibility-v2", "reviewed-infrastructure-pr-v1"] | None = None
 
 
 class CleanupResource(BaseModel):
@@ -242,6 +243,7 @@ def get_deployment_policy(application_id: UUID, identity: Actor):
                 "cleanup_available": settings().deployment_cleanup_enabled,
                 "authorization_state": ("execution_disabled" if not settings().deployment_execution_enabled else
                                         "policy_disabled" if not policy or not policy.enabled else
+                                        "reviewed_pull_request" if policy.source_compatibility_policy == REVIEWED_PR else
                                         "single_source" if policy.allowed_source_sha else "future_compatible_sources"),
                 "actor_id": policy.actor_id if policy else None}
 
@@ -275,6 +277,19 @@ def set_deployment_policy(application_id: UUID, body: DeploymentPolicyWrite, ide
                 if body.source_compatibility_policy is None:
                     raise HTTPException(422, "Select an explicit source compatibility policy")
                 policy.source_compatibility_policy = body.source_compatibility_policy
+            if body.enabled and policy.source_compatibility_policy == REVIEWED_PR:
+                reviewed = db.scalar(
+                    select(InfrastructurePullRequest.id)
+                    .join(InfrastructurePlan, InfrastructurePlan.id == InfrastructurePullRequest.plan_id)
+                    .where(
+                        InfrastructurePlan.application_id == application_id,
+                        InfrastructurePlan.status == "approved",
+                        InfrastructurePullRequest.head_sha == policy.allowed_source_sha,
+                        InfrastructurePullRequest.status == "open",
+                    )
+                ) if policy.allowed_source_sha else None
+                if reviewed is None:
+                    raise HTTPException(409, "Select an open reviewed infrastructure PR for this application")
             return {"enabled": body.enabled, "actor_id": identity.actor_id,
                     "source_compatibility_policy": policy.source_compatibility_policy or "node-source-compatibility-v1",
                     "allowed_source_sha": policy.allowed_source_sha}, 200

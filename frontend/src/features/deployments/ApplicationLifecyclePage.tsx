@@ -119,7 +119,7 @@ export function ApplicationLifecyclePage({ canDeploy }: { canDeploy: boolean }) 
     <section className="lifecycle-detail" aria-label="Current application state">
       <h2>Current application state</h2>
       <p>Automatic deployment: {policy?.enabled ? 'enabled' : 'disabled'} · Execution: {policy?.execution_available ? 'available' : 'disabled'}</p>
-      {policy?.allowed_source_sha && <p>Automatic deployment is restricted to source <code>{policy.allowed_source_sha}</code>.</p>}
+      {policy?.allowed_source_sha && <p>Automatic deployment is restricted to {policy.source_compatibility_policy === 'reviewed-infrastructure-pr-v1' ? 'the merge of PR head' : 'source'} <code>{policy.allowed_source_sha}</code>.</p>}
       {policy?.enabled && !policy.allowed_source_sha && <p>Policy authorizes future compatible commits on the configured branch.</p>}
       <p>Source compatibility: <code>{policy?.source_compatibility_policy ?? 'node-source-compatibility-v1'}</code>. Actual deployment also requires successful event delivery, trusted CI verification and operational workers.</p>
       <p>Build verification and release preparation may continue while deployment is disabled.</p>

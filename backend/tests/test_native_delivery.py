@@ -340,3 +340,72 @@ def test_approved_postgres_binding_is_source_and_application_scoped(tmp_path, mo
             files, digest=canonical_digest(files), namespace="deployflow-test",
             application_id=bound_profile["application_id"], registry="ghcr.io",
         )
+
+
+def test_generated_ephemeral_postgres_sidecar_is_exact_and_private(tmp_path, monkeypatch):
+    import json
+
+    assessment = scan(
+        tmp_path,
+        PYTHON | {"requirements.txt": PYTHON["requirements.txt"] + "psycopg[binary]==3.2.8\n"},
+    )
+    profile = PROFILE | {"application_id": "36d3695a-e390-4487-a15a-f6af6f40881f"}
+    monkeypatch.setenv("DF_APPROVED_POSTGRES_BINDING", json.dumps({
+        "application_id": profile["application_id"],
+        "application_name": "demo",
+        "repository": "example/demo",
+        "source_sha": "a" * 40,
+        "secret_name": "demo-db",
+        "migration_module": "service.migrate",
+        "liveness_path": "/live",
+        "ephemeral": True,
+    }))
+    recommendation = recommend(assessment, profile, "main", 1, application_id=profile["application_id"])
+    assert recommendation["approved_database"]["ephemeral"] is True
+    intent = recommendation["intent"]
+    bundle = render(assessment, intent, profile)
+    kwargs = {"namespace": "deployflow-test", "application_id": profile["application_id"], "registry": "ghcr.io"}
+    checked_manifests(bundle.files, digest=bundle.digest, **kwargs)
+    path = "deploy/kubernetes/deployment.yaml"
+    deployment = yaml.safe_load(bundle.files[path])
+    app_pod = deployment["spec"]["template"]["spec"]
+    database = app_pod["initContainers"][0]
+    assert database["restartPolicy"] == "Always"
+    assert "listen_addresses=127.0.0.1" in database["args"]
+    assert any(item == {"name": "POSTGRES_PASSWORD", "valueFrom": {"secretKeyRef": {"name": "demo-db", "key": "password"}}} for item in database["env"])
+    assert len(app_pod["containers"]) == 1
+    assert yaml.safe_load(bundle.files["deploy/kubernetes/service.yaml"])["spec"]["ports"] == [
+        {"name": "http", "port": 8201, "targetPort": "http"}
+    ]
+    assert "postgresql://application:" in bundle.files["Dockerfile"]
+    assert "service.migrate" in bundle.files["Dockerfile"]
+    database["args"][-2:] = ["-p", "9999"]
+    altered = bundle.files | {path: yaml.safe_dump(deployment)}
+    with pytest.raises(ManifestPolicyError, match="deployment_policy_denied"):
+        checked_manifests(altered, digest=canonical_digest(altered), **kwargs)
+    intent["connectivity"]["replicas"] = 2
+    with pytest.raises(PlanError, match="approved_postgres_binding_mismatch"):
+        render(assessment, intent, profile)
+
+
+def test_reviewed_pr_policy_only_permits_the_original_merge():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from app.deployments.queue import source_scope_permits
+    from app.integrations.github.compatibility import REVIEWED_PR, policy_permits
+
+    db = Mock()
+    db.get.return_value = SimpleNamespace(head_sha="a" * 40, merged_sha="b" * 40, plan_id="plan")
+    policy = SimpleNamespace(source_compatibility_policy=REVIEWED_PR, allowed_source_sha="a" * 40)
+    release = SimpleNamespace(source_sha="b" * 40, merged_sha="b" * 40, plan_id="plan")
+    build = SimpleNamespace(source_sha="b" * 40, merged_sha="b" * 40, pull_request_id="pr")
+    assert policy_permits(REVIEWED_PR, None)
+    assert not policy_permits(REVIEWED_PR, {"policy": "node-source-compatibility-v1"})
+    assert source_scope_permits(db, policy, release, build)
+    release.source_sha = "c" * 40
+    build.source_sha = "c" * 40
+    assert not source_scope_permits(db, policy, release, build)
+    release.source_sha = build.source_sha = "b" * 40
+    db.get.return_value.head_sha = "d" * 40
+    assert not source_scope_permits(db, policy, release, build)

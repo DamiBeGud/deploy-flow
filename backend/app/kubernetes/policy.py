@@ -8,8 +8,8 @@ import re
 import yaml
 
 from app.bootstrap.generator import canonical_digest
-from app.bootstrap.native_runtime import RUNTIME_SCRATCH_MOUNT, RUNTIME_SCRATCH_VOLUME
-from app.bootstrap.postgres import configured_postgres
+from app.bootstrap.native_runtime import NATIVE_UID, RUNTIME_SCRATCH_MOUNT, RUNTIME_SCRATCH_VOLUME
+from app.bootstrap.postgres import configured_postgres, postgres_volumes
 
 KINDS = {
     "deploy/kubernetes/configmap.yaml": ("v1", "ConfigMap"),
@@ -73,7 +73,6 @@ def checked_manifests(
         or pod.get("hostNetwork")
         or pod.get("hostPID")
         or pod.get("hostIPC")
-        or pod.get("initContainers")
         or pod.get("ephemeralContainers")
         or pod.get("shareProcessNamespace")
         or pod.get("nodeName")
@@ -84,13 +83,25 @@ def checked_manifests(
         raise ManifestPolicyError("deployment_policy_denied")
     pod_security = pod.get("securityContext") or {}
     container = containers[0]
+    postgres = configured_postgres() if container.get("env") or pod.get("initContainers") else None
+    embedded = bool(postgres and postgres.ephemeral)
+    if pod.get("initContainers") or embedded:
+        if (
+            not embedded
+            or pod.get("initContainers") != [postgres.database_sidecar()]
+            or pod_security.get("fsGroup") != NATIVE_UID
+            or spec.get("replicas") != 1
+            or spec.get("strategy") != {"type": "Recreate"}
+        ):
+            raise ManifestPolicyError("deployment_policy_denied")
     # The JVM and Gunicorn need a writable temporary directory. Allow only
     # the generated, size-bounded pod-local mount at /tmp.
     volumes = pod.get("volumes") or []
     mounts = container.get("volumeMounts") or []
+    database_volumes = postgres_volumes() if embedded else []
     if container.get("volumeDevices") or (volumes, mounts) not in (
-        ([], []),
-        ([RUNTIME_SCRATCH_VOLUME], [RUNTIME_SCRATCH_MOUNT]),
+        (database_volumes, []),
+        ([RUNTIME_SCRATCH_VOLUME, *database_volumes], [RUNTIME_SCRATCH_MOUNT]),
     ):
         raise ManifestPolicyError("deployment_policy_denied")
     security = container.get("securityContext") or {}
@@ -129,8 +140,7 @@ def checked_manifests(
         {"configMapRef": {"name": config["metadata"]["name"]}}
     ]:
         raise ManifestPolicyError("configmap_reference_denied")
-    if container.get("env"):
-        postgres = configured_postgres()
+    if container.get("env") or embedded:
         if (
             not postgres
             or namespace != "deployflow-test"
@@ -139,7 +149,7 @@ def checked_manifests(
             or container.get("command")
             or container.get("args")
             or container["env"] != postgres.secret_env()
-            or "DATABASE_URL" in config["data"]
+            or any(key in config["data"] for key in ("DATABASE_URL", "POSTGRES_PASSWORD"))
             or "Ingress" in by_kind
             or not re.fullmatch(
                 re.escape(postgres.image_repository(registry))

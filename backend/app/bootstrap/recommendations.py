@@ -356,7 +356,10 @@ def recommend(
     return {
         "intent": intent,
         "generation_blocker": generation_blocker,
-        "approved_database": {"migration": f"python -m {postgres.migration_module}"} if postgres else None,
+        "approved_database": (
+            {"migration": f"python -m {postgres.migration_module}"}
+            | ({"ephemeral": True} if postgres.ephemeral else {})
+        ) if postgres else None,
         "recommendations": {
             "runtime": {
                 "value": family,

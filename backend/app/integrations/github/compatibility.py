@@ -16,9 +16,12 @@ from app.integrations.github.api import GitHubPhase6Error
 VERSION = "node-source-compatibility-v1"
 HANDLER_VERSION = "node-handler-compatibility-v2"
 POLICIES = {VERSION, HANDLER_VERSION}
+REVIEWED_PR = "reviewed-infrastructure-pr-v1"
 
 
 def policy_permits(policy, evidence):
+    if policy == REVIEWED_PR:
+        return evidence is None
     if policy not in POLICIES:
         return False
     if evidence is None:  # Original separately reviewed bootstrap build.
@@ -174,6 +177,8 @@ def _safe_handler_edits(before: bytes, after: bytes) -> bool:
 
 
 def checked_source_compatibility(api, *, baseline: str, source: str, files: dict[str, str], policy: str = VERSION) -> dict:
+    if policy == REVIEWED_PR:
+        raise GitHubPhase6Error("later_source_requires_review")
     if policy not in POLICIES:
         raise GitHubPhase6Error("source_compatibility_policy_unknown")
     if not re.fullmatch(r"[0-9a-f]{40}", source):

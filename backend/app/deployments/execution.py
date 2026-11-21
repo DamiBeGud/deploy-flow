@@ -17,6 +17,7 @@ from app.config import settings
 from app.deployments.external_health import ExternalProbeError, external_health
 from app.deployments.preparation import ReleasePreparationError, _check_github, _source
 from app.deployments.release import ReleaseError, bind_verified_image
+from app.deployments.queue import source_scope_permits
 from app.deployments.rollback import RollbackError, release_files
 from app.deployments.state import transition
 from app.integrations.github.api import GitHubPhase6Error
@@ -168,7 +169,7 @@ def _context(db, run: DeploymentRun, *, observe_only: bool = False):
     ).with_for_update())
     if not observe_only and (policy is None or not settings().deployment_execution_enabled or settings().auth_mode != "oidc"):
         raise ExecutionError("deployment_not_authorized")
-    if not observe_only and record.kind == "standard" and policy.allowed_source_sha and policy.allowed_source_sha != (record.source_sha or record.merged_sha):
+    if not observe_only and record.kind == "standard" and not source_scope_permits(db, policy, record, build):
         raise ExecutionError("source_not_authorized_by_policy")
     if not observe_only and record.kind == "standard" and not policy_permits(policy.source_compatibility_policy, build.compatibility_json):
         raise ExecutionError("source_compatibility_policy_revoked")

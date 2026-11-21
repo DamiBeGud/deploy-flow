@@ -25,7 +25,7 @@ from app.bootstrap.native_runtime import (
     native_build,
 )
 from app.bootstrap.node_runtime import select_node_runtime
-from app.bootstrap.postgres import postgres_for_source
+from app.bootstrap.postgres import postgres_for_source, postgres_volumes
 
 MANAGED_PATHS = {
     "Dockerfile",
@@ -155,6 +155,7 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         or intent["connectivity"]["exposure"]["kind"] != "internal"
         or "DATABASE_URL" in intent["connectivity"].get("environment", {})
         or intent["connectivity"].get("connections")
+        or (postgres.ephemeral and intent["connectivity"]["replicas"] != 1)
     ):
         raise PlanError("approved_postgres_binding_mismatch")
     replicas = intent["connectivity"]["replicas"]
@@ -176,6 +177,7 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
                 runtime, assessment.get("runtime", {}).get("version"),
                 port, install, test, build_command, start, verified_gunicorn=verified_gunicorn,
                 migration_module=postgres.migration_module if postgres else None,
+                ephemeral_postgres=bool(postgres and postgres.ephemeral),
             )
         except ValueError as exc:
             raise PlanError(str(exc)) from exc
@@ -395,8 +397,8 @@ PY"""
             },
         },
     }
+    pod = deployment["spec"]["template"]["spec"]
     if runtime == "java" or start[0] == "gunicorn":
-        pod = deployment["spec"]["template"]["spec"]
         pod["securityContext"]["fsGroup"] = NATIVE_UID
         pod["volumes"] = [RUNTIME_SCRATCH_VOLUME]
         pod["containers"][0]["volumeMounts"] = [RUNTIME_SCRATCH_MOUNT]
@@ -406,6 +408,11 @@ PY"""
             "periodSeconds": 2,
             "failureThreshold": 30,
         }
+    if postgres and postgres.ephemeral:
+        pod["securityContext"]["fsGroup"] = NATIVE_UID
+        pod["initContainers"] = [postgres.database_sidecar()]
+        pod["volumes"] = [*pod.get("volumes", []), *postgres_volumes()]
+        deployment["spec"]["strategy"] = {"type": "Recreate"}
     service = {
         "apiVersion": "v1",
         "kind": "Service",

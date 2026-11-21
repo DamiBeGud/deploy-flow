@@ -6,14 +6,29 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.deployments.state import transition
-from app.integrations.github.compatibility import policy_permits
+from app.integrations.github.compatibility import REVIEWED_PR, policy_permits
 from app.persistence.models import (
     DeploymentPolicy,
     DeploymentRun,
     ExecutionJob,
+    InfrastructurePullRequest,
     ReleaseSpecificationRecord,
     VerifiedBuild,
 )
+
+
+def source_scope_permits(db, policy, release, build) -> bool:
+    if policy.source_compatibility_policy != REVIEWED_PR:
+        return not policy.allowed_source_sha or policy.allowed_source_sha == (release.source_sha or release.merged_sha)
+    pull = db.get(InfrastructurePullRequest, build.pull_request_id)
+    return bool(
+        policy.allowed_source_sha
+        and pull
+        and pull.head_sha == policy.allowed_source_sha
+        and pull.plan_id == release.plan_id
+        and pull.merged_sha == release.merged_sha == build.merged_sha
+        and (build.source_sha or build.merged_sha) == (release.source_sha or release.merged_sha) == release.merged_sha
+    )
 
 
 def queue_execution(db, run: DeploymentRun) -> ExecutionJob | None:
@@ -30,7 +45,7 @@ def queue_execution(db, run: DeploymentRun) -> ExecutionJob | None:
     build = db.get(VerifiedBuild, run.verified_build_id)
     if build is None or not policy_permits(policy.source_compatibility_policy, build.compatibility_json):
         return None
-    if policy.allowed_source_sha and policy.allowed_source_sha != (release.source_sha or release.merged_sha):
+    if release is None or not source_scope_permits(db, policy, release, build):
         return None
     existing = db.scalar(select(ExecutionJob).where(ExecutionJob.deployment_run_id == run.id))
     if existing:

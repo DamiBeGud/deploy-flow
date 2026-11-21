@@ -6,6 +6,8 @@ import json
 import re
 from dataclasses import dataclass
 
+from app.bootstrap.postgres import POSTGRES_DATABASE, POSTGRES_PORT
+
 NATIVE_UID = 10001
 RUNTIME_SCRATCH_VOLUME = {"name": "runtime-tmp", "emptyDir": {"sizeLimit": "64Mi"}}
 RUNTIME_SCRATCH_MOUNT = {"name": "runtime-tmp", "mountPath": "/tmp"}
@@ -119,7 +121,7 @@ def _native_commands(family, install, test, build, start, port, verified_gunicor
 
 def native_build(
     family, version, port, install, test, build, start, *,
-    verified_gunicorn=False, migration_module=None,
+    verified_gunicorn=False, migration_module=None, ephemeral_postgres=False,
 ):
     _native_commands(family, install, test, build, start, port, verified_gunicorn)
     if family == "python":
@@ -155,6 +157,13 @@ def native_build(
             'subprocess.run([sys.executable, "-m", sys.argv[1]], check=True, timeout=60); '
             'os.execvp(sys.argv[2], sys.argv[2:])'
         )
+        if ephemeral_postgres:
+            launcher = (
+                'import os; from urllib.parse import quote; '
+                f'os.environ["DATABASE_URL"] = "postgresql://{POSTGRES_DATABASE}:" + '
+                'quote(os.environ.pop("POSTGRES_PASSWORD"), safe="") + '
+                f'"@127.0.0.1:{POSTGRES_PORT}/{POSTGRES_DATABASE}"; ' + launcher
+            )
         launch = ["python", "-c", launcher, migration_module, *start]
     docker += [
         "FROM prepared AS runtime",

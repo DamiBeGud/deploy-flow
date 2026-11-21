@@ -168,6 +168,15 @@ def _python(read, paths):
             result.add("network.port", port, path, source, binding_node.lineno)
             result.add("runtime.command", command, path, source, binding_node.lineno)
 
+    if {"celery", "redis"}.issubset(result.service_dependencies):
+        redis_worker = _redis_worker(read, readme, paths, module)
+        if redis_worker:
+            worker, worker_path, worker_source = redis_worker
+            result.add("workflow.worker_target", worker, worker_path, worker_source)
+            result.required_variables = ["CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "QUEUE_NAMESPACE"]
+            if re.search(r"""os\.environ(?:\.get\(\s*|\[\s*)['"]API_TOKEN['"]""", source):
+                result.required_variables.append("API_TOKEN")
+
     route_nodes = {}
     for statement in scope.body:
         if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -184,9 +193,45 @@ def _python(read, paths):
                 and isinstance(decorator.args[0].value, str)
             ):
                 route_nodes[decorator.args[0].value] = decorator.lineno
+    if "/health/live" in route_nodes:
+        result.add("health.liveness", "/health/live", path, source, route_nodes["/health/live"])
     if probe := _probe(route_nodes):
         result.add("health_check", probe, path, source, route_nodes[probe])
     return result
+
+
+def _redis_worker(read, readme, paths, module):
+    # Corroborate a documented worker command with a sibling Python module
+    # and the Celery object consumed by the known CLI target.
+    package, _, _ = module.rpartition(".")
+    workers = set(re.findall(
+        rf"`celery[ \t]+-A[ \t]+({MODULE})[.:]celery[ \t]+worker[ \t]+--loglevel=warning[ \t]+--concurrency=1`",
+        readme, re.ASCII,
+    ))
+    if len(workers) != 1 or not package:
+        return None
+    worker = next(iter(workers))
+    path = worker.replace(".", "/") + ".py"
+    if worker.rpartition(".")[0] != package or path not in paths:
+        return None
+    body = read(path)
+    try:
+        tree = ast.parse(body)
+    except (SyntaxError, RecursionError):
+        return None
+    has_celery = any(
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "celery"
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "Celery"
+        for node in tree.body
+    )
+    if has_celery and all(name in body for name in ("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "QUEUE_NAMESPACE")):
+        return f"{worker}:celery", path, body
+    return None
 
 
 def _rails(read, paths):
@@ -213,6 +258,8 @@ def _rails(read, paths):
             rakefile,
             test_task,
         )
+    if bundler := re.search(r"(?m)^BUNDLED WITH\n\s+(\d+\.\d+\.\d+)", lock):
+        _add_match(result, "runtime.bundler", bundler[1], "Gemfile.lock", lock, bundler)
     if version := re.search(r"(?m)^RUBY VERSION\n\s+ruby (\d+\.\d+\.\d+)", lock):
         _add_match(result, "runtime.version", version[1], "Gemfile.lock", lock, version)
     if port := re.search(r"""ENV\.fetch\(\s*['"]PORT['"]\s*,\s*['"]?(\d{1,5})\b""", puma):
@@ -223,12 +270,19 @@ def _rails(read, paths):
     }
     if probe := _probe(matches):
         _add_match(result, "health_check", probe, "config/routes.rb", routes, matches[probe])
+    if "/health/live" in matches:
+        _add_match(result, "health.liveness", "/health/live", "config/routes.rb", routes, matches["/health/live"])
     database = read("config/database.yml")
     if "ENV" in database and "DATABASE_URL" in database:
         result.required_variables.append("DATABASE_URL")
         result.service_dependencies.append("postgresql")
     if "SECRET_KEY_BASE" in read("config/environments/production.rb"):
         result.required_variables.append("SECRET_KEY_BASE")
+    if any(
+        re.search(r"(?m)^\s*before_action\s+:authenticate\b", read(path))
+        for path in paths if path.startswith("app/controllers/") and path.endswith(".rb")
+    ):
+        result.required_variables.append("API_TOKEN")
     migration = next(
         (path for path in paths if re.fullmatch(r"db/migrate/\d+_[a-z0-9_]+\.rb", path)), None
     )
@@ -299,10 +353,23 @@ def _maven(read, paths):
     for path in paths:
         if path.startswith("src/main/java/") and path.endswith(".java"):
             controller = read(path)
+            for variable in ("DATABASE_URL", "API_TOKEN"):
+                if f'System.getenv("{variable}")' in controller and variable not in result.required_variables:
+                    result.required_variables.append(variable)
+            expected_migration = f"java -jar target/{artifact}.jar migrate"
+            if (
+                'args[0].equals("migrate")' in controller
+                and "flyway-core" in result.service_dependencies
+                and any(p.startswith("src/main/resources/db/migration/") for p in paths)
+                and f"`{expected_migration}`" in read("README.md")
+            ):
+                result.add("workflow.migration_command", expected_migration, path, controller)
             if re.search(r"@(?:RequestMapping)\b", controller):
                 continue  # Class prefixes require a separate route resolver.
             for match in re.finditer(r'@GetMapping\(\s*"([^"]+)"\s*\)', controller):
                 routes[match[1]] = (path, controller, match)
+    if "/health/live" in routes:
+        _add_match(result, "health.liveness", "/health/live", *routes["/health/live"])
     if probe := _probe(routes):
         _add_match(result, "health_check", probe, *routes[probe])
     return result

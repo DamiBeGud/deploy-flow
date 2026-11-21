@@ -146,13 +146,14 @@ def test_detect_and_render_native_delivery(
     tmp_path, files, family, port, probe, commands, image_tag
 ):
     assessment = scan(tmp_path, files)
-    assert assessment["review"] == {"runtime": family, "port": port, "health_path": probe}
+    expected_review = {"runtime": family, "port": port, "health_path": probe}
+    if family == "ruby":
+        expected_review["liveness_path"] = "/health/live"
+    assert assessment["review"] == expected_review
     recommendation = recommend(assessment, PROFILE, "main", 1)
     intent = recommendation["intent"]
     build = BuildSpecification.model_validate(intent["build"])
-    assert build.image == (
-        "ghcr.io/example/demo" if family != "nodejs" else PROFILE["default_image"]
-    )
+    assert build.image == "ghcr.io/example/demo"
     for field, expected in zip(
         ("install_command", "test_command", "build_command", "start_command"), commands, strict=True
     ):
@@ -409,3 +410,125 @@ def test_reviewed_pr_policy_only_permits_the_original_merge():
     release.source_sha = build.source_sha = "b" * 40
     db.get.return_value.head_sha = "d" * 40
     assert not source_scope_permits(db, policy, release, build)
+
+
+@pytest.mark.parametrize("token_secret", [None, "queue-api-secret"])
+def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, token_secret):
+    import json
+
+    from app.deployments.release import bind_verified_image
+
+    files = {
+        **PYTHON,
+        "requirements.txt": PYTHON["requirements.txt"] + "redis==5.2.1\ncelery==5.5.3\n",
+        "README.md": PYTHON["README.md"] + "Run `celery -A service.worker.celery worker --loglevel=warning --concurrency=1`.\n",
+        "service/main.py": PYTHON["service/main.py"] + '@app.get("/health/live")\ndef live(): return {}\n',
+        "service/worker.py": (
+            "import os\nfrom celery import Celery\n"
+            'celery = Celery("demo", broker=os.environ["CELERY_BROKER_URL"], backend=os.environ["CELERY_RESULT_BACKEND"])\n'
+            'queue = os.environ["QUEUE_NAMESPACE"]\n'
+        ),
+    }
+    if token_secret:
+        files["service/main.py"] += 'import os\nexpected = os.environ.get("API_TOKEN")\n'
+    assessment = scan(tmp_path, files)
+    profile = PROFILE | {"application_id": "4374b5cc-a306-4fda-ab0b-560d8d6ed1a5"}
+    assert assessment["workflow"]["worker_target"] == "service.worker:celery"
+    assert "QUEUE_NAMESPACE" in assessment["configuration"]["required_variables"]
+    assert recommend(assessment, profile, "main", 1)["generation_blocker"]
+    value = {
+        "application_id": profile["application_id"], "application_name": "demo", "repository": "example/demo",
+        "source_sha": "a" * 40, "worker_target": "service.worker:celery", "api_token_secret": token_secret,
+    }
+    monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([value]))
+    result = recommend(assessment, profile, "main", 1, application_id=profile["application_id"])
+    assert not result["generation_blocker"]
+    intent = result["intent"]
+    bundle = render(assessment, intent, profile)
+    release = bind_verified_image(
+        bundle_files=bundle.files, bundle_digest=bundle.digest, image_binding=bundle.validation["image_binding"],
+        image_repository=intent["build"]["image"], image_digest="sha256:" + "e" * 64,
+        profile=profile, application_id=profile["application_id"],
+    )
+    path = "deploy/kubernetes/deployment.yaml"
+    manifest = yaml.safe_load(release.files[path])
+    pod = manifest["spec"]["template"]["spec"]
+    assert pod["initContainers"][0]["args"][2] == "127.0.0.1"
+    assert [c["image"] for c in pod["containers"]] == [release.image_reference] * 2
+    assert pod["containers"][1]["command"][:4] == ["celery", "-A", "service.worker:celery", "worker"]
+    assert token_secret is None or pod["containers"][0]["env"][0]["valueFrom"]["secretKeyRef"]["name"] == token_secret
+    assert "env" not in pod["containers"][1]
+    pod["containers"][1]["command"] = ["sh", "-c", "true"]
+    files = release.files | {path: yaml.safe_dump(manifest)}
+    with pytest.raises(ManifestPolicyError, match="redis_binding_denied"):
+        checked_manifests(
+            files, digest=canonical_digest(files), namespace=profile["namespace"],
+            application_id=profile["application_id"], registry=profile["registry"],
+        )
+
+
+def test_node_runtime_uses_its_repository_and_blocks_missing_database(tmp_path):
+    plain = NODE["package.json"]
+    files = NODE | {
+        "package.json": plain.replace('"scripts"', '"dependencies":{"pg":"^8"},"scripts"'),
+        "src/index.ts": NODE["src/index.ts"] + '\nconst url = process.env.DATABASE_URL;\n',
+    }
+    assessment = scan(tmp_path, files)
+    assert assessment["configuration"]["required_variables"] == ["DATABASE_URL"]
+    result = recommend(assessment, PROFILE, "main", 1)
+    assert result["intent"]["build"]["image"] == "ghcr.io/example/demo"
+    assert result["generation_blocker"]
+    with pytest.raises(PlanError, match="native_service_requires_configuration_bindings"):
+        render(assessment, result["intent"], PROFILE)
+
+
+@pytest.mark.parametrize("family,slug,source,migration", [
+    ("nodejs", "demo", NODE | {
+        "package.json": NODE["package.json"].replace('"start"', '"migrate":"node scripts/migrate.mjs","start"').replace('"scripts"', '"dependencies":{"pg":"8.16.3"},"scripts"'),
+        "src/index.ts": NODE["src/index.ts"] + '\nconst url = process.env.DATABASE_URL;\n',
+        "scripts/migrate.mjs": 'export const migrate = true;',
+    }, "npm run migrate"),
+    ("java", "demo", JAVA | {
+        "pom.xml": JAVA["pom.xml"].replace(
+            "<build>",
+            "<dependencies>"
+            + "".join(f"<dependency><artifactId>{item}</artifactId></dependency>" for item in (
+                "spring-jdbc", "postgresql", "flyway-core", "flyway-database-postgresql",
+            ))
+            + "</dependencies><build>",
+        ),
+        "README.md": "Run `java -jar target/example-0.1.0.jar migrate`.",
+        "src/main/java/example/Database.java": 'String url=System.getenv("DATABASE_URL");',
+        "src/main/java/example/Application.java": 'if (args[0].equals("migrate")) Database.migrate();',
+        "src/main/resources/db/migration/V1__data.sql": "SELECT 1;",
+    }, "java -jar target/example-0.1.0.jar migrate"),
+    ("ruby", "demo", RAILS | {
+        "Gemfile.lock": RAILS["Gemfile.lock"] + "\nRUBY VERSION\n   ruby 3.3.10p183\n\nBUNDLED WITH\n   2.5.22\n",
+    }, "bundle exec rails db:migrate"),
+])
+def test_postgres_source_migration_is_packaged_for_each_runtime(tmp_path, monkeypatch, family, slug, source, migration):
+    import json
+
+    profile = PROFILE | {"application_id": "43cfca1e-0d9a-4c38-bf9d-8d3a2132ea9c"}
+    assignment = {
+        "application_id": profile["application_id"], "application_name": slug,
+        "repository": "example/demo", "source_sha": "a" * 40, "secret_name": "native-db",
+        "runtime": family, "liveness_path": "/health/live", "ephemeral": True,
+    }
+    monkeypatch.setenv("DF_APPROVED_POSTGRES_BINDINGS", json.dumps([assignment]))
+    assessment = scan(tmp_path, source)
+    assert assessment["workflow"]["migration_command"] == migration
+    result = recommend(assessment, profile, "main", 1, application_id=profile["application_id"])
+    assert not result["generation_blocker"]
+    bundle = render(assessment, result["intent"], profile)
+    checked_manifests(
+        bundle.files, digest=bundle.digest, namespace=profile["namespace"],
+        application_id=profile["application_id"], registry=profile["registry"],
+    )
+    launch = json.loads(bundle.files["Dockerfile"].rsplit("CMD ", 1)[1])
+    assert launch[:2] == ["sh", "-ec"]
+    assert f"timeout 60 {migration}" in launch[2]
+    assert "127.0.0.1:5432" in launch[2]
+    pod = yaml.safe_load(bundle.files["deploy/kubernetes/deployment.yaml"])["spec"]["template"]["spec"]
+    assert pod["initContainers"][0]["env"][-1]["name"] == "POSTGRES_PASSWORD"
+    assert ("SECRET_KEY_BASE" in {entry["name"] for entry in pod["containers"][0]["env"]}) == (family == "ruby")

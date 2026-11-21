@@ -70,6 +70,8 @@ class Scanner:
         if any(p.suffix in {".ts", ".mts", ".cts"} for p in paths):
             languages.append("typescript")
         package = self._package()
+        node_services: set[str] = set()
+        node_required: set[str] = set()
         findings = []
 
         def finding(category, value, status, confidence, evidence_ids):
@@ -118,6 +120,14 @@ class Scanner:
                     finding("framework", "express", "explicit", 0.99, [package_ev])
                 if "package-lock.json" in names:
                     finding("workflow.install_command", "npm ci", "explicit", 0.98, [package_ev])
+                migration_script = scripts.get("migrate")
+                if (
+                    isinstance(migration_script, str)
+                    and (match := re.fullmatch(r"node ([A-Za-z0-9_/.-]+\.m?js)", migration_script))
+                    and match[1] in names
+                    and "pg" in dependencies
+                ):
+                    finding("workflow.migration_command", "npm run migrate", "explicit", 0.98, [package_ev])
                 for key, category in (
                     ("start", "runtime.command"),
                     ("test", "workflow.test_command"),
@@ -134,6 +144,7 @@ class Scanner:
                     ("bullmq", "queue"),
                 ):
                     if dependency in dependencies:
+                        node_services.add(kind)
                         finding(f"dependencies.{kind}", dependency, "explicit", 0.95, [package_ev])
 
         env_names: set[str] = set()
@@ -165,6 +176,8 @@ class Scanner:
                         0.95,
                         [self._add_evidence(path, number, line, "node.env.v1")],
                     )
+                if re.search(r"if\s*\(\s*!\s*process\.env\.API_TOKEN\s*\)", line):
+                    node_required.add("API_TOKEN")
                 route = re.search(
                     r"\.(?:get|head)\(\s*['\"]([^'\"]*(?:health|ready|live)[^'\"]*)", line, re.I
                 )
@@ -242,6 +255,13 @@ class Scanner:
         if native:
             ports = [port] if (port := value("network.port")) is not None else []
             health = [probe] if (probe := value("health_check")) else []
+        if runtime == "nodejs":
+            if "postgresql" in node_services and "DATABASE_URL" in env_names:
+                node_required.add("DATABASE_URL")
+            by_priority = ("/ready", "/health/ready", "/healthz", "/health", "/status", "/live", "/health/live")
+            readiness = next((route for route in by_priority if route in health), None)
+            if readiness:
+                health = [readiness, *(route for route in health if route != readiness)]
         unknowns = []
         if not runtime:
             unknowns.append(unsupported or "No supported root application layout was detected.")
@@ -284,12 +304,17 @@ class Scanner:
                 "name": runtime,
                 "command": start,
                 "version": value("runtime.version"),
+                **({"bundler": bundler} if (bundler := value("runtime.bundler")) else {}),
                 **({"application_target": target} if (target := value("runtime.application_target")) else {}),
             },
             "review": {
                 "runtime": runtime or "unknown",
                 "port": min(ports) if ports else None,
                 "health_path": health[0] if health else None,
+                **({"liveness_path": "/health/live"} if (
+                    health and health[0] != "/health/live"
+                    and (value("health.liveness") or (runtime == "nodejs" and "/health/live" in health))
+                ) else {}),
             },
             "network": {"ports": sorted(set(ports))},
             "dependencies": {
@@ -297,17 +322,18 @@ class Scanner:
                 "caches": [],
                 "queues": [],
                 "external_services": [],
-                **({"detected_services": native.service_dependencies} if native else {}),
+                "detected_services": native.service_dependencies if native else sorted(node_services),
             },
             "configuration": {
-                "required_variables": native.required_variables if native else [],
-                "optional_variables": sorted(env_names),
+                "required_variables": native.required_variables if native else sorted(node_required),
+                "optional_variables": sorted(env_names - node_required),
             },
             "storage": [],
             "health_checks": sorted(set(health)),
             "workflow": {
                 "test_command": value("workflow.test_command"),
                 "build_command": value("workflow.build_command"),
+                **({"worker_target": worker} if (worker := value("workflow.worker_target")) else {}),
                 **(
                     {"migration_command": migration} if (migration := value("workflow.migration_command")) else {}
                 ),

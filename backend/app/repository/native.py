@@ -258,6 +258,8 @@ def _rails(read, paths):
             rakefile,
             test_task,
         )
+    if bundler := re.search(r"(?m)^BUNDLED WITH\n\s+(\d+\.\d+\.\d+)", lock):
+        _add_match(result, "runtime.bundler", bundler[1], "Gemfile.lock", lock, bundler)
     if version := re.search(r"(?m)^RUBY VERSION\n\s+ruby (\d+\.\d+\.\d+)", lock):
         _add_match(result, "runtime.version", version[1], "Gemfile.lock", lock, version)
     if port := re.search(r"""ENV\.fetch\(\s*['"]PORT['"]\s*,\s*['"]?(\d{1,5})\b""", puma):
@@ -268,12 +270,19 @@ def _rails(read, paths):
     }
     if probe := _probe(matches):
         _add_match(result, "health_check", probe, "config/routes.rb", routes, matches[probe])
+    if "/health/live" in matches:
+        _add_match(result, "health.liveness", "/health/live", "config/routes.rb", routes, matches["/health/live"])
     database = read("config/database.yml")
     if "ENV" in database and "DATABASE_URL" in database:
         result.required_variables.append("DATABASE_URL")
         result.service_dependencies.append("postgresql")
     if "SECRET_KEY_BASE" in read("config/environments/production.rb"):
         result.required_variables.append("SECRET_KEY_BASE")
+    if any(
+        re.search(r"(?m)^\s*before_action\s+:authenticate\b", read(path))
+        for path in paths if path.startswith("app/controllers/") and path.endswith(".rb")
+    ):
+        result.required_variables.append("API_TOKEN")
     migration = next(
         (path for path in paths if re.fullmatch(r"db/migrate/\d+_[a-z0-9_]+\.rb", path)), None
     )
@@ -344,10 +353,23 @@ def _maven(read, paths):
     for path in paths:
         if path.startswith("src/main/java/") and path.endswith(".java"):
             controller = read(path)
+            for variable in ("DATABASE_URL", "API_TOKEN"):
+                if f'System.getenv("{variable}")' in controller and variable not in result.required_variables:
+                    result.required_variables.append(variable)
+            expected_migration = f"java -jar target/{artifact}.jar migrate"
+            if (
+                'args[0].equals("migrate")' in controller
+                and "flyway-core" in result.service_dependencies
+                and any(p.startswith("src/main/resources/db/migration/") for p in paths)
+                and f"`{expected_migration}`" in read("README.md")
+            ):
+                result.add("workflow.migration_command", expected_migration, path, controller)
             if re.search(r"@(?:RequestMapping)\b", controller):
                 continue  # Class prefixes require a separate route resolver.
             for match in re.finditer(r'@GetMapping\(\s*"([^"]+)"\s*\)', controller):
                 routes[match[1]] = (path, controller, match)
+    if "/health/live" in routes:
+        _add_match(result, "health.liveness", "/health/live", *routes["/health/live"])
     if probe := _probe(routes):
         _add_match(result, "health_check", probe, *routes[probe])
     return result

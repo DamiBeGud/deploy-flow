@@ -25,8 +25,9 @@ from app.bootstrap.native_runtime import (
     native_build,
 )
 from app.bootstrap.node_runtime import select_node_runtime
-from app.bootstrap.postgres import postgres_for_source, postgres_volumes
+from app.bootstrap.postgres import migrated_start, postgres_for_source, postgres_volumes
 from app.bootstrap.redis import REDIS_PORT, redis_for_source
+from app.bootstrap.tokens import token_for_source
 
 MANAGED_PATHS = {
     "Dockerfile",
@@ -96,9 +97,10 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     if assessment.get("completion") not in {"complete", "partial"}:
         raise PlanError("assessment_requires_review")
     runtime = assessment.get("review", {}).get("runtime")
-    if runtime == "ruby":
+    postgres = postgres_for_source(assessment, profile.get("application_id", ""))
+    if runtime == "ruby" and not postgres:
         raise PlanError("rails_requires_approved_database_and_secret_references_and_migration")
-    if runtime not in {"nodejs", "python", "java"}:
+    if runtime not in {"nodejs", "python", "java", "ruby"}:
         raise PlanError("unsupported_runtime")
     inference = command_inference(assessment)
     if blocker := command_blocker(inference):
@@ -108,9 +110,9 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         or not (inference.get("health") or assessment["review"].get("health_path"))
     ):
         raise PlanError("native_service_requires_source_evidence_for_port_and_health_path")
-    postgres = postgres_for_source(assessment, profile.get("application_id", ""))
     redis = redis_for_source(assessment, profile.get("application_id", ""))
-    if not (postgres or redis) and (
+    token = token_for_source(assessment, profile.get("application_id", ""))
+    if not (postgres or redis or token) and (
         assessment.get("configuration", {}).get("required_variables")
         or assessment.get("dependencies", {}).get("detected_services")
     ):
@@ -159,6 +161,7 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         image != postgres.image_repository(profile["registry"])
         or intent["connectivity"]["exposure"]["kind"] != "internal"
         or "DATABASE_URL" in intent["connectivity"].get("environment", {})
+        or (postgres.runtime == "java" and " ".join(start) != assessment.get("runtime", {}).get("command"))
         or intent["connectivity"].get("connections")
         or (postgres.ephemeral and intent["connectivity"]["replicas"] != 1)
     ):
@@ -172,6 +175,12 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         or set(redis.environment()) & intent["connectivity"].get("environment", {}).keys()
     ):
         raise PlanError("approved_redis_binding_mismatch")
+    if token and (
+        image != token.image_repository(profile["registry"])
+        or intent["connectivity"]["exposure"]["kind"] != "internal"
+        or intent["connectivity"].get("connections")
+    ):
+        raise PlanError("approved_token_binding_mismatch")
     replicas = intent["connectivity"]["replicas"]
     if not isinstance(replicas, int) or not 1 <= replicas <= profile["max_replicas"]:
         raise PlanError("invalid_replicas")
@@ -190,7 +199,9 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
             native = native_build(
                 runtime, assessment.get("runtime", {}).get("version"),
                 port, install, test, build_command, start, verified_gunicorn=verified_gunicorn,
-                migration_module=postgres.migration_module if postgres else None,
+                migration_module=postgres.migration_module if postgres and runtime == "python" else None,
+                migration_command=postgres.migration(start) if postgres and runtime != "python" else None,
+                bundler=assessment.get("runtime", {}).get("bundler"),
                 ephemeral_postgres=bool(postgres and postgres.ephemeral),
             )
         except ValueError as exc:
@@ -211,6 +222,8 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     secret_env = []
     if postgres:
         secret_env = postgres.secret_env()
+    if token:
+        secret_env = token.secret_env()
     if redis:
         environment.update(redis.environment())
         secret_env = redis.secret_env()
@@ -270,7 +283,7 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
                 ]),
                 f"USER {NODE_RUNTIME_UID}:{NODE_RUNTIME_GID}",
                 f"EXPOSE {port}",
-                f"CMD {json.dumps(start)}",
+                "CMD " + json.dumps(migrated_start(start, postgres.migration(start), postgres.ephemeral) if postgres else start),
                 "",
             ]
         )
@@ -417,11 +430,11 @@ PY"""
         },
     }
     pod = deployment["spec"]["template"]["spec"]
-    if runtime == "java" or start[0] == "gunicorn":
+    if runtime in {"java", "ruby"} or start[0] == "gunicorn":
         pod["securityContext"]["fsGroup"] = NATIVE_UID
         pod["volumes"] = [RUNTIME_SCRATCH_VOLUME]
         pod["containers"][0]["volumeMounts"] = [RUNTIME_SCRATCH_MOUNT]
-    if runtime == "java":
+    if runtime == "java" and not postgres:
         pod["containers"][0]["startupProbe"] = {
             "httpGet": {"path": health, "port": "http"},
             "periodSeconds": 2,

@@ -146,7 +146,10 @@ def test_detect_and_render_native_delivery(
     tmp_path, files, family, port, probe, commands, image_tag
 ):
     assessment = scan(tmp_path, files)
-    assert assessment["review"] == {"runtime": family, "port": port, "health_path": probe}
+    expected_review = {"runtime": family, "port": port, "health_path": probe}
+    if family == "ruby":
+        expected_review["liveness_path"] = "/health/live"
+    assert assessment["review"] == expected_review
     recommendation = recommend(assessment, PROFILE, "main", 1)
     intent = recommendation["intent"]
     build = BuildSpecification.model_validate(intent["build"])
@@ -477,3 +480,55 @@ def test_node_runtime_uses_its_repository_and_blocks_missing_database(tmp_path):
     assert result["generation_blocker"]
     with pytest.raises(PlanError, match="native_service_requires_configuration_bindings"):
         render(assessment, result["intent"], PROFILE)
+
+
+@pytest.mark.parametrize("family,slug,source,migration", [
+    ("nodejs", "demo", NODE | {
+        "package.json": NODE["package.json"].replace('"start"', '"migrate":"node scripts/migrate.mjs","start"').replace('"scripts"', '"dependencies":{"pg":"8.16.3"},"scripts"'),
+        "src/index.ts": NODE["src/index.ts"] + '\nconst url = process.env.DATABASE_URL;\n',
+        "scripts/migrate.mjs": 'export const migrate = true;',
+    }, "npm run migrate"),
+    ("java", "demo", JAVA | {
+        "pom.xml": JAVA["pom.xml"].replace(
+            "<build>",
+            "<dependencies>"
+            + "".join(f"<dependency><artifactId>{item}</artifactId></dependency>" for item in (
+                "spring-jdbc", "postgresql", "flyway-core", "flyway-database-postgresql",
+            ))
+            + "</dependencies><build>",
+        ),
+        "README.md": "Run `java -jar target/example-0.1.0.jar migrate`.",
+        "src/main/java/example/Database.java": 'String url=System.getenv("DATABASE_URL");',
+        "src/main/java/example/Application.java": 'if (args[0].equals("migrate")) Database.migrate();',
+        "src/main/resources/db/migration/V1__data.sql": "SELECT 1;",
+    }, "java -jar target/example-0.1.0.jar migrate"),
+    ("ruby", "demo", RAILS | {
+        "Gemfile.lock": RAILS["Gemfile.lock"] + "\nRUBY VERSION\n   ruby 3.3.10p183\n\nBUNDLED WITH\n   2.5.22\n",
+    }, "bundle exec rails db:migrate"),
+])
+def test_postgres_source_migration_is_packaged_for_each_runtime(tmp_path, monkeypatch, family, slug, source, migration):
+    import json
+
+    profile = PROFILE | {"application_id": "43cfca1e-0d9a-4c38-bf9d-8d3a2132ea9c"}
+    assignment = {
+        "application_id": profile["application_id"], "application_name": slug,
+        "repository": "example/demo", "source_sha": "a" * 40, "secret_name": "native-db",
+        "runtime": family, "liveness_path": "/health/live", "ephemeral": True,
+    }
+    monkeypatch.setenv("DF_APPROVED_POSTGRES_BINDINGS", json.dumps([assignment]))
+    assessment = scan(tmp_path, source)
+    assert assessment["workflow"]["migration_command"] == migration
+    result = recommend(assessment, profile, "main", 1, application_id=profile["application_id"])
+    assert not result["generation_blocker"]
+    bundle = render(assessment, result["intent"], profile)
+    checked_manifests(
+        bundle.files, digest=bundle.digest, namespace=profile["namespace"],
+        application_id=profile["application_id"], registry=profile["registry"],
+    )
+    launch = json.loads(bundle.files["Dockerfile"].rsplit("CMD ", 1)[1])
+    assert launch[:2] == ["sh", "-ec"]
+    assert f"timeout 60 {migration}" in launch[2]
+    assert "127.0.0.1:5432" in launch[2]
+    pod = yaml.safe_load(bundle.files["deploy/kubernetes/deployment.yaml"])["spec"]["template"]["spec"]
+    assert pod["initContainers"][0]["env"][-1]["name"] == "POSTGRES_PASSWORD"
+    assert ("SECRET_KEY_BASE" in {entry["name"] for entry in pod["containers"][0]["env"]}) == (family == "ruby")

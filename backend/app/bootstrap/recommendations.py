@@ -17,6 +17,7 @@ from app.bootstrap.contracts import (
 )
 from app.bootstrap.postgres import postgres_for_source
 from app.bootstrap.redis import redis_for_source
+from app.bootstrap.tokens import token_for_source
 
 
 def _nested_value(document: dict, field_path: str):
@@ -335,21 +336,22 @@ def recommend(
     intent["field_recommendations"] = resolve_field_recommendations(intent, field_recommendations)
     postgres = postgres_for_source(assessment, application_id)
     redis = redis_for_source(assessment, application_id)
+    token = token_for_source(assessment, application_id)
     generation_blocker = None
-    if family == "ruby":
+    if family == "ruby" and not postgres:
         generation_blocker = (
             "Rails commands were detected. Deployment requires approved database and secret "
             "references and a migration procedure for this target."
         )
         if workflow.get("migration_command") == "bundle exec rails db:migrate":
             generation_blocker += " Source migration command: bundle exec rails db:migrate."
-    elif family not in {"nodejs", "python", "java"}:
+    elif family not in {"nodejs", "python", "java", "ruby"}:
         generation_blocker = next(
             iter(assessment.get("unknowns", [])), "No supported runtime was detected."
         )
     elif family != "nodejs" and (not port_from_repository or not health_from_repository):
         generation_blocker = "Bundle generation needs a source-backed service port and health route."
-    elif not (postgres or redis) and (
+    elif not (postgres or redis or token) and (
         configuration.get("required_variables")
         or assessment.get("dependencies", {}).get("detected_services")
     ):
@@ -359,8 +361,9 @@ def recommend(
         "intent": intent,
         "generation_blocker": generation_blocker,
         "approved_queue": {"worker": " ".join(redis.worker_argv())} if redis else None,
+        "approved_api_token": bool(token or (postgres and postgres.api_token) or (redis and redis.api_token_secret)),
         "approved_database": (
-            {"migration": f"python -m {postgres.migration_module}"}
+            {"migration": " ".join(postgres.migration(commands["start_command"] or []))}
             | ({"ephemeral": True} if postgres.ephemeral else {})
         ) if postgres else None,
         "recommendations": {

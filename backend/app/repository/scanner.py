@@ -120,6 +120,14 @@ class Scanner:
                     finding("framework", "express", "explicit", 0.99, [package_ev])
                 if "package-lock.json" in names:
                     finding("workflow.install_command", "npm ci", "explicit", 0.98, [package_ev])
+                migration_script = scripts.get("migrate")
+                if (
+                    isinstance(migration_script, str)
+                    and (match := re.fullmatch(r"node ([A-Za-z0-9_/.-]+\.m?js)", migration_script))
+                    and match[1] in names
+                    and "pg" in dependencies
+                ):
+                    finding("workflow.migration_command", "npm run migrate", "explicit", 0.98, [package_ev])
                 for key, category in (
                     ("start", "runtime.command"),
                     ("test", "workflow.test_command"),
@@ -296,6 +304,7 @@ class Scanner:
                 "name": runtime,
                 "command": start,
                 "version": value("runtime.version"),
+                **({"bundler": bundler} if (bundler := value("runtime.bundler")) else {}),
                 **({"application_target": target} if (target := value("runtime.application_target")) else {}),
             },
             "review": {
@@ -303,7 +312,8 @@ class Scanner:
                 "port": min(ports) if ports else None,
                 "health_path": health[0] if health else None,
                 **({"liveness_path": "/health/live"} if (
-                    value("health.liveness") or (runtime == "nodejs" and "/health/live" in health)
+                    health and health[0] != "/health/live"
+                    and (value("health.liveness") or (runtime == "nodejs" and "/health/live" in health))
                 ) else {}),
             },
             "network": {"ports": sorted(set(ports))},

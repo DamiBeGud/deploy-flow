@@ -6,7 +6,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from app.bootstrap.postgres import POSTGRES_DATABASE, POSTGRES_PORT
+from app.bootstrap.postgres import POSTGRES_DATABASE, POSTGRES_PORT, migrated_start
 
 NATIVE_UID = 10001
 RUNTIME_SCRATCH_VOLUME = {"name": "runtime-tmp", "emptyDir": {"sizeLimit": "64Mi"}}
@@ -108,6 +108,14 @@ def _native_commands(family, install, test, build, start, port, verified_gunicor
             raise ValueError("gunicorn_requires_verified_source_and_dependencies")
         if listener[1] != port:
             raise ValueError(f"{start[0]}_command_port_must_match_service_port")
+    elif family == "ruby":
+        if (
+            install != ["bundle", "install"]
+            or test != ["bundle", "exec", "rake", "unit"]
+            or build is not None
+            or start != ["bundle", "exec", "puma", "-C", "config/puma.rb"]
+        ):
+            raise ValueError("unsupported_rails_commands")
     elif (
         install != ["mvn", "-B", "dependency:go-offline"]
         or test not in (None, ["mvn", "-B", "test"])
@@ -122,6 +130,7 @@ def _native_commands(family, install, test, build, start, port, verified_gunicor
 def native_build(
     family, version, port, install, test, build, start, *,
     verified_gunicorn=False, migration_module=None, ephemeral_postgres=False,
+    migration_command=None, bundler=None,
 ):
     _native_commands(family, install, test, build, start, port, verified_gunicorn)
     if family == "python":
@@ -129,6 +138,11 @@ def native_build(
         environment = {"PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"}
         if start[0] == "gunicorn":
             environment["TMPDIR"] = "/tmp"
+    elif family == "ruby":
+        if not re.fullmatch(r"3\.3\.\d{1,3}", version or "") or not re.fullmatch(r"2\.\d{1,3}\.\d{1,3}", bundler or ""):
+            raise ValueError("unsupported_ruby_bundler_versions")
+        base_image = f"ruby:{version}-slim-bookworm"
+        environment = {"RAILS_ENV": "production", "RAILS_LOG_TO_STDOUT": "1", "TMPDIR": "/tmp"}
     else:
         if version not in MAVEN_JAVA_VERSIONS:
             raise ValueError("unsupported_java_version")
@@ -141,6 +155,12 @@ def native_build(
         "COPY . .",
         "RUN " + json.dumps(install),
     ]
+    if family == "ruby":
+        docker[2:2] = [
+            "RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev libyaml-dev pkg-config && rm -rf /var/lib/apt/lists/*",
+            "RUN " + json.dumps(["gem", "install", "bundler", "--version", bundler, "--no-document"]),
+            "ENV BUNDLE_FROZEN=true",
+        ]
     if build:
         docker.append("RUN " + json.dumps(build))
     if test:
@@ -165,6 +185,8 @@ def native_build(
                 f'"@127.0.0.1:{POSTGRES_PORT}/{POSTGRES_DATABASE}"; ' + launcher
             )
         launch = ["python", "-c", launcher, migration_module, *start]
+    elif migration_command:
+        launch = migrated_start(start, migration_command, ephemeral_postgres)
     docker += [
         "FROM prepared AS runtime",
         f"USER {NATIVE_UID}:{NATIVE_UID}",

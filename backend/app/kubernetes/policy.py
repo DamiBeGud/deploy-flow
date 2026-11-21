@@ -10,6 +10,7 @@ import yaml
 from app.bootstrap.generator import canonical_digest
 from app.bootstrap.native_runtime import NATIVE_UID, RUNTIME_SCRATCH_MOUNT, RUNTIME_SCRATCH_VOLUME
 from app.bootstrap.postgres import configured_postgres, postgres_volumes
+from app.bootstrap.redis import REDIS_PORT, configured_redis
 
 KINDS = {
     "deploy/kubernetes/configmap.yaml": ("v1", "ConfigMap"),
@@ -65,6 +66,7 @@ def checked_manifests(
     pod = template.get("spec") or {}
     containers = pod.get("containers") or []
     labels = (template.get("metadata") or {}).get("labels") or {}
+    redis = configured_redis(application_id) if len(containers) == 2 else None
     if (
         (spec.get("selector") or {}).get("matchLabels") != labels
         or labels.get("app.kubernetes.io/instance") != application_id
@@ -78,14 +80,14 @@ def checked_manifests(
         or pod.get("nodeName")
         or pod.get("runtimeClassName")
         or pod.get("imagePullSecrets")
-        or len(containers) != 1
+        or len(containers) != (2 if redis else 1)
     ):
         raise ManifestPolicyError("deployment_policy_denied")
     pod_security = pod.get("securityContext") or {}
     container = containers[0]
-    postgres = configured_postgres() if container.get("env") or pod.get("initContainers") else None
+    postgres = configured_postgres() if not redis and (container.get("env") or pod.get("initContainers")) else None
     embedded = bool(postgres and postgres.ephemeral)
-    if pod.get("initContainers") or embedded:
+    if not redis and (pod.get("initContainers") or embedded):
         if (
             not embedded
             or pod.get("initContainers") != [postgres.database_sidecar()]
@@ -99,10 +101,13 @@ def checked_manifests(
     volumes = pod.get("volumes") or []
     mounts = container.get("volumeMounts") or []
     database_volumes = postgres_volumes() if embedded else []
-    if container.get("volumeDevices") or (volumes, mounts) not in (
-        (database_volumes, []),
-        ([RUNTIME_SCRATCH_VOLUME, *database_volumes], [RUNTIME_SCRATCH_MOUNT]),
-    ):
+    volume_pairs = (
+        (([RUNTIME_SCRATCH_VOLUME], []),) if redis else (
+            (database_volumes, []),
+            ([RUNTIME_SCRATCH_VOLUME, *database_volumes], [RUNTIME_SCRATCH_MOUNT]),
+        )
+    )
+    if container.get("volumeDevices") or (volumes, mounts) not in volume_pairs:
         raise ManifestPolicyError("deployment_policy_denied")
     security = container.get("securityContext") or {}
     if (
@@ -140,7 +145,26 @@ def checked_manifests(
         {"configMapRef": {"name": config["metadata"]["name"]}}
     ]:
         raise ManifestPolicyError("configmap_reference_denied")
-    if container.get("env") or embedded:
+    if redis:
+        if (
+            namespace != "deployflow-test"
+            or redis.application_name != deployment["metadata"]["name"]
+            or not redis.allows_image(container["image"], registry)
+            or pod.get("initContainers") != [redis.sidecar()]
+            or containers[1] != redis.worker(container["image"], config["metadata"]["name"])
+            or pod_security.get("fsGroup") != NATIVE_UID
+            or spec.get("replicas") != 1
+            or spec.get("strategy") != {"type": "Recreate"}
+            or ports[0].get("port") == REDIS_PORT
+            or container.get("command")
+            or container.get("args")
+            or (container.get("env") or []) != redis.secret_env()
+            or "API_TOKEN" in config["data"]
+            or any(config["data"].get(key) != value for key, value in redis.environment().items())
+            or "Ingress" in by_kind
+        ):
+            raise ManifestPolicyError("redis_binding_denied")
+    elif container.get("env") or embedded:
         if (
             not postgres
             or namespace != "deployflow-test"

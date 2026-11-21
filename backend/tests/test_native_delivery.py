@@ -150,9 +150,7 @@ def test_detect_and_render_native_delivery(
     recommendation = recommend(assessment, PROFILE, "main", 1)
     intent = recommendation["intent"]
     build = BuildSpecification.model_validate(intent["build"])
-    assert build.image == (
-        "ghcr.io/example/demo" if family != "nodejs" else PROFILE["default_image"]
-    )
+    assert build.image == "ghcr.io/example/demo"
     for field, expected in zip(
         ("install_command", "test_command", "build_command", "start_command"), commands, strict=True
     ):
@@ -409,3 +407,73 @@ def test_reviewed_pr_policy_only_permits_the_original_merge():
     release.source_sha = build.source_sha = "b" * 40
     db.get.return_value.head_sha = "d" * 40
     assert not source_scope_permits(db, policy, release, build)
+
+
+@pytest.mark.parametrize("token_secret", [None, "queue-api-secret"])
+def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, token_secret):
+    import json
+
+    from app.deployments.release import bind_verified_image
+
+    files = {
+        **PYTHON,
+        "requirements.txt": PYTHON["requirements.txt"] + "redis==5.2.1\ncelery==5.5.3\n",
+        "README.md": PYTHON["README.md"] + "Run `celery -A service.worker.celery worker --loglevel=warning --concurrency=1`.\n",
+        "service/main.py": PYTHON["service/main.py"] + '@app.get("/health/live")\ndef live(): return {}\n',
+        "service/worker.py": (
+            "import os\nfrom celery import Celery\n"
+            'celery = Celery("demo", broker=os.environ["CELERY_BROKER_URL"], backend=os.environ["CELERY_RESULT_BACKEND"])\n'
+            'queue = os.environ["QUEUE_NAMESPACE"]\n'
+        ),
+    }
+    if token_secret:
+        files["service/main.py"] += 'import os\nexpected = os.environ.get("API_TOKEN")\n'
+    assessment = scan(tmp_path, files)
+    profile = PROFILE | {"application_id": "4374b5cc-a306-4fda-ab0b-560d8d6ed1a5"}
+    assert assessment["workflow"]["worker_target"] == "service.worker:celery"
+    assert "QUEUE_NAMESPACE" in assessment["configuration"]["required_variables"]
+    assert recommend(assessment, profile, "main", 1)["generation_blocker"]
+    value = {
+        "application_id": profile["application_id"], "application_name": "demo", "repository": "example/demo",
+        "source_sha": "a" * 40, "worker_target": "service.worker:celery", "api_token_secret": token_secret,
+    }
+    monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([value]))
+    result = recommend(assessment, profile, "main", 1, application_id=profile["application_id"])
+    assert not result["generation_blocker"]
+    intent = result["intent"]
+    bundle = render(assessment, intent, profile)
+    release = bind_verified_image(
+        bundle_files=bundle.files, bundle_digest=bundle.digest, image_binding=bundle.validation["image_binding"],
+        image_repository=intent["build"]["image"], image_digest="sha256:" + "e" * 64,
+        profile=profile, application_id=profile["application_id"],
+    )
+    path = "deploy/kubernetes/deployment.yaml"
+    manifest = yaml.safe_load(release.files[path])
+    pod = manifest["spec"]["template"]["spec"]
+    assert pod["initContainers"][0]["args"][2] == "127.0.0.1"
+    assert [c["image"] for c in pod["containers"]] == [release.image_reference] * 2
+    assert pod["containers"][1]["command"][:4] == ["celery", "-A", "service.worker:celery", "worker"]
+    assert token_secret is None or pod["containers"][0]["env"][0]["valueFrom"]["secretKeyRef"]["name"] == token_secret
+    assert "env" not in pod["containers"][1]
+    pod["containers"][1]["command"] = ["sh", "-c", "true"]
+    files = release.files | {path: yaml.safe_dump(manifest)}
+    with pytest.raises(ManifestPolicyError, match="redis_binding_denied"):
+        checked_manifests(
+            files, digest=canonical_digest(files), namespace=profile["namespace"],
+            application_id=profile["application_id"], registry=profile["registry"],
+        )
+
+
+def test_node_runtime_uses_its_repository_and_blocks_missing_database(tmp_path):
+    plain = NODE["package.json"]
+    files = NODE | {
+        "package.json": plain.replace('"scripts"', '"dependencies":{"pg":"^8"},"scripts"'),
+        "src/index.ts": NODE["src/index.ts"] + '\nconst url = process.env.DATABASE_URL;\n',
+    }
+    assessment = scan(tmp_path, files)
+    assert assessment["configuration"]["required_variables"] == ["DATABASE_URL"]
+    result = recommend(assessment, PROFILE, "main", 1)
+    assert result["intent"]["build"]["image"] == "ghcr.io/example/demo"
+    assert result["generation_blocker"]
+    with pytest.raises(PlanError, match="native_service_requires_configuration_bindings"):
+        render(assessment, result["intent"], PROFILE)

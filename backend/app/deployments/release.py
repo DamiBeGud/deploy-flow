@@ -70,14 +70,14 @@ def bind_verified_image(
         registry=profile["registry"],
     )
     deployment = next(item for item in original if item["kind"] == "Deployment")
-    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    containers = deployment["spec"]["template"]["spec"]["containers"]
     source = bundle_files[DEPLOYMENT_PATH]
-    if container["image"] != preview or source.count(preview) != 1:
+    if any(container["image"] != preview for container in containers) or source.count(preview) != len(containers):
         raise ReleaseError("image_binding_mismatch")
 
     image_reference = f"{image_repository}@{image_digest}"
     files = {path: content for path, content in bundle_files.items() if path in KINDS}
-    files[DEPLOYMENT_PATH] = source.replace(preview, image_reference, 1)
+    files[DEPLOYMENT_PATH] = source.replace(preview, image_reference, len(containers))
     digest = canonical_digest(files)
     final = checked_manifests(
         files,
@@ -87,7 +87,9 @@ def bind_verified_image(
         registry=profile["registry"],
     )
     expected = copy.deepcopy(original)
-    next(item for item in expected if item["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"][0]["image"] = image_reference
+    expected_deployment = next(item for item in expected if item["kind"] == "Deployment")
+    for container in expected_deployment["spec"]["template"]["spec"]["containers"]:
+        container["image"] = image_reference
     if final != expected:
         raise ReleaseError("release_manifest_changed")
     return ReleaseSpecification(files=files, digest=digest, image_reference=image_reference, source_bundle_digest=bundle_digest)

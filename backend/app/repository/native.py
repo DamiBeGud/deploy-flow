@@ -168,6 +168,15 @@ def _python(read, paths):
             result.add("network.port", port, path, source, binding_node.lineno)
             result.add("runtime.command", command, path, source, binding_node.lineno)
 
+    if {"celery", "redis"}.issubset(result.service_dependencies):
+        redis_worker = _redis_worker(read, readme, paths, module)
+        if redis_worker:
+            worker, worker_path, worker_source = redis_worker
+            result.add("workflow.worker_target", worker, worker_path, worker_source)
+            result.required_variables = ["CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "QUEUE_NAMESPACE"]
+            if re.search(r"""os\.environ(?:\.get\(\s*|\[\s*)['"]API_TOKEN['"]""", source):
+                result.required_variables.append("API_TOKEN")
+
     route_nodes = {}
     for statement in scope.body:
         if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -184,9 +193,45 @@ def _python(read, paths):
                 and isinstance(decorator.args[0].value, str)
             ):
                 route_nodes[decorator.args[0].value] = decorator.lineno
+    if "/health/live" in route_nodes:
+        result.add("health.liveness", "/health/live", path, source, route_nodes["/health/live"])
     if probe := _probe(route_nodes):
         result.add("health_check", probe, path, source, route_nodes[probe])
     return result
+
+
+def _redis_worker(read, readme, paths, module):
+    # Corroborate a documented worker command with a sibling Python module
+    # and the Celery object consumed by the known CLI target.
+    package, _, _ = module.rpartition(".")
+    workers = set(re.findall(
+        rf"`celery[ \t]+-A[ \t]+({MODULE})[.:]celery[ \t]+worker[ \t]+--loglevel=warning[ \t]+--concurrency=1`",
+        readme, re.ASCII,
+    ))
+    if len(workers) != 1 or not package:
+        return None
+    worker = next(iter(workers))
+    path = worker.replace(".", "/") + ".py"
+    if worker.rpartition(".")[0] != package or path not in paths:
+        return None
+    body = read(path)
+    try:
+        tree = ast.parse(body)
+    except (SyntaxError, RecursionError):
+        return None
+    has_celery = any(
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "celery"
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "Celery"
+        for node in tree.body
+    )
+    if has_celery and all(name in body for name in ("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "QUEUE_NAMESPACE")):
+        return f"{worker}:celery", path, body
+    return None
 
 
 def _rails(read, paths):

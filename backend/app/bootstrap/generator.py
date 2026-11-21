@@ -26,6 +26,7 @@ from app.bootstrap.native_runtime import (
 )
 from app.bootstrap.node_runtime import select_node_runtime
 from app.bootstrap.postgres import postgres_for_source, postgres_volumes
+from app.bootstrap.redis import REDIS_PORT, redis_for_source
 
 MANAGED_PATHS = {
     "Dockerfile",
@@ -108,7 +109,8 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     ):
         raise PlanError("native_service_requires_source_evidence_for_port_and_health_path")
     postgres = postgres_for_source(assessment, profile.get("application_id", ""))
-    if runtime != "nodejs" and not postgres and (
+    redis = redis_for_source(assessment, profile.get("application_id", ""))
+    if not (postgres or redis) and (
         assessment.get("configuration", {}).get("required_variables")
         or assessment.get("dependencies", {}).get("detected_services")
     ):
@@ -147,6 +149,9 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         or any(char.isspace() for char in health)
     ):
         raise PlanError("invalid_health_path")
+    live = assessment.get("review", {}).get("liveness_path")
+    if live and (not isinstance(live, str) or not re.fullmatch(r"/[A-Za-z0-9/_-]*", live)):
+        raise PlanError("invalid_liveness_path")
     image = build["image"]
     if not image.startswith(profile["registry"].rstrip("/") + "/"):
         raise PlanError("image_registry_denied")
@@ -158,6 +163,15 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         or (postgres.ephemeral and intent["connectivity"]["replicas"] != 1)
     ):
         raise PlanError("approved_postgres_binding_mismatch")
+    if redis and (
+        image != redis.image_repository(profile["registry"])
+        or intent["connectivity"]["exposure"]["kind"] != "internal"
+        or intent["connectivity"]["replicas"] != 1
+        or intent["connectivity"].get("connections")
+        or port == REDIS_PORT
+        or set(redis.environment()) & intent["connectivity"].get("environment", {}).keys()
+    ):
+        raise PlanError("approved_redis_binding_mismatch")
     replicas = intent["connectivity"]["replicas"]
     if not isinstance(replicas, int) or not 1 <= replicas <= profile["max_replicas"]:
         raise PlanError("invalid_replicas")
@@ -194,7 +208,12 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         environment.update(native.environment)
     if any(re.search(r"(?i)(secret|token|password|api[_-]?key)", key) for key in environment):
         raise PlanError("sensitive_environment_value")
-    secret_env = postgres.secret_env() if postgres else []
+    secret_env = []
+    if postgres:
+        secret_env = postgres.secret_env()
+    if redis:
+        environment.update(redis.environment())
+        secret_env = redis.secret_env()
     for connection in intent["connectivity"].get("connections", []):
         prefix = connection["name"].upper().replace("-", "_")
         environment.update(
@@ -382,7 +401,7 @@ PY"""
                             },
                             "readinessProbe": {"httpGet": {"path": health, "port": "http"}},
                             "livenessProbe": {
-                                "httpGet": {"path": postgres.liveness_path if postgres else health, "port": "http"}
+                                "httpGet": {"path": postgres.liveness_path if postgres else live or health, "port": "http"}
                             },
                             **({
                                 "startupProbe": {
@@ -412,6 +431,12 @@ PY"""
         pod["securityContext"]["fsGroup"] = NATIVE_UID
         pod["initContainers"] = [postgres.database_sidecar()]
         pod["volumes"] = [*pod.get("volumes", []), *postgres_volumes()]
+        deployment["spec"]["strategy"] = {"type": "Recreate"}
+    if redis:
+        pod["securityContext"]["fsGroup"] = NATIVE_UID
+        pod["volumes"] = [RUNTIME_SCRATCH_VOLUME]
+        pod["initContainers"] = [redis.sidecar()]
+        pod["containers"].append(redis.worker(f"{image}:{image_tag}", config["metadata"]["name"]))
         deployment["spec"]["strategy"] = {"type": "Recreate"}
     service = {
         "apiVersion": "v1",

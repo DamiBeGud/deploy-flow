@@ -34,7 +34,7 @@ function parseCommand(input: string): string[] | null {
 }
 
 type ConfigurationRecommendation = { name: string; required: boolean; recommended_value: string | null; purpose: string; source: string; confidence: number; evidence: { file_path: string; line_start: number | null } | null }
-type Recommendation = { intent: DeploymentIntent; generation_blocker?: string | null; approved_database?: { migration: string; ephemeral?: boolean } | null; recommendations: Record<string, { source: string; confidence: number }>; application_configuration: ConfigurationRecommendation[] }
+type Recommendation = { intent: DeploymentIntent; generation_blocker?: string | null; approved_database?: { migration: string; ephemeral?: boolean } | null; approved_queue?: { worker: string } | null; recommendations: Record<string, { source: string; confidence: number }>; application_configuration: ConfigurationRecommendation[] }
 
 function writableIntent(intent: DeploymentIntent) {
   return {
@@ -74,6 +74,7 @@ export function PlanWorkflow({ application, run, canWrite, stage, plan, onContin
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [database, setDatabase] = useState<Recommendation['approved_database']>(null)
+  const [queue, setQueue] = useState<Recommendation['approved_queue']>(null)
   const [generationBlocker, setGenerationBlocker] = useState<string | null>(null)
   const [commandErrors, setCommandErrors] = useState<Partial<Record<CommandField, boolean>>>({})
   const [recommendations, setRecommendations] = useState<Recommendation['recommendations']>({})
@@ -100,7 +101,7 @@ export function PlanWorkflow({ application, run, canWrite, stage, plan, onContin
         build: { ...recommendation.intent.build, ...saved.build },
         field_recommendations: saved.field_recommendations || recommendation.intent.field_recommendations,
       } : recommendation.intent
-      setProfile(selected); setIntent(nextIntent); setGenerationBlocker(recommendation.generation_blocker ?? null); setDatabase(recommendation.approved_database ?? null); setRecommendations(recommendation.recommendations); setApplicationConfiguration(recommendation.application_configuration); onIntentChange(nextIntent)
+      setProfile(selected); setIntent(nextIntent); setGenerationBlocker(recommendation.generation_blocker ?? null); setDatabase(recommendation.approved_database ?? null); setQueue(recommendation.approved_queue ?? null); setRecommendations(recommendation.recommendations); setApplicationConfiguration(recommendation.application_configuration); onIntentChange(nextIntent)
     }).catch(exception => { if (!cancelled) setError(errorMessage(exception)) })
     return () => { cancelled = true }
   }, [application.id, run.id, onIntentChange])
@@ -170,7 +171,9 @@ export function PlanWorkflow({ application, run, canWrite, stage, plan, onContin
           ? <p className="section-note">{database.ephemeral
               ? 'DeployFlow provisions a private PostgreSQL sidecar on port 5432 with disposable storage.'
               : 'The approved PostgreSQL binding supplies DATABASE_URL.'} The application applies <code>{database.migration}</code> at startup.</p>
-          : <p className="section-note">No approved database, cache, queue, or service connections are configured for this application.</p>}
+          : queue
+            ? <p className="section-note">DeployFlow provisions private Redis on port 6379 with disposable storage and runs <code>{queue.worker}</code> in a worker container.</p>
+            : <p className="section-note">No approved database, cache, queue, or service connections are configured for this application.</p>}
       </> : <>
         <div className="section-divider"><span>Container and target</span></div><p className="section-note">Kubernetes namespace: <b>{profile.namespace}</b> · Recommended image: <b>{String(intent.field_recommendations['build.image']?.recommended_value ?? intent.build.image)}</b> · Commands: {recommendations.commands?.source || 'Review required'}</p><div className="form-grid"><RecommendedInput label="Base branch" fieldPath="build.branch" value={intent.build.branch} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, branch: value } })} /><RecommendedInput label="Application image" fieldPath="build.image" value={intent.build.image} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, image: value } })} /><CommandInput label="Install command" field="install_command" intent={intent} onChange={updateCommand} setError={setCommandError} /><CommandInput label="Test command" field="test_command" intent={intent} onChange={updateCommand} setError={setCommandError} /><CommandInput label="Build command" field="build_command" intent={intent} onChange={updateCommand} setError={setCommandError} /><CommandInput label="Start command" field="start_command" intent={intent} onChange={updateCommand} setError={setCommandError} /></div>
       </>}

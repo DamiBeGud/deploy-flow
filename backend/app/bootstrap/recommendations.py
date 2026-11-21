@@ -16,6 +16,7 @@ from app.bootstrap.contracts import (
     DEPLOYMENT_INTENT_SCHEMA_VERSION,
 )
 from app.bootstrap.postgres import postgres_for_source
+from app.bootstrap.redis import redis_for_source
 
 
 def _nested_value(document: dict, field_path: str):
@@ -80,7 +81,7 @@ def recommend(
         return {"file_path": source.get("file_path"), "line_start": source.get("line_start")}
 
     def configuration_item(name: str) -> dict | None:
-        if name in {"PORT", "DATABASE_URL", "REDIS_URL", "CELERY_BROKER_URL"} or any(
+        if name in {"PORT", "DATABASE_URL", "REDIS_URL", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "QUEUE_NAMESPACE"} or any(
             marker in name for marker in secret_markers
         ):
             return None
@@ -128,7 +129,7 @@ def recommend(
     repository = assessment.get("repository", {})
     slug = "/".join(str(repository.get(key) or "") for key in ("owner", "name")).lower()
     registry = profile.get("registry", "").rstrip("/")
-    repository_image = family in {"python", "ruby", "java"} and bool(
+    repository_image = family in {"nodejs", "python", "ruby", "java"} and bool(
         re.fullmatch(r"[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*", slug)
     ) and bool(registry)
     image = f"{registry}/{slug.rsplit('/', 1)[1]}" if repository_image and "/" in registry else (
@@ -333,6 +334,7 @@ def recommend(
         }
     intent["field_recommendations"] = resolve_field_recommendations(intent, field_recommendations)
     postgres = postgres_for_source(assessment, application_id)
+    redis = redis_for_source(assessment, application_id)
     generation_blocker = None
     if family == "ruby":
         generation_blocker = (
@@ -347,7 +349,7 @@ def recommend(
         )
     elif family != "nodejs" and (not port_from_repository or not health_from_repository):
         generation_blocker = "Bundle generation needs a source-backed service port and health route."
-    elif family != "nodejs" and not postgres and (
+    elif not (postgres or redis) and (
         configuration.get("required_variables")
         or assessment.get("dependencies", {}).get("detected_services")
     ):
@@ -356,6 +358,7 @@ def recommend(
     return {
         "intent": intent,
         "generation_blocker": generation_blocker,
+        "approved_queue": {"worker": " ".join(redis.worker_argv())} if redis else None,
         "approved_database": (
             {"migration": f"python -m {postgres.migration_module}"}
             | ({"ephemeral": True} if postgres.ephemeral else {})

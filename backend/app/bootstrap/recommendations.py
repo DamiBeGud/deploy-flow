@@ -15,6 +15,7 @@ from app.bootstrap.contracts import (
     BUILD_SPECIFICATION_SCHEMA_VERSION,
     DEPLOYMENT_INTENT_SCHEMA_VERSION,
 )
+from app.bootstrap.postgres import postgres_for_source
 
 
 def _nested_value(document: dict, field_path: str):
@@ -45,7 +46,9 @@ def resolve_field_recommendations(intent: dict, recommendations: dict[str, dict]
     return resolved
 
 
-def recommend(assessment: dict, profile: dict, revision: str, assessment_version: int) -> dict:
+def recommend(
+    assessment: dict, profile: dict, revision: str, assessment_version: int, *, application_id: str = ""
+) -> dict:
     review = assessment.get("review", {})
     workflow = assessment.get("workflow", {})
     family = review.get("runtime") or "unknown"
@@ -329,6 +332,7 @@ def recommend(assessment: dict, profile: dict, revision: str, assessment_version
             "evidence": item["evidence"],
         }
     intent["field_recommendations"] = resolve_field_recommendations(intent, field_recommendations)
+    postgres = postgres_for_source(assessment, application_id)
     generation_blocker = None
     if family == "ruby":
         generation_blocker = (
@@ -343,7 +347,7 @@ def recommend(assessment: dict, profile: dict, revision: str, assessment_version
         )
     elif family != "nodejs" and (not port_from_repository or not health_from_repository):
         generation_blocker = "Bundle generation needs a source-backed service port and health route."
-    elif family != "nodejs" and (
+    elif family != "nodejs" and not postgres and (
         configuration.get("required_variables")
         or assessment.get("dependencies", {}).get("detected_services")
     ):
@@ -352,6 +356,7 @@ def recommend(assessment: dict, profile: dict, revision: str, assessment_version
     return {
         "intent": intent,
         "generation_blocker": generation_blocker,
+        "approved_database": {"migration": f"python -m {postgres.migration_module}"} if postgres else None,
         "recommendations": {
             "runtime": {
                 "value": family,

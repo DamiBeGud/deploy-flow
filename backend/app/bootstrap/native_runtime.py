@@ -117,7 +117,10 @@ def _native_commands(family, install, test, build, start, port, verified_gunicor
         raise ValueError("unsupported_maven_commands")
 
 
-def native_build(family, version, port, install, test, build, start, *, verified_gunicorn=False):
+def native_build(
+    family, version, port, install, test, build, start, *,
+    verified_gunicorn=False, migration_module=None,
+):
     _native_commands(family, install, test, build, start, port, verified_gunicorn)
     if family == "python":
         base_image = _python_image(version)
@@ -143,12 +146,22 @@ def native_build(family, version, port, install, test, build, start, *, verified
         test_steps = [{"run": "docker build --target test --file Dockerfile ."}]
     else:
         test_steps = [{"run": "echo 'No test command was confirmed for this repository'; exit 1"}]
+    launch = start
+    if migration_module:
+        # The registered source migration is replay-safe. A failed migration
+        # prevents startup, and only the runtime container receives the DB URL.
+        launcher = (
+            'import os, subprocess, sys; '
+            'subprocess.run([sys.executable, "-m", sys.argv[1]], check=True, timeout=60); '
+            'os.execvp(sys.argv[2], sys.argv[2:])'
+        )
+        launch = ["python", "-c", launcher, migration_module, *start]
     docker += [
         "FROM prepared AS runtime",
         f"USER {NATIVE_UID}:{NATIVE_UID}",
         f"EXPOSE {port}",
         "ENTRYPOINT []",
-        "CMD " + json.dumps(start),
+        "CMD " + json.dumps(launch),
         "",
     ]
     return NativeBuild(

@@ -268,3 +268,75 @@ def test_detected_dependency_requires_binding(tmp_path):
     assert "approved configuration bindings" in result["generation_blocker"]
     with pytest.raises(PlanError, match="native_service_requires_configuration_bindings"):
         render(assessment, result["intent"], PROFILE)
+
+
+def test_approved_postgres_binding_is_source_and_application_scoped(tmp_path, monkeypatch):
+    from app.deployments.release import bind_verified_image
+
+    assessment = scan(
+        tmp_path,
+        PYTHON | {"requirements.txt": PYTHON["requirements.txt"] + "psycopg[binary]==3.2.8\n"},
+    )
+    bound_profile = PROFILE | {"application_id": "36d3695a-e390-4487-a15a-f6af6f40881f"}
+    key = "DF_APPROVED_POSTGRES_BINDING"
+    monkeypatch.delenv(key, raising=False)
+    assert recommend(assessment, bound_profile, "main", 1)["generation_blocker"]
+    import json
+
+    binding = {
+        "application_id": bound_profile["application_id"],
+        "application_name": "demo",
+        "repository": "example/demo",
+        "source_sha": "a" * 40,
+        "secret_name": "demo-db",
+        "migration_module": "service.migrate",
+        "liveness_path": "/live",
+    }
+    monkeypatch.setenv(key, json.dumps(binding))
+
+    assert recommend(assessment, bound_profile, "main", 1)["generation_blocker"]
+    result = recommend(
+        assessment, bound_profile, "main", 1, application_id=bound_profile["application_id"]
+    )
+    assert result["approved_database"] == {"migration": "python -m service.migrate"}
+    assert not result["generation_blocker"]
+    intent = result["intent"]
+    with pytest.raises(PlanError, match="native_service_requires_configuration_bindings"):
+        render(assessment, intent, PROFILE)
+    with pytest.raises(PlanError, match="native_service_requires_configuration_bindings"):
+        render(assessment | {"repository": IDENTITY | {"commit_sha": "b" * 40}}, intent, bound_profile)
+    bundle = render(assessment, intent, bound_profile)
+    path = "deploy/kubernetes/deployment.yaml"
+    manifest = yaml.safe_load(bundle.files[path])
+    container = manifest["spec"]["template"]["spec"]["containers"][0]
+    assert container["env"] == [{
+        "name": "DATABASE_URL",
+        "valueFrom": {"secretKeyRef": {"name": "demo-db", "key": "DATABASE_URL"}},
+    }]
+    assert container["livenessProbe"]["httpGet"]["path"] == "/live"
+    assert container["readinessProbe"]["httpGet"]["path"] == "/status"
+    launch = json.loads(bundle.files["Dockerfile"].rsplit("CMD ", 1)[1])
+    assert launch[:2] == ["python", "-c"]
+    assert "check=True, timeout=60" in launch[2]
+    assert launch[3:5] == ["service.migrate", "uvicorn"]
+    release = bind_verified_image(
+        bundle_files=bundle.files,
+        bundle_digest=bundle.digest,
+        image_binding=bundle.validation["image_binding"],
+        image_repository="ghcr.io/example/demo",
+        image_digest="sha256:" + "c" * 64,
+        profile=bound_profile,
+        application_id=bound_profile["application_id"],
+    )
+    assert release.image_reference in release.files[path]
+
+    intent["connectivity"]["environment"]["DATABASE_URL"] = "untrusted"
+    with pytest.raises(PlanError, match="approved_postgres_binding_mismatch"):
+        render(assessment, intent, bound_profile)
+    container["env"][0]["valueFrom"]["secretKeyRef"]["name"] = "another-secret"
+    files = bundle.files | {path: yaml.safe_dump(manifest)}
+    with pytest.raises(ManifestPolicyError, match="secret_reference_denied"):
+        checked_manifests(
+            files, digest=canonical_digest(files), namespace="deployflow-test",
+            application_id=bound_profile["application_id"], registry="ghcr.io",
+        )

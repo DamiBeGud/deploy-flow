@@ -487,6 +487,12 @@ the possible receipt ID; do not rerun a fresh installation or delete the journal
    a failure that stopped before any image patch. Replaying old approval hashes
    cannot silently undo a later state.
 
+For a failed retained-scope upgrade that applied zero image patches, the
+no-change recovery reuses the exact retained deployment recorded in the parent
+receipt. It requires unchanged platform images, source, inventory, pilot
+resources and policy. A matching preview has zero changes. Its finalization
+acknowledges the failed attempt without patching workloads or restoring data.
+
 Application release rollback remains the separate DeployFlow product operation;
 this workflow only rolls back platform images. Destructive cleanup, removal of
 backups/RBAC/PVCs and database recovery each need their own scope and approval.

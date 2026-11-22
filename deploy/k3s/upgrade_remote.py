@@ -457,9 +457,15 @@ def backup(path):
                                     stdout=stream, stderr=subprocess.PIPE, timeout=120, check=False)
         if result.returncode:
             raise ValueError("Private database backup failed; no image patch permitted")
-        for args in (("--list",), ("--no-owner", "--no-acl", "--file=/dev/null")):
+        # The catalog reader exits before consuming the archive. Drain the rest
+        # of stdin so kubectl can finish transmitting large archives and exit.
+        checks = (
+            ("sh", "-c", 'pg_restore --list; result=$?; cat >/dev/null; exit "$result"'),
+            ("pg_restore", "--no-owner", "--no-acl", "--file=/dev/null"),
+        )
+        for command in checks:
             with target.open("rb") as stream:
-                result = subprocess.run(["sudo", "-n", "k3s", "kubectl", "exec", "-i", "-n", NS, pod, "--", "pg_restore", *args],
+                result = subprocess.run(["sudo", "-n", "k3s", "kubectl", "exec", "-i", "-n", NS, pod, "--", *command],
                                         stdin=stream, capture_output=True, timeout=120, check=False)
             if result.returncode:
                 raise ValueError("Private archive validation failed; no image patch permitted")
@@ -557,14 +563,30 @@ def execute(request):
     if request["operation"] == "finalize":
         return finalize(request)
     rollback = request["operation"].startswith("rollback")
-    scope = {"retain_failed_deployment": retained} if retained else {}
     origin = load_receipt(request["receipt_id"]) if rollback else None
     if origin and origin["plan"]["operation"] != "upgrade":
         raise ValueError("Rollback requires an original upgrade receipt")
+    retained_origin = origin["before"].get("retained_failed_deployment") if origin else None
+    if retained_origin:
+        if origin["status"] != "failed" or origin["applied"]:
+            raise ValueError("Only a failed retained-scope upgrade with zero image patches can use no-change recovery")
+        retained = retained_origin["deployment_id"]
+    scope = {"retain_failed_deployment": retained} if retained else {}
     if unfinished(origin["id"] if origin else None):
         raise ValueError("Unfinished platform upgrade/rollback exists; inspect private receipts before proceeding")
     release = origin["release"] if origin else request["release"]
-    plan = make_plan(snapshot(origin=origin, **scope), release, origin=origin)
+
+    def current_plan():
+        before = snapshot(origin=origin, **scope)
+        candidate = make_plan(before, release, origin=origin)
+        if retained_origin and (candidate["changes"] or any(
+            before[key] != origin["before"][key]
+            for key in ("retained_failed_deployment", "deployments", "protected", "flags", "application_policies")
+        )):
+            raise ValueError("Retained-scope no-change recovery requires unchanged platform and pilot state")
+        return candidate
+
+    plan = current_plan()
     identifier = digest(plan)
     if request["operation"] in {"preview", "rollback-preview"}:
         return {"plan_sha256": identifier, "plan": plan}
@@ -575,7 +597,7 @@ def execute(request):
     with os.fdopen(fd, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Recheck after taking the server-side lock, not just workflow concurrency.
-        if digest(make_plan(snapshot(origin=origin, **scope), release, origin=origin)) != identifier:
+        if digest(current_plan()) != identifier:
             raise ValueError("State changed before maintenance lock; no upgrade performed")
         path = base / identifier
         path.mkdir(mode=0o700)  # no overwrite/replay of existing receipts
@@ -603,7 +625,7 @@ def execute(request):
                         "deployment_images": {name: target["images"] for name, target in targets.items()}}
             tables = query("SELECT json_build_object('name',tablename) FROM pg_tables WHERE schemaname='public' ORDER BY tablename")
             with WriteFence([row["name"] for row in tables]) as fence:
-                if digest(make_plan(snapshot(origin=origin, **scope), release, origin=origin)) != identifier:
+                if digest(current_plan()) != identifier:
                     raise ValueError("State changed before database write fence; no image patched")
                 journal["backups"] = backup(path)
                 verified = verify_images([image for target in targets.values() for image in target["images"].values()])

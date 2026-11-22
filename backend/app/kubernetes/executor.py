@@ -164,9 +164,13 @@ def rollout_status(name: str, application_id: str, expected_uid: str, image_refe
                 limit=20, _request_timeout=8,
             )
             for pod in pods.items:
-                for state in pod.status.container_statuses or []:
+                statuses = (pod.status.init_container_statuses or []) + (pod.status.container_statuses or [])
+                for state in statuses:
                     waiting = state.state.waiting if state.state else None
-                    if waiting and waiting.reason in {"ErrImagePull", "ImagePullBackOff", "CrashLoopBackOff", "CreateContainerConfigError"}:
+                    if waiting and waiting.reason in {
+                        "InvalidImageName", "ErrImagePull", "ImagePullBackOff",
+                        "CrashLoopBackOff", "CreateContainerConfigError",
+                    }:
                         return {**result, "status": "failed", "reason": waiting.reason}
             return {**result, "status": "pending"}
     except ApiException as exc:

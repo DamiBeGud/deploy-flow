@@ -242,6 +242,7 @@ def test_expired_execution_lease_cannot_finish(client, monkeypatch):
 
 
 @pytest.mark.parametrize(("reason", "expected"), [
+    ("InvalidImageName", "container_image_reference_invalid"),
     ("ImagePullBackOff", "image_pull_failed"),
     ("CrashLoopBackOff", "application_start_failed"),
     ("CreateContainerConfigError", "dependency_configuration_missing"),

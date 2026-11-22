@@ -194,6 +194,35 @@ def test_checker_proxy_rbac_matches_named_service_port(manifest):
     }]
 
 
+def test_rollout_reports_invalid_init_container_image(monkeypatch):
+    image = "registry/fixture@sha256:" + "a" * 64
+    deployment = existing()
+    deployment.spec = SimpleNamespace(
+        replicas=1, template=SimpleNamespace(spec=SimpleNamespace(
+            containers=[SimpleNamespace(image=image)],
+        )),
+    )
+    deployment.status = SimpleNamespace(
+        observed_generation=2, updated_replicas=1, ready_replicas=0,
+        available_replicas=0, conditions=[],
+    )
+    redis = SimpleNamespace(state=SimpleNamespace(waiting=SimpleNamespace(reason="InvalidImageName")))
+    app = SimpleNamespace(state=SimpleNamespace(waiting=SimpleNamespace(reason="PodInitializing")))
+    pod = SimpleNamespace(status=SimpleNamespace(init_container_statuses=[redis], container_statuses=[app]))
+    monkeypatch.setattr(executor, "_api_client", fake_client)
+    monkeypatch.setattr(executor.client, "AppsV1Api", lambda _: SimpleNamespace(
+        read_namespaced_deployment=lambda *_args, **_kwargs: deployment,
+    ))
+    monkeypatch.setattr(executor.client, "CoreV1Api", lambda _: SimpleNamespace(
+        list_namespaced_pod=lambda *_args, **_kwargs: SimpleNamespace(items=[pod]),
+    ))
+
+    rollout = executor.rollout_status("fixture", "application-id", "owned-uid", image, 2)
+
+    assert rollout["status"] == "failed"
+    assert rollout["reason"] == "InvalidImageName"
+
+
 def deployment_with_update_ownership(*, foreign=False, port=4587):
     import copy
 

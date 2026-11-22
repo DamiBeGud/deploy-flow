@@ -20,6 +20,7 @@ KINDS = {
     "deploy/kubernetes/ingress.yaml": ("networking.k8s.io/v1", "Ingress"),
 }
 REQUIRED = set(KINDS) - {"deploy/kubernetes/ingress.yaml"}
+_PINNED_IMAGE = re.compile(r"[^@\s]+@sha256:[0-9a-f]{64}")
 
 
 class ManifestPolicyError(ValueError):
@@ -84,6 +85,13 @@ def checked_manifests(
         or len(containers) != (2 if redis else 1)
     ):
         raise ManifestPolicyError("deployment_policy_denied")
+    init_containers = pod.get("initContainers") or []
+    if not isinstance(init_containers, list):
+        raise ManifestPolicyError("deployment_policy_denied")
+    for entry in [*containers, *init_containers]:
+        image = entry.get("image") if isinstance(entry, dict) else None
+        if not isinstance(image, str) or not image or ("@" in image and not _PINNED_IMAGE.fullmatch(image)):
+            raise ManifestPolicyError("container_image_reference_invalid")
     pod_security = pod.get("securityContext") or {}
     container = containers[0]
     token = configured_token(application_id) if not redis and container.get("env") else None

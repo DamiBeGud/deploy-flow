@@ -396,6 +396,48 @@ class UpgradeRemoteTests(unittest.TestCase):
                             "approval": preview["plan_sha256"]})
         files.assert_not_called()
 
+    def test_no_change_recovery_reuses_retained_scope_without_allowing_image_patches(self):
+        _, state, release = fixtures()
+        deployment_id = "c7f6a678-38ac-4308-898a-4567b7cffc18"
+        state["retained_failed_deployment"] = {"deployment_id": deployment_id, "pod_uid": "failed-pod"}
+        original = {
+            "id": "f" * 64, "plan": make_plan(state, release), "before": copy.deepcopy(state),
+            "release": release, "status": "failed", "applied": [],
+            "targets": {name: {"uid": row["uid"], "images": row["images"]}
+                        for name, row in state["deployments"].items()},
+        }
+        request = {"operation": "rollback-preview", "receipt_id": original["id"]}
+        with patch.object(remote, "load_receipt", return_value=original), \
+                patch.object(remote, "unfinished", return_value=[]), \
+                patch.object(remote, "snapshot", return_value=state) as snapshot:
+            result = remote.execute(request)
+            self.assertEqual(result["plan"]["changes"], [])
+            snapshot.assert_called_once_with(origin=original, retain_failed_deployment=deployment_id)
+            state["retained_failed_deployment"]["pod_uid"] = "other-pod"
+            with self.assertRaisesRegex(ValueError, "unchanged platform and pilot"):
+                remote.execute(request)
+            original["applied"].append("api")
+            with self.assertRaisesRegex(ValueError, "zero image patches"):
+                remote.execute(request)
+
+    def test_backup_catalog_check_drains_stdin_and_complete_read_is_preserved(self):
+        commands = []
+
+        def execute(command, **kwargs):
+            commands.append(command)
+            if "pg_dump" in command:
+                kwargs["stdout"].write(b"synthetic archive")
+            else:
+                self.assertEqual(kwargs["stdin"].read(), b"synthetic archive")
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(remote.subprocess, "run", side_effect=execute):
+            result = remote.backup(Path(tmp))
+        self.assertEqual(len(result), 2)
+        self.assertIn("cat >/dev/null", commands[1][-1])
+        self.assertIn('exit "$result"', commands[1][-1])
+        self.assertIn("--file=/dev/null", commands[2])
+
     def test_unfinished_attempt_blocks_new_upgrade(self):
         _, _, release = fixtures()
         with patch.object(remote, "unfinished", return_value=["pending"]), patch.object(remote, "snapshot") as snapshot, self.assertRaises(ValueError):

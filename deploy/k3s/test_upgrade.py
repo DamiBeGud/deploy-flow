@@ -82,6 +82,65 @@ class UpgradePlanTests(unittest.TestCase):
         change = next(c for c in plan["changes"] if c["name"] == "kube-cleaner")
         self.assertEqual(set(change["to_images"].values()), {NEW["backend"]})
 
+    def test_retaining_failed_redis_requires_exact_disabled_and_unleased_scope(self):
+        deployment_id = "c7f6a678-38ac-4308-898a-4567b7cffc18"
+        app_id = "f1868e91-15c6-4255-9636-ed2e47005809"
+        job = {"deployment_id": deployment_id, "application_id": app_id, "application_name": "redis-fixture"}
+        work = {"analysis": 0, "github": 0, "delivery": 0, "execution": 1}
+        policies = [{"application_id": app_id, "enabled": False}]
+        inventory = [
+            {"kind": kind, "name": name, "uid": "uid-" + kind, "status": "applied"}
+            for kind, name in (("ConfigMap", "redis-fixture-config"), ("Deployment", "redis-fixture"),
+                               ("Service", "redis-fixture"))
+        ]
+
+        def resource(kind, name, namespace):
+            self.assertEqual(namespace, remote.TARGET)
+            if kind == "rs":
+                return {"metadata": {"uid": "failed-rs-uid", "ownerReferences": [
+                    {"kind": "Deployment", "uid": "uid-Deployment", "controller": True},
+                ]}}
+            return {"metadata": {"name": name, "uid": "uid-" + kind,
+                                 "namespace": namespace,
+                                 "labels": {"app.kubernetes.io/instance": app_id,
+                                            "app.kubernetes.io/managed-by": "deployflow"}},
+                    "spec": {"replicas": 1, "template": {"spec": {
+                        "volumes": [{"name": "scratch", "emptyDir": {}}],
+                        "initContainers": [{"name": "redis", "image": "docker.io/library/redis@sha256:" + "1" * 62}],
+                    }}}}
+
+        pod = {"metadata": {"uid": "failed-pod", "ownerReferences": [
+                   {"name": "failed-rs", "kind": "ReplicaSet", "uid": "failed-rs-uid", "controller": True},
+               ]},
+               "status": {"initContainerStatuses": [
+                   {"name": "redis", "state": {"waiting": {"reason": "InvalidImageName"}}},
+               ]}}
+        with patch.object(remote, "query", side_effect=[[job], inventory]) as query, \
+                patch.object(remote, "get", side_effect=resource), \
+                patch.object(remote, "kube", return_value=json.dumps({"items": [pod]})):
+            result = remote.inspect_failed_redis_deployment(deployment_id, work, policies)
+            self.assertEqual(result, job | {"inventory": inventory, "pod_uid": "failed-pod"})
+            self.assertIn("j.lease_token IS NULL", query.call_args_list[0].args[0])
+            self.assertIn("j.deadline_at < now()", query.call_args_list[0].args[0])
+
+        with patch.object(remote, "query", return_value=[]) as query, self.assertRaisesRegex(ValueError, "Unrelated"):
+            remote.inspect_failed_redis_deployment(deployment_id, work | {"execution": 2}, policies)
+        query.assert_not_called()
+        with patch.object(remote, "query", return_value=[]), self.assertRaisesRegex(ValueError, "unleased"):
+            remote.inspect_failed_redis_deployment(deployment_id, work, policies)
+        with patch.object(remote, "query", return_value=[job]), self.assertRaisesRegex(ValueError, "disabled"):
+            remote.inspect_failed_redis_deployment(deployment_id, work, [{"application_id": app_id, "enabled": True}])
+        with patch.object(remote, "query", side_effect=[[job], inventory]), \
+                patch.object(remote, "get", return_value={"metadata": {"uid": "other"}}), \
+                self.assertRaisesRegex(ValueError, "UID or ownership"):
+            remote.inspect_failed_redis_deployment(deployment_id, work, policies)
+        pod["metadata"]["ownerReferences"][0]["uid"] = "changed-rs"
+        with patch.object(remote, "query", side_effect=[[job], inventory]), \
+                patch.object(remote, "get", side_effect=resource), \
+                patch.object(remote, "kube", return_value=json.dumps({"items": [pod]})), \
+                self.assertRaisesRegex(ValueError, "expected controller"):
+            remote.inspect_failed_redis_deployment(deployment_id, work, policies)
+
     def test_snapshot_hashes_private_inline_configuration_without_exporting_it(self):
         items, _, _ = fixtures()
         items[0]["spec"]["template"]["spec"]["containers"][0]["env"].append({"name": "EXAMPLE_PRIVATE", "value": "synthetic-private-marker"})
@@ -318,6 +377,23 @@ class UpgradeRemoteTests(unittest.TestCase):
         with patch.object(remote, "snapshot", return_value=state), patch.object(remote, "unfinished", return_value=[]), \
                 patch.object(remote, "private_base") as files, self.assertRaises(ValueError):
             remote.execute({"operation": "apply", "release": release, "approval": "0" * 64})
+        files.assert_not_called()
+
+    def test_retained_failure_identity_is_bound_into_the_reviewed_plan(self):
+        _, state, release = fixtures()
+        deployment_id = "c7f6a678-38ac-4308-898a-4567b7cffc18"
+        state["retained_failed_deployment"] = {"deployment_id": deployment_id, "pod_uid": "failed-before"}
+        with patch.object(remote, "snapshot", return_value=state) as snapshot, \
+                patch.object(remote, "unfinished", return_value=[]):
+            preview = remote.execute({"operation": "preview", "release": release,
+                                      "retain_failed_deployment": deployment_id})
+        snapshot.assert_called_once_with(origin=None, retain_failed_deployment=deployment_id)
+        state["retained_failed_deployment"]["pod_uid"] = "replaced-after-preview"
+        with patch.object(remote, "snapshot", return_value=state), \
+                patch.object(remote, "unfinished", return_value=[]), patch.object(remote, "private_base") as files, \
+                self.assertRaisesRegex(ValueError, "differs from exact approval"):
+            remote.execute({"operation": "apply", "release": release, "retain_failed_deployment": deployment_id,
+                            "approval": preview["plan_sha256"]})
         files.assert_not_called()
 
     def test_unfinished_attempt_blocks_new_upgrade(self):

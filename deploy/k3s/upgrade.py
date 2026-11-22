@@ -60,6 +60,7 @@ def main():
     parser.add_argument("--source-sha", help="Exact current main checkout/publication SHA")
     parser.add_argument("--receipt-id", help="Original server upgrade receipt for rollback")
     parser.add_argument("--approve-plan-sha256")
+    parser.add_argument("--retain-failed-deployment", help="Exact deployment UUID in a separately approved manual upgrade")
     parser.add_argument("--confirmation", help="UPGRADE <source SHA> or ROLLBACK <receipt ID>, after scoped approval")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--host", default="91.89.185.146")
@@ -69,6 +70,13 @@ def main():
     parser.add_argument("--known-hosts", type=Path, required=True)
     args = parser.parse_args()
     request = {"operation": args.operation}
+    retained = args.retain_failed_deployment
+    if retained:
+        if args.operation not in {"preview", "apply"} or args.fixed_operator:
+            parser.error("Retaining a failed deployment requires a manual platform preview/apply")
+        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", retained):
+            parser.error("Retaining a failed deployment requires its exact UUID")
+        request["retain_failed_deployment"] = retained
     if args.operation.startswith("auto"):
         if not args.fixed_operator or not args.publication_run_id or not args.publication_attempt:
             parser.error("Automatic operation requires fixed operator and exact publication run/attempt")
@@ -87,6 +95,8 @@ def main():
             parser.error("Publication source differs from current main checkout")
         request["release"] = release_metadata(value)
         confirmation = "UPGRADE " + args.source_sha
+        if retained:
+            confirmation += " RETAIN " + retained
     if args.operation.startswith("auto") or args.operation == "finalize":
         if args.approve_plan_sha256 or args.confirmation:
             parser.error("Automatic/finalize operations do not accept caller-supplied approval")
@@ -135,6 +145,8 @@ def main():
         print("Observed Pod flags:", json.dumps(plan["before"].get("runtime_flags", {}), sort_keys=True))
         print("Application policies preserved:", json.dumps(plan["before"]["application_policies"], sort_keys=True))
         print("Retained non-executing preparation results:", json.dumps(plan["before"].get("retained_blocked_preparations", []), sort_keys=True))
+        if plan["before"].get("retained_failed_deployment"):
+            print("Retained failed deployment:", json.dumps(plan["before"]["retained_failed_deployment"], sort_keys=True))
         for change in plan.get("changes", []):
             print("Deployment", change["name"], "UID", change["uid"], "replicas", change["replicas"])
             print("  From:", json.dumps(change["from_images"], sort_keys=True))

@@ -21,8 +21,11 @@ on:
       approve_plan_sha256:
         description: 'Exact preview SHA256; leave blank for previews'
         type: string
+      retain_failed_deployment:
+        description: 'Exact disabled, unleased first deployment to retain during a separately approved Redis recovery (preview/apply only)'
+        type: string
       confirmation:
-        description: 'UPGRADE <source SHA>, ROLLBACK <receipt ID> or VERIFY <receipt ID>'
+        description: 'UPGRADE <source SHA> [RETAIN <deployment UUID>], ROLLBACK <receipt ID> or VERIFY <receipt ID>'
         type: string
 
 permissions:
@@ -80,6 +83,7 @@ jobs:
           RECEIPT_ID: ${{ inputs.receipt_id }}
           APPROVAL: ${{ inputs.approve_plan_sha256 }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          RETAIN_FAILED_DEPLOYMENT: ${{ inputs.retain_failed_deployment }}
           SSH_KEY: ${{ secrets.K3S_SSH_PRIVATE_KEY }}
           SSH_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
           SSH_HOST: ${{ secrets.K3S_SSH_HOST }}

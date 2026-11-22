@@ -432,6 +432,18 @@ registry checks bind allowed private repositories, exact index bytes and amd64
 manifests before patching. The existing read-only pull credential stays in server
 memory; it and all backup contents stay out of Actions logs/artifacts.
 
+For separately authorized recovery of an expired, partially applied first Redis
+deployment with `InvalidImageName`, the protected manual workflow accepts the
+exact deployment UUID in `retain_failed_deployment`. Run preview first and
+review its retained deployment/job/release and resource UIDs alongside the
+platform image plan. Apply takes the same UUID and plan SHA-256, with confirmation
+`UPGRADE <source SHA> RETAIN <deployment UUID>`. The operator requires the only
+outstanding execution to be blocked and unleased, the application policy to be
+disabled, and the owned test inventory and 62-character Redis digest failure to
+match. It retains those records and resources and rechecks them under the write
+fence and at finalization. The automatic controller and ordinary manual upgrade
+still require the usual work checks.
+
 During apply, bounded PostgreSQL SHARE locks pause application-table writes while
 reads/readiness remain available. This prevents new durable jobs and policy writes
 racing the maintenance window. The operator acquires the fence before backups and

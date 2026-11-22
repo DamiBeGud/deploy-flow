@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from app.bootstrap.native_runtime import RUNTIME_SCRATCH_MOUNT
 
-REDIS_IMAGE = "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78f6d624b82571f9ddb6bda4377c833b3499"
+REDIS_IMAGE = "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
 REDIS_PORT = 6379
 REDIS_REQUIREMENTS = {"CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "QUEUE_NAMESPACE"}
 

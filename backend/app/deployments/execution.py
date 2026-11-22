@@ -263,6 +263,7 @@ def _observe(job_id: UUID, token: UUID, run_id: UUID, deployment: dict, image: s
     if status["status"] == "failed":
         reason = status.get("reason")
         failure = {
+            "InvalidImageName": "container_image_reference_invalid",
             "ErrImagePull": "image_pull_failed",
             "ImagePullBackOff": "image_pull_failed",
             "CrashLoopBackOff": "application_start_failed",

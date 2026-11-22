@@ -416,6 +416,7 @@ def test_reviewed_pr_policy_only_permits_the_original_merge():
 def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, token_secret):
     import json
 
+    from app.bootstrap import redis
     from app.deployments.release import bind_verified_image
 
     files = {
@@ -458,6 +459,18 @@ def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, token_se
     assert pod["containers"][1]["command"][:4] == ["celery", "-A", "service.worker:celery", "worker"]
     assert token_secret is None or pod["containers"][0]["env"][0]["valueFrom"]["secretKeyRef"]["name"] == token_secret
     assert "env" not in pod["containers"][1]
+    redis_container = pod["initContainers"][0]
+    valid_image = redis_container["image"]
+    redis_container["image"] = valid_image[:-2]
+    with monkeypatch.context() as invalid_pin:
+        invalid_pin.setattr(redis, "REDIS_IMAGE", redis_container["image"])
+        files = release.files | {path: yaml.safe_dump(manifest)}
+        with pytest.raises(ManifestPolicyError, match="container_image_reference_invalid"):
+            checked_manifests(
+                files, digest=canonical_digest(files), namespace=profile["namespace"],
+                application_id=profile["application_id"], registry=profile["registry"],
+            )
+    redis_container["image"] = valid_image
     pod["containers"][1]["command"] = ["sh", "-c", "true"]
     files = release.files | {path: yaml.safe_dump(manifest)}
     with pytest.raises(ManifestPolicyError, match="redis_binding_denied"):

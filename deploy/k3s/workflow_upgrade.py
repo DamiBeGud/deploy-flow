@@ -79,6 +79,8 @@ def main(stage):
             args += ["--bundle", "platform-release/release.json", "--source-sha", env["GITHUB_SHA"]]
         else:
             args += ["--receipt-id", env["RECEIPT_ID"]]
+        if env.get("RETAIN_FAILED_DEPLOYMENT"):
+            args += ["--retain-failed-deployment", env["RETAIN_FAILED_DEPLOYMENT"]]
         if operation.endswith("apply") and not operation.startswith("auto"):
             args += ["--approve-plan-sha256", env.get("APPROVAL", ""), "--confirmation", env.get("CONFIRMATION", "")]
         elif env.get("APPROVAL") or env.get("CONFIRMATION"):

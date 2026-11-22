@@ -86,6 +86,82 @@ def pending():
                  "'execution',(SELECT count(*) FROM execution_jobs WHERE status <> 'completed'))")[0]
 
 
+def inspect_failed_redis_deployment(deployment_id, work, policies):
+    """Prove the one explicitly named failure cannot execute during upgrade."""
+    if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", deployment_id):
+        raise ValueError("Retained deployment must have an exact UUID")
+    if work["execution"] != 1 or any(value for key, value in work.items() if key != "execution"):
+        raise ValueError("Unrelated or active work prevents retaining a failed deployment")
+    jobs = query(
+        "SELECT json_build_object('job_id',j.id,'deployment_id',r.id,'release_id',r.release_id,"
+        "'application_id',a.id,'application_name',a.name) "
+        "FROM execution_jobs j JOIN deployment_runs r ON r.id=j.deployment_run_id "
+        "JOIN applications a ON a.id=r.application_id "
+        f"WHERE r.id='{deployment_id}' AND r.environment_profile_id='local-k3s' "
+        "AND r.status='reconciling' AND r.previous_release_id IS NULL "
+        "AND r.error_code IN ('execution_deadline_exceeded','rollout_deadline_exceeded','container_image_reference_invalid') "
+        "AND j.status='blocked' AND j.purpose='deploy' AND j.lease_token IS NULL "
+        "AND j.lease_expires_at IS NULL AND j.deadline_at < now() "
+        "AND j.error_code=r.error_code"
+    )
+    if len(jobs) != 1:
+        raise ValueError("Retained deployment is not a settled, unleased first deployment failure")
+    job = jobs[0]
+    application_id = job["application_id"]
+    matching = [p for p in policies if p["application_id"] == application_id]
+    if len(matching) != 1 or matching[0]["enabled"] is not False:
+        raise ValueError("The retained deployment must have a disabled application policy")
+    name = job["application_name"]
+    inventory = query(
+        "SELECT json_build_object('kind',kind,'name',name,'uid',uid,'status',status) "
+        f"FROM deployment_resources WHERE deployment_run_id='{deployment_id}' ORDER BY kind, name"
+    )
+    expected = {("ConfigMap", name + "-config"), ("Deployment", name), ("Service", name)}
+    if len(inventory) != len(expected) or {(r["kind"], r["name"]) for r in inventory} != expected:
+        raise ValueError("The retained deployment does not have the expected Redis pilot inventory")
+    for row in inventory:
+        resource = get(row["kind"], row["name"], TARGET)
+        metadata = resource["metadata"]
+        labels = metadata.get("labels", {})
+        if (row["status"] != "applied" or not row["uid"] or row["uid"] != metadata["uid"]
+                or metadata.get("name") != row["name"] or metadata.get("namespace") != TARGET
+                or metadata.get("deletionTimestamp")
+                or labels.get("app.kubernetes.io/instance") != application_id
+                or labels.get("app.kubernetes.io/managed-by") != "deployflow"):
+            raise ValueError("Retained deployment inventory UID or ownership changed")
+        if row["kind"] != "Deployment":
+            continue
+        status = resource.get("status", {})
+        pod = resource["spec"]["template"]["spec"]
+        init = pod.get("initContainers", [])
+        if (status.get("readyReplicas", 0) or status.get("availableReplicas", 0)
+                or resource["spec"].get("replicas") != 1
+                or any("emptyDir" not in volume for volume in pod.get("volumes", []))
+                or len(init) != 1 or init[0].get("name") != "redis"
+                or not re.fullmatch(r"docker\.io/library/redis@sha256:[0-9a-f]{62}", init[0].get("image", ""))):
+            raise ValueError("Retained deployment no longer matches the Redis digest failure")
+    pods = json.loads(kube("get", "pods", "-n", TARGET, "-l",
+                           f"app.kubernetes.io/instance={application_id}", "-o", "json"))["items"]
+    if len(pods) != 1 or not any(
+        container["name"] == "redis" and container.get("state", {}).get("waiting", {}).get("reason") == "InvalidImageName"
+        for container in pods[0].get("status", {}).get("initContainerStatuses", [])
+    ):
+        raise ValueError("The exact Redis init-container failure is no longer present")
+    metadata = pods[0]["metadata"]
+    owners = [owner for owner in metadata.get("ownerReferences", [])
+              if owner.get("controller") and owner.get("kind") == "ReplicaSet"]
+    if metadata.get("deletionTimestamp") or len(owners) != 1:
+        raise ValueError("The retained Redis Pod is no longer owned by the expected controller")
+    replica_set = get("rs", owners[0]["name"], TARGET)["metadata"]
+    deployment_uid = next(row["uid"] for row in inventory if row["kind"] == "Deployment")
+    if replica_set["uid"] != owners[0]["uid"] or not any(
+        owner.get("controller") and owner.get("kind") == "Deployment" and owner.get("uid") == deployment_uid
+        for owner in replica_set.get("ownerReferences", [])
+    ):
+        raise ValueError("The retained Redis Pod is no longer owned by the expected controller")
+    return job | {"inventory": inventory, "pod_uid": metadata["uid"]}
+
+
 def identity():
     if socket.gethostname().split(".")[0] != "homeserver1" or pwd.getpwuid(os.geteuid()).pw_name != "connectops":
         raise ValueError("Wrong server")
@@ -149,7 +225,7 @@ def schema_fingerprint(pod, user, database):
     return digest(json.loads(payload))
 
 
-def snapshot(*, origin=None):
+def snapshot(*, origin=None, retain_failed_deployment=None):
     identity()
     deployments = {}
     for item in rows("deployments"):
@@ -174,6 +250,7 @@ def snapshot(*, origin=None):
         # rollback. Require unchanged DB structure and recorded same-version target.
         keycloak_version, observed = origin["before"]["keycloak_version"], False
     work = pending()
+    schema_revision = work.pop("schema_revision")
     policies = query("SELECT json_build_object('application_id',application_id,'enabled',enabled,"
                      "'allowed_source_sha',allowed_source_sha,'source_compatibility_policy',COALESCE(to_jsonb(deployment_policies)->>'source_compatibility_policy','node-source-compatibility-v1')) FROM deployment_policies ORDER BY application_id")
     applications = query("SELECT json_build_object('application_id',id,'name',name) FROM applications ORDER BY id")
@@ -197,8 +274,8 @@ def snapshot(*, origin=None):
             if not origin:
                 raise
             runtime_flags[name] = {"observed": False}
-    return {"namespace_uid": NS_UID, "target_namespace_uid": TARGET_UID,
-            "schema_revision": work.pop("schema_revision"), "keycloak_version": keycloak_version,
+    state = {"namespace_uid": NS_UID, "target_namespace_uid": TARGET_UID,
+            "schema_revision": schema_revision, "keycloak_version": keycloak_version,
             "keycloak_version_observed": observed,
             "schema_fingerprints": {"application": schema_fingerprint("postgres-0", "deployflow", "deployflow"),
                                     "identity": schema_fingerprint("identity-postgres-0", "keycloak", "keycloak")},
@@ -206,6 +283,10 @@ def snapshot(*, origin=None):
             "flags": flags, "runtime_flags": runtime_flags,
             "application_policies": policies, "applications": applications,
             "retained_blocked_preparations": inactive}
+    if retain_failed_deployment:
+        state["retained_failed_deployment"] = inspect_failed_redis_deployment(retain_failed_deployment, work, policies)
+        work["execution"] -= 1
+    return state
 
 
 class WriteFence:
@@ -463,6 +544,9 @@ def verify_running(targets, verified):
 
 
 def execute(request):
+    retained = request.get("retain_failed_deployment")
+    if retained and request["operation"] not in {"preview", "apply"}:
+        raise ValueError("A retained deployment requires a protected manual upgrade")
     if request["operation"] == "status":
         value = load_receipt(request["receipt_id"])
         return {"receipt_id": value["id"], "recorded_status": value["status"],
@@ -473,13 +557,14 @@ def execute(request):
     if request["operation"] == "finalize":
         return finalize(request)
     rollback = request["operation"].startswith("rollback")
+    scope = {"retain_failed_deployment": retained} if retained else {}
     origin = load_receipt(request["receipt_id"]) if rollback else None
     if origin and origin["plan"]["operation"] != "upgrade":
         raise ValueError("Rollback requires an original upgrade receipt")
     if unfinished(origin["id"] if origin else None):
         raise ValueError("Unfinished platform upgrade/rollback exists; inspect private receipts before proceeding")
     release = origin["release"] if origin else request["release"]
-    plan = make_plan(snapshot(origin=origin), release, origin=origin)
+    plan = make_plan(snapshot(origin=origin, **scope), release, origin=origin)
     identifier = digest(plan)
     if request["operation"] in {"preview", "rollback-preview"}:
         return {"plan_sha256": identifier, "plan": plan}
@@ -490,7 +575,7 @@ def execute(request):
     with os.fdopen(fd, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Recheck after taking the server-side lock, not just workflow concurrency.
-        if digest(make_plan(snapshot(origin=origin), release, origin=origin)) != identifier:
+        if digest(make_plan(snapshot(origin=origin, **scope), release, origin=origin)) != identifier:
             raise ValueError("State changed before maintenance lock; no upgrade performed")
         path = base / identifier
         path.mkdir(mode=0o700)  # no overwrite/replay of existing receipts
@@ -518,7 +603,7 @@ def execute(request):
                         "deployment_images": {name: target["images"] for name, target in targets.items()}}
             tables = query("SELECT json_build_object('name',tablename) FROM pg_tables WHERE schemaname='public' ORDER BY tablename")
             with WriteFence([row["name"] for row in tables]) as fence:
-                if digest(make_plan(snapshot(origin=origin), release, origin=origin)) != identifier:
+                if digest(make_plan(snapshot(origin=origin, **scope), release, origin=origin)) != identifier:
                     raise ValueError("State changed before database write fence; no image patched")
                 journal["backups"] = backup(path)
                 verified = verify_images([image for target in targets.values() for image in target["images"].values()])
@@ -545,12 +630,13 @@ def execute(request):
                 # job. Server hairpin connectivity is not a public acceptance gate.
                 fence.check()
                 # Both current DB/provider versions must still match, without DDL.
-                current = snapshot()
+                current = snapshot(**scope)
                 if (current["schema_revision"] != release["schema_revision"]
                         or current["keycloak_version"] != release["keycloak_version"]
                         or current["flags"] != plan["before"]["flags"]
                         or current["schema_fingerprints"] != plan["before"]["schema_fingerprints"]
-                        or current["application_policies"] != plan["before"]["application_policies"]):
+                        or current["application_policies"] != plan["before"]["application_policies"]
+                        or current.get("retained_failed_deployment") != plan["before"].get("retained_failed_deployment")):
                     raise ValueError("Schema/provider/authorization context changed during upgrade")
             journal["status"] = "awaiting_public_verification"
             journal["cluster_verified_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -632,9 +718,11 @@ def finalize(request):
         if not journal.get("controller") or journal["controller"] != request.get("controller"):
             raise ValueError("Finalization controller differs from original operation")
         proof = GitHubProof(request.get("github_token")).public_job(journal["controller"], since=journal["cluster_verified_at"])
-        current = snapshot()
-        for key in ("protected", "schema_fingerprints", "schema_revision", "keycloak_version", "flags", "application_policies"):
-            if current[key] != journal["before"][key]:
+        retained = journal["before"].get("retained_failed_deployment")
+        current = snapshot(retain_failed_deployment=retained["deployment_id"]) if retained else snapshot()
+        for key in ("protected", "schema_fingerprints", "schema_revision", "keycloak_version", "flags",
+                    "application_policies", "retained_failed_deployment"):
+            if current.get(key) != journal["before"].get(key):
                 raise ValueError("Finalization context changed: " + key)
         if set(current["deployments"]) != set(journal["targets"]):
             raise ValueError("Finalization inventory changed")

@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -321,8 +321,12 @@ def create_application(body: CreateApplication, identity: Actor, key: Key):
     with Session.begin() as db:
 
         def create():
+            application_id = uuid4()
             app = Application(
-                **body.model_dump(),
+                id=application_id,
+                name=body.name_for(application_id),
+                repository_url=body.repository_url,
+                revision=body.revision,
                 organization_id=identity.organization_id,
                 owner_id=identity.actor_id,
             )
@@ -330,7 +334,9 @@ def create_application(body: CreateApplication, identity: Actor, key: Key):
             db.flush()
             return {
                 "id": str(app.id),
-                **body.model_dump(),
+                "name": app.name,
+                "repository_url": app.repository_url,
+                "revision": app.revision,
                 "created_at": app.created_at.isoformat(),
             }, 201
 

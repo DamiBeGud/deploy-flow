@@ -10,7 +10,7 @@ import yaml
 from app.bootstrap.generator import canonical_digest
 from app.bootstrap.native_runtime import NATIVE_UID, RUNTIME_SCRATCH_MOUNT, RUNTIME_SCRATCH_VOLUME
 from app.bootstrap.postgres import configured_postgres, postgres_volumes
-from app.bootstrap.redis import REDIS_PORT, configured_redis
+from app.bootstrap.redis import REDIS_PORT, redis_for_manifest
 from app.bootstrap.tokens import configured_token
 
 KINDS = {
@@ -68,7 +68,17 @@ def checked_manifests(
     pod = template.get("spec") or {}
     containers = pod.get("containers") or []
     labels = (template.get("metadata") or {}).get("labels") or {}
-    redis = configured_redis(application_id) if len(containers) == 2 else None
+    config = by_kind["ConfigMap"]
+    if not isinstance(config.get("data"), dict):
+        raise ManifestPolicyError("configmap_data_denied")
+    redis = None
+    if isinstance(containers, list) and len(containers) == 2 and isinstance(containers[0], dict):
+        image = containers[0].get("image")
+        if isinstance(image, str):
+            redis = redis_for_manifest(
+                application_id, name=deployment["metadata"]["name"], image=image,
+                registry=registry, environment=config["data"],
+            )
     if (
         (spec.get("selector") or {}).get("matchLabels") != labels
         or labels.get("app.kubernetes.io/instance") != application_id
@@ -82,6 +92,7 @@ def checked_manifests(
         or pod.get("nodeName")
         or pod.get("runtimeClassName")
         or pod.get("imagePullSecrets")
+        or not isinstance(containers, list)
         or len(containers) != (2 if redis else 1)
     ):
         raise ManifestPolicyError("deployment_policy_denied")
@@ -148,9 +159,6 @@ def checked_manifests(
         or ports[0].get("port") != container_ports[0].get("containerPort")
     ):
         raise ManifestPolicyError("service_port_denied")
-    config = by_kind["ConfigMap"]
-    if not isinstance(config.get("data"), dict):
-        raise ManifestPolicyError("configmap_data_denied")
     if (container.get("envFrom") or []) != [
         {"configMapRef": {"name": config["metadata"]["name"]}}
     ]:

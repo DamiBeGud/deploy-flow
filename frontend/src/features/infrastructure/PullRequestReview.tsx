@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { statusLabel } from '../../shared/deploymentStatus'
+import { ReleaseChecklist } from '../../shared/ReleaseChecklist'
+import type { ReleaseCheck } from '../../shared/deploymentStatus'
 import { command, errorMessage, request } from '../../shared/api'
 import type { InfrastructurePlan, InfrastructurePullRequest } from './contracts'
 import { DeploymentProgress } from './DeploymentProgress'
@@ -55,20 +59,34 @@ export function PullRequestReview({ plan, canWrite, canDeploy, onPlanChange }: {
     } catch (reason) { setError(errorMessage(reason)) } finally { setBusy(false) }
   }
 
+  const checks: ReleaseCheck[] = pullRequest ? [
+    { label: 'Pull request', result: pullRequest.status === 'queued' ? 'Creating' : pullRequest.number ? `#${pullRequest.number}` : statusLabel(pullRequest.status), tone: pullRequest.number ? 'complete' : pullRequest.status === 'failed' ? 'attention' : undefined },
+    { label: 'Merge', result: pullRequest.merged_sha ? 'Merged' : pullRequest.status === 'closed' ? 'Closed' : 'Waiting for review', tone: pullRequest.merged_sha ? 'complete' : pullRequest.status === 'closed' ? 'attention' : undefined },
+    { label: 'Image verification', result: pullRequest.status === 'verified' ? 'Verified' : pullRequest.status === 'ci_failed' ? 'CI failed' : pullRequest.status === 'blocked' ? 'Blocked' : pullRequest.merged_sha ? 'Waiting for CI' : 'After merge', tone: pullRequest.status === 'verified' ? 'complete' : ['ci_failed', 'blocked'].includes(pullRequest.status) ? 'attention' : undefined },
+  ] : []
+  const canApprove = canWrite && !busy && plan.cluster_validation?.status === 'passed' && ['proposed', 'approved'].includes(plan.status)
+  const approvalLink = pullRequest?.head_sha && /^[a-f0-9]{40}$/.test(pullRequest.head_sha)
+    ? `/applications/${plan.application_id}?reviewedPr=${pullRequest.head_sha}#deployment-controls`
+    : `/applications/${plan.application_id}#deployment-controls`
+
   return <section className="cluster-validation" aria-label="Infrastructure pull request">
-    <div className="cluster-validation-header"><div><b>GitHub pull request</b><small>Review and merge on GitHub. Creating a PR does not deploy anything.</small></div></div>
+    <div className="cluster-validation-header"><b>GitHub pull request</b></div>
     {error && <p role="alert">{error}</p>}
     {pullRequest ? <>
-      <p role="status">Status: {pullRequest.status}{pullRequest.error_code ? ` · ${pullRequest.error_code}` : ''}</p>
-      {pullRequest.url && <p><a className="button button-secondary" href={pullRequest.url} target="_blank" rel="noreferrer">Open PR #{pullRequest.number} on GitHub</a></p>}
-      {pullRequest.verified_build && <p>Verified image: <code>{pullRequest.verified_build.image_repository}@{pullRequest.verified_build.image_digest}</code></p>}
-      {canWrite && pullRequest.number && <button className="button button-secondary" disabled={busy} type="button" onClick={() => void refresh()}>{busy ? 'Checking…' : 'Refresh PR and CI status'}</button>}
+      <ReleaseChecklist label="Pull request progress" checks={checks} />
+      {pullRequest.status === 'open' && <p>Review the changes and wait for CI before merging.{canDeploy && ' To deploy on merge, review deployment authorization first.'}</p>}
+      {pullRequest.status === 'open' && canDeploy && <Link className="button button-secondary" to={approvalLink}>Review deployment authorization</Link>}
+      {pullRequest.url && <a className="button button-secondary" href={pullRequest.url} target="_blank" rel="noreferrer">Open PR #{pullRequest.number} on GitHub</a>}
+      {canWrite && pullRequest.number && <button className="button button-ghost" disabled={busy} type="button" onClick={() => void refresh()}>{busy ? 'Checking…' : 'Refresh PR and CI status'}</button>}
       {canWrite && pullRequest.status === 'failed' && !pullRequest.number && <button className="button button-secondary" disabled={busy} type="button" onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry PR creation'}</button>}
-      {pullRequest.status === 'verified' && <DeploymentProgress applicationId={plan.application_id} pullRequest={pullRequest} canDeploy={canDeploy} />}
+      {(pullRequest.verified_build || pullRequest.error_code) && <details className="workflow-details"><summary>Build details</summary>
+        {pullRequest.verified_build && <p>Verified image <code>{pullRequest.verified_build.image_repository}@{pullRequest.verified_build.image_digest}</code></p>}
+        {pullRequest.error_code && <p>Error code <code>{pullRequest.error_code}</code></p>}
+      </details>}
+      {pullRequest.status === 'verified' && <DeploymentProgress key={pullRequest.id} applicationId={plan.application_id} pullRequest={pullRequest} />}
     </> : <>
-      <p>Approval will queue one feature-branch PR for this exact bundle. It will not merge or deploy.</p>
-      <button className="button button-primary" disabled={!canWrite || busy || plan.cluster_validation?.status !== 'passed' || plan.status === 'stale' || plan.status === 'invalid'} type="button" onClick={() => void create()}>{busy ? 'Submitting…' : 'Approve and create infrastructure PR'}</button>
-      {plan.cluster_validation?.status !== 'passed' && <p className="section-note">A passing cluster admission check is required first.</p>}
+      <p>{plan.status === 'stale' || plan.status === 'invalid' ? 'Return to Bundle and generate a new bundle.' : plan.cluster_validation?.status !== 'passed' ? 'Kubernetes admission must pass before you can create a PR.' : 'Approve this bundle to open a PR for review on GitHub.'}</p>
+      <button className="button button-primary" disabled={!canApprove} type="button" onClick={() => void create()}>{busy ? 'Creating pull request…' : 'Approve and create infrastructure PR'}</button>
     </>}
   </section>
 }

@@ -13,6 +13,27 @@ function base64url(bytes: Uint8Array): string {
 }
 
 function callbackUri(): string { return `${window.location.origin}/auth/callback` }
+function workspaceReturnPath(path: string): string {
+  if (!path.startsWith('/') || path.startsWith('//')) return '/services'
+  const url = new URL(path, window.location.origin)
+  if (url.origin !== window.location.origin) return '/services'
+  if (url.pathname === '/services') return url.pathname
+  if (/^\/applications\/[a-z0-9-]+$/i.test(url.pathname)) {
+    const reviewedPr = url.searchParams.get('reviewedPr')
+    return reviewedPr && /^[a-f0-9]{40}$/.test(reviewedPr)
+      ? `${url.pathname}?reviewedPr=${reviewedPr}#deployment-controls`
+      : url.pathname
+  }
+  if (url.pathname !== '/deploy') return '/services'
+  const query = new URLSearchParams()
+  for (const key of ['application', 'run', 'step']) {
+    const value = url.searchParams.get(key)
+    if (value && /^[a-z0-9-]+$/i.test(value)) query.set(key, value)
+  }
+  if (query.has('run') && url.searchParams.get('prepare') === '1') query.set('prepare', '1')
+  return query.size ? `/deploy?${query}` : '/deploy'
+}
+
 
 export async function beginSignIn(config: AuthConfig): Promise<void> {
   if (!config.authorization_endpoint || !config.client_id) throw new Error('OIDC sign-in is not configured.')
@@ -21,7 +42,7 @@ export async function beginSignIn(config: AuthConfig): Promise<void> {
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
   storage.set('oidc_verifier', verifier)
   storage.set('oidc_state', state)
-  storage.set('oidc_return', window.location.pathname === '/auth/callback' ? '/services' : window.location.pathname)
+  storage.set('oidc_return', workspaceReturnPath(window.location.pathname + window.location.search))
   const url = new URL(config.authorization_endpoint)
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('client_id', config.client_id)
@@ -56,6 +77,6 @@ export async function finishSignIn(config: AuthConfig): Promise<string> {
   if (!result.access_token) throw new Error('OIDC provider did not return an access token.')
   const returnPath = storage.get('oidc_return') || '/services'
   storage.remove('oidc_return')
-  window.history.replaceState({}, '', returnPath.startsWith('/') && !returnPath.startsWith('//') ? returnPath : '/services')
+  window.history.replaceState({}, '', workspaceReturnPath(returnPath))
   return result.access_token
 }

@@ -1,9 +1,10 @@
-"""Pinned ephemeral Redis and native Celery workload for one reviewed Python source."""
+"""Pinned ephemeral Redis and native Celery workload for approved Python sources."""
 
 from __future__ import annotations
 
 import os
 import re
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
@@ -13,6 +14,10 @@ from app.bootstrap.native_runtime import RUNTIME_SCRATCH_MOUNT
 REDIS_IMAGE = "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
 REDIS_PORT = 6379
 REDIS_REQUIREMENTS = {"CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "QUEUE_NAMESPACE"}
+REDIS_SOURCE_KEY = "DEPLOYFLOW_REDIS_SOURCE_SHA"
+Repository = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$")]
+WorkerTarget = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+:celery$", max_length=140)]
+_PILOT_REPOSITORIES = TypeAdapter(dict[Repository, WorkerTarget])
 
 
 class RedisBinding(BaseModel):
@@ -20,9 +25,9 @@ class RedisBinding(BaseModel):
 
     application_id: UUID
     application_name: str = Field(pattern=r"^[a-z][a-z0-9-]{0,62}$")
-    repository: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$")
+    repository: Repository
     source_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
-    worker_target: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+:celery$", max_length=140)
+    worker_target: WorkerTarget
     api_token_secret: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
 
     def image_repository(self, registry: str) -> str:
@@ -98,24 +103,64 @@ class RedisBinding(BaseModel):
         }
 
 
-def configured_redis(application_id: str) -> RedisBinding | None:
-    value = os.environ.get("DF_APPROVED_REDIS_BINDINGS")
-    if not value:
-        return None
+class ManagedRedisBinding(RedisBinding):
+    """A credential-free sidecar for an explicitly approved repository."""
+
+    def environment(self) -> dict:
+        return {**super().environment(), REDIS_SOURCE_KEY: self.source_sha}
+
+
+def _explicit_bindings(application_id: str) -> list[RedisBinding] | None:
     try:
-        bindings = TypeAdapter(list[RedisBinding]).validate_json(value)
+        bindings = TypeAdapter(list[RedisBinding]).validate_json(
+            os.environ.get("DF_APPROVED_REDIS_BINDINGS") or "[]",
+        )
     except ValidationError:
         return None
-    matches = [binding for binding in bindings if str(binding.application_id) == application_id]
-    return matches[0] if len(matches) == 1 else None
+    return [binding for binding in bindings if str(binding.application_id) == application_id]
+
+
+def _managed_binding(application_id: str, name: str, repository: str, source_sha: str) -> ManagedRedisBinding | None:
+    try:
+        allowed = _PILOT_REPOSITORIES.validate_json(os.environ.get("DF_REDIS_PILOT_REPOSITORIES") or "{}")
+        worker = allowed.get(repository)
+        if not worker:
+            return None
+        return ManagedRedisBinding(
+            application_id=application_id, application_name=name, repository=repository,
+            source_sha=source_sha, worker_target=worker,
+        )
+    except ValidationError:
+        return None
+
+
+def redis_for_manifest(
+    application_id: str, *, name: str, image: str, registry: str, environment: dict,
+) -> RedisBinding | None:
+    explicit = _explicit_bindings(application_id)
+    if explicit != []:
+        return explicit[0] if explicit and len(explicit) == 1 else None
+    prefix = registry.rstrip("/") + "/"
+    source_sha = environment.get(REDIS_SOURCE_KEY)
+    if not image.startswith(prefix) or not isinstance(source_sha, str):
+        return None
+    repository = re.split(r"[:@]", image.removeprefix(prefix), maxsplit=1)[0]
+    return _managed_binding(application_id, name, repository, source_sha)
 
 
 def redis_for_source(assessment: dict, application_id: str) -> RedisBinding | None:
-    binding = configured_redis(application_id)
-    if not binding:
-        return None
     source = assessment.get("repository", {})
     slug = f"{source.get('owner', '')}/{source.get('name', '')}".lower()
+    explicit = _explicit_bindings(application_id)
+    if explicit == []:
+        binding = _managed_binding(
+            application_id, assessment.get("application", {}).get("name", ""),
+            slug, source.get("commit_sha", ""),
+        )
+    else:
+        binding = explicit[0] if explicit and len(explicit) == 1 else None
+    if not binding:
+        return None
     required = set(assessment.get("configuration", {}).get("required_variables", []))
     if (
         assessment.get("review", {}).get("runtime") != "python"

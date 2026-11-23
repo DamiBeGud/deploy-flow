@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, Box, Plus } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import { errorMessage, request } from '../../shared/api'
 import type { Application } from '../../shared/contracts'
+import { deploymentLabel, statusLabel } from '../../shared/deploymentStatus'
 import { ErrorNotice } from '../../shared/ui'
 
 export function ApplicationsPage({ canWrite }: { canWrite: boolean }) {
@@ -10,6 +11,7 @@ export function ApplicationsPage({ canWrite }: { canWrite: boolean }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [revision, setRevision] = useState(0)
+  const [filter, setFilter] = useState('')
   useEffect(() => {
     const abort = new AbortController()
     // Synchronize the loading indicator with the new network request.
@@ -32,11 +34,37 @@ export function ApplicationsPage({ canWrite }: { canWrite: boolean }) {
     void load()
     return () => { abort.abort(); window.clearTimeout(timer) }
   }, [revision])
+  const query = filter.trim().toLowerCase()
+  const matching = apps.filter(app => `${app.name} ${app.repository_url} ${app.revision}`.toLowerCase().includes(query))
+
   return <>
-    <header className="page-header"><div><p className="page-eyeline">Workspace</p><h1>Applications</h1><p className="page-subtitle">Repositories registered in your backend.</p></div>{canWrite && <Link className="button button-primary" to="/deploy"><Plus size={17} />Add application</Link>}</header>
+    <header className="page-header">
+      <h1>Applications</h1>
+      {canWrite && <Link className="button button-primary" to="/deploy"><Plus size={17} />Add application</Link>}
+    </header>
     <ErrorNotice message={error} />
-    <section className="services-table-wrap"><div className="table-heading"><div><h2>Registered applications</h2><p>Latest {apps.length} applications · Stored in PostgreSQL</p></div><button className="button button-secondary" onClick={() => setRevision(n => n + 1)} disabled={loading}>Refresh</button></div>
-      {loading ? <p className="empty-state" role="status">Loading applications…</p> : apps.length === 0 ? <p className="empty-state">{error ? 'Applications could not be loaded.' : 'No applications yet. Add a repository to start an analysis.'}</p> : <table><thead><tr><th>Application</th><th>Repository</th><th>Branch / release progress</th><th>Lifecycle</th><th>Workflow</th></tr></thead><tbody>{apps.map(application => <tr key={application.id}><td><div className="service-name"><span className="service-icon"><Box size={16} /></span><b>{application.name}</b></div></td><td><span className="repository-url">{application.repository_url}</span></td><td><code>{application.revision}</code><small className="lifecycle-subline">Automatic policy: {application.deployment_policy_enabled ? 'enabled' : 'disabled'} · Execution: {application.deployment_execution_available == null ? 'unknown' : application.deployment_execution_available ? 'available' : 'disabled'}</small>{application.allowed_source_sha && <small className="lifecycle-subline">Source bound: <code>{application.allowed_source_sha.slice(0, 12)}</code></small>}{application.last_successful_deployment && <small className="lifecycle-subline">Last successful source: <code>{application.last_successful_deployment.source_sha.slice(0, 12)}</code> · historical result</small>}{application.latest_deployment && <><small className="lifecycle-subline">Latest release: {application.latest_deployment.status}{application.latest_deployment.error_code ? ` · ${application.latest_deployment.error_code}` : ''}</small><small className="lifecycle-subline"><code>{application.latest_deployment.source_sha.slice(0, 12)}</code></small></>}{application.source_verification && <small className="lifecycle-subline">Build verification: {application.source_verification.status}{application.source_verification.error_code ? ` · ${application.source_verification.error_code}` : ''}</small>}</td><td><Link className="button button-ghost" to={`/applications/${application.id}`}>View <ArrowRight size={15} /></Link></td><td><Link className="button button-ghost" to={`/deploy?application=${application.id}`}>Open <ArrowRight size={15} /></Link></td></tr>)}</tbody></table>}
+    <section className="services-table-wrap application-list" aria-label="Registered applications">
+      <div className="table-heading">
+        <label className="application-search">
+          <Search size={16} aria-hidden="true" />
+          <input type="search" aria-label="Search applications" placeholder="Search by name, repository or branch" value={filter} onChange={event => setFilter(event.target.value)} />
+        </label>
+        <button className="button button-secondary" type="button" onClick={() => setRevision(n => n + 1)} disabled={loading}>Refresh applications</button>
+      </div>
+      {loading && !apps.length ? <p className="empty-state" role="status">Loading applications…</p>
+        : !matching.length ? <p className="empty-state">{error && !apps.length ? 'Applications could not be loaded.' : query ? 'No applications match your search.' : 'No applications yet. Add a repository to start.'}</p>
+        : <ul className="application-rows" aria-label="Apps">
+          {matching.map(app => <li key={app.id}>
+            <div><Link to={`/applications/${app.id}`}>{app.name}</Link><small className="lifecycle-subline"><code>{app.revision}</code></small></div>
+            <span className="repository-url">{app.repository_url.replace(/^https:\/\/github\.com\//, '')}</span>
+            <div>{app.latest_deployment
+              ? <>{deploymentLabel(app.latest_deployment.status, app.latest_deployment.error_code)}{app.last_successful_deployment && <small className="lifecycle-subline">Last successful source <code>{app.last_successful_deployment.source_sha.slice(0, 12)}</code></small>}</>
+              : app.source_verification ? statusLabel(app.source_verification.status) : 'Not deployed yet'}
+              {app.deployment_execution_available === false && <small className="lifecycle-subline">Deployment execution unavailable</small>}
+            </div>
+            <Link aria-label={`Open setup for ${app.name}`} to={`/deploy?application=${app.id}`}>Open setup</Link>
+          </li>)}
+        </ul>}
     </section>
   </>
 }

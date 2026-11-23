@@ -1,5 +1,6 @@
 import re
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -15,7 +16,7 @@ class StrictModel(BaseModel):
 
 
 class CreateApplication(StrictModel):
-    name: str = Field(pattern=r"^[a-z][a-z0-9-]{0,61}[a-z0-9]$|^[a-z]$")
+    name: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9-]{0,61}[a-z0-9]$|^[a-z]$")
     repository_url: str = Field(max_length=512)
     revision: str = Field(default="main", min_length=1, max_length=255)
 
@@ -24,7 +25,19 @@ class CreateApplication(StrictModel):
     def github_repository(cls, value: str) -> str:
         if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?", value):
             raise ValueError("Use an HTTPS GitHub repository URL without credentials or query")
-        return value.rstrip("/").removesuffix(".git")
+        normalized = value.rstrip("/").removesuffix(".git")
+        if any(part in {"", ".", ".."} for part in normalized.removeprefix("https://github.com/").split("/")):
+            raise ValueError("Use an HTTPS GitHub repository URL with an owner and repository")
+        return normalized
+
+    def name_for(self, application_id: UUID) -> str:
+        if self.name is not None:
+            return self.name
+        repository = self.repository_url.rsplit("/", 1)[-1].lower()
+        slug = re.sub(r"[^a-z0-9]+", "-", repository).strip("-") or "app"
+        suffix = application_id.hex[:16]
+        slug = slug[: 63 - len(suffix) - len("df--")].rstrip("-")
+        return f"df-{slug}-{suffix}"
 
 
 class StartAnalysis(StrictModel):

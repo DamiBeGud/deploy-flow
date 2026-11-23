@@ -168,6 +168,7 @@ def foundation():
         "DF_GHCR_REGISTRY": "ghcr.io", "DF_GHCR_IMAGE": "ghcr.io/damibegud/deployflow-node-express-fixture",
         "DF_GITHUB_APP_ID": "4957845", "DF_GITHUB_INSTALLATION_ID": "162024583",
         "DF_DEPLOYMENT_EXECUTION_ENABLED": "false", "DF_DEPLOYMENT_CLEANUP_ENABLED": "false",
+        "DF_REDIS_PILOT_REPOSITORIES": "{}",
     }
     result.append(resource("ConfigMap", "deployflow-config", data=config))
     result.append(resource("ConfigMap", "deployflow-realm", data={

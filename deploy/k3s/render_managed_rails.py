@@ -48,8 +48,8 @@ def admission():
                  "message": "Only the Rails provisioner can create a managed credential slot"},
                 {"expression": "object.type == 'Opaque' && has(object.immutable) && object.immutable"
                  " && has(object.data) && size(object.data) == 2 && 'password' in object.data"
-                 " && 'SECRET_KEY_BASE' in object.data && size(object.data['password']) >= 32"
-                 " && size(object.data['SECRET_KEY_BASE']) == 128",
+                 " && 'SECRET_KEY_BASE' in object.data && size(object.data['password']) in [43, 60]"
+                 " && size(object.data['SECRET_KEY_BASE']) in [128, 172]",
                  "message": "Managed Rails credentials must have exactly two generated keys"},
                 {"expression": f"has({annotations}) && size({annotations}) == 3 && "
                  + " && ".join(

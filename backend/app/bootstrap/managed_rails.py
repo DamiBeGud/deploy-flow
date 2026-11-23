@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import secrets
 from contextlib import contextmanager
 from uuid import UUID, uuid4
@@ -156,8 +157,14 @@ def _ensure_secret(api, reservation: Reservation, *, allow_create: bool):
         current.metadata.deletion_timestamp or not current.immutable or current.type != "Opaque"
         or current.metadata.annotations != annotations
         or set(current.data or {}) != {"password", "SECRET_KEY_BASE"}
-        or not all(current.data.values())
     ):
+        raise ManagedRailsError("rails_secret_ownership_conflict")
+    try:
+        password = base64.b64decode(current.data["password"], validate=True)
+        key = base64.b64decode(current.data["SECRET_KEY_BASE"], validate=True)
+    except (TypeError, ValueError):
+        raise ManagedRailsError("rails_secret_ownership_conflict") from None
+    if not re.fullmatch(rb"[A-Za-z0-9_-]{43}", password) or not re.fullmatch(rb"[a-f0-9]{128}", key):
         raise ManagedRailsError("rails_secret_ownership_conflict")
 
 

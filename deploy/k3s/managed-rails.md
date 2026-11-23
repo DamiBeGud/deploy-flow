@@ -1,0 +1,22 @@
+# Managed Rails pilot
+
+DeployFlow can prepare a disposable PostgreSQL sidecar for one approved Rails repository, branch, source SHA, organization and owner. The owner uses **Prepare delivery** with the repository URL and revision. The wizard waits for credentials, generates the bundle and starts the existing server-side dry-run. The reviewed PR and deployment authorization follow the existing workflow.
+
+The profile requires a locked PostgreSQL adapter, the production `DATABASE_URL` and `SECRET_KEY_BASE` references, the supported Puma start and Rails test commands, source-declared readiness and liveness, and versioned native migrations. The agent path requires a provider response, the Rails skill hash and evidence from actual repository tool calls. The deterministic path uses pinned scanner evidence. The approval is valid for the exact source SHA.
+
+## Prepare an activation review
+
+- Apply the additive database revision `0dbc73f7e891` and deploy matching images under a separately authorized migration and workload rollout. The image-only upgrade protocol requires matching revisions and workload specs.
+- Prepare a private JSON profile with the actual `owner_id`, `organization_id`, lowercase `repository` slug, `revision` and 40-character `source_sha`. Confirm the source-owned migration and branch head. Supply an immutable DeployFlow backend image.
+- Render the capability offline with `python3 deploy/k3s/render_managed_rails.py --backend-image <immutable-image> --profile-file <profile.json>`. The output separates bootstrap resources, the dedicated worker Deployment and strategic-merge patches for the API and delivery worker. The patches retain the existing environment and credential mounts.
+- Validate the admission policy and binding on the target Kubernetes version before granting Secret creation. Check policy type warnings and exercise both an accepted slot creation in server dry-run and rejected attempts for other names, keys, namespaces and identities. Bootstrap the reference-only catalog once. Preserve its entries on future upgrades.
+- Confirm existing test-namespace permissions and inventory. The writer can read only the four dedicated Secret names and create Secrets subject to admission in `deployflow-test`. The API, delivery worker, validator, deployer and optional cleaner can read only the named catalog through their capability role. The analysis worker has no provisioning permission. [Kubernetes RBAC](https://kubernetes.io/docs/reference/access-authn-authz/rbac/) · [ValidatingAdmissionPolicy](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/)
+- Activate the worker and scoped reader patches once the resources and policy gates are ready. The profile is set on the API and provisioner. Each new approved app uses the catalog without a platform restart. The Kubernetes validator and executor recover the catalog binding using the source SHA embedded in the generated bundle, including after digest substitution.
+
+## Observe a rehearsal
+
+Start with an unused app and the pinned authorized branch. Verify a single durable `rails_provision_jobs` row for the app and SHA, the matching ready catalog entry, and the Secret's name, ownership metadata and key names. Keep Secret values out of reports, browser output and PR content. Refresh during setup and verify it resumes without a second credential allocation. Then check initial dry-run, reviewed PR, CI, image-digest revalidation, migration, rollout, readiness and a write/read round trip.
+
+A lost response can leave a reserved slot and an immutable Secret. A retry checks the reservation, application ID and source SHA before completing it. The worker performs up to five attempts for transient failures. A foreign or missing previously completed Secret is a conflict to investigate. The four slots cap this pilot's inventory. Slot reclamation requires reviewed inventory and release-reference cleanup. Removing a Pod alone does not release its slot. Removing the API profile prevents new requests while retained bundles can still resolve their references through the catalog. Keep reader permissions and the catalog while those bundles are retained.
+
+The PostgreSQL sidecar uses Pod-local disposable storage. Treat write/read evidence as applying to the current rollout. Hosted admission, a provider-backed run and application rollout require local or hosted acceptance before using this capability in the study.

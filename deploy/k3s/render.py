@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 NAMESPACE = "deployflow-system"
 TARGET = "deployflow-test"
 HOST = "deployflow.damibegud.cloud"
-REVISION = "e4b92f7a6103"
+REVISION = "0dbc73f7e891"
 ISSUER = f"https://{HOST}/identity/realms/deployflow-local"
 IMAGE_REPOSITORIES = {
     "backend": "ghcr.io/damibegud/deployflow-backend",

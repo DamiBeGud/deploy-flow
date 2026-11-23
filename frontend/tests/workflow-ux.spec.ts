@@ -38,11 +38,13 @@ const failed = {
   preflight_validation: { status: 'passed' }, rollout: { status: 'failed' }, health: { status: 'pending' },
 }
 
-async function mockWorkflow(page: Page, { viewer = false, blocked = false, editable = false, automatic = false, simulation = false, resume = false } = {}) {
+async function mockWorkflow(page: Page, { viewer = false, blocked = false, editable = false, automatic = false, simulation = false, resume = false, managedRails = false } = {}) {
   const commands: string[] = []
   let savedIntent = editable || (automatic && !resume) ? null : intent
   let savedPlan: (Omit<typeof plan, 'pull_request' | 'cluster_validation'> & { pull_request: typeof plan.pull_request | null; cluster_validation: typeof plan.cluster_validation | null }) | null = editable || blocked || automatic ? null : plan
   let savedPort: number | undefined
+  let provisioning = false
+  let provisioned = false
   const source = automatic ? { ...app, name: 'df-recipe-index-1111111111114111', revision: 'release/next' } : app
   const analysisMode = simulation ? 'fake' : run.analysis_mode
   const recommendation = automatic ? { ...intent, version: resume ? 1 : 0, build: { ...intent.build, branch: source.revision } } : intent
@@ -61,6 +63,12 @@ async function mockWorkflow(page: Page, { viewer = false, blocked = false, edita
       if (automatic && path === '/applications') {
         expect(route.request().postDataJSON()).toEqual({ repository_url: source.repository_url, revision: source.revision })
         return route.fulfill({ status: 201, json: source })
+      }
+      if (managedRails && path.endsWith('/rails-provisioning')) {
+        expect(new URL(route.request().url()).searchParams.get('analysis_run_id')).toBe(run.id)
+        expect(provisioning).toBe(false)
+        provisioning = true
+        return route.fulfill({ status: 202, json: { status: 'queued', code: null } })
       }
       if (automatic && path.endsWith('/analyses')) return route.fulfill({ status: 202, json: { run_id: run.id } })
       if ((editable || automatic) && path.endsWith('/deployment-intent')) {
@@ -97,7 +105,14 @@ async function mockWorkflow(page: Page, { viewer = false, blocked = false, edita
     if (path === '/applications/' + app.id) return route.fulfill({ json: { ...source, latest_analysis: analysis } })
     if (path === '/analyses/' + run.id) return route.fulfill({ json: analysis })
     if (path === '/environment-profiles') return route.fulfill({ json: [{ id: 'local-k3s', namespace: 'deployflow-test', hostname_suffix: '.deployflow.local' }] })
-    if (path.endsWith('/kubernetes-recommendation')) return route.fulfill({ json: { intent: recommendation, application_configuration: [], generation_blocker: blocked ? 'Detected service dependencies need approved configuration bindings.' : null } })
+    if (path.endsWith('/kubernetes-recommendation')) {
+      const status = provisioned ? 'ready' : provisioning ? 'queued' : 'required'
+      return route.fulfill({ json: {
+        intent: recommendation, application_configuration: [],
+        generation_blocker: blocked || (managedRails && !provisioned) ? 'Detected service dependencies need approved configuration bindings.' : null,
+        ...(managedRails ? { rails_provisioning: { status, code: null } } : {}),
+      } })
+    }
     if (path.endsWith('/deployment-intent')) return route.fulfill({ json: savedIntent })
     if (path.endsWith('/infrastructure-plans/latest') || path.endsWith('/infrastructure-plans/bundle')) return route.fulfill({ json: savedPlan })
     if (path === '/pull-requests/pr') return route.fulfill({ json: plan.pull_request })
@@ -108,7 +123,7 @@ async function mockWorkflow(page: Page, { viewer = false, blocked = false, edita
     if (path.endsWith('/events')) return route.fulfill({ json: { events: [] } })
     return route.fulfill({ status: 404, json: { detail: 'Unexpected test route' } })
   })
-  return { commands, savedPort: () => savedPort }
+  return { commands, savedPort: () => savedPort, finishProvisioning: () => { provisioned = true } }
 }
 
 async function connect(page: Page, path: string) {
@@ -136,6 +151,27 @@ test('prepares and dry-runs from only a URL and revision, then restores review w
   await page.reload()
   await expect(page.getByText('Dry-run passed', { exact: true })).toBeVisible()
   expect(commands).toEqual(expected)
+})
+
+test('provisions the approved Rails database once and resumes through dry-run after reload', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  const { commands, finishProvisioning } = await mockWorkflow(page, { automatic: true, managedRails: true })
+  await prepareDelivery(page)
+  const waiting = page.getByText('Preparing the test database…', { exact: true })
+  await expect(waiting).toBeVisible()
+  await expect.poll(() => commands.length).toBe(3)
+  await page.reload()
+  await expect(waiting).toBeVisible()
+  finishProvisioning()
+  await expect(page.getByText('Dry-run passed', { exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+  expect(commands).toEqual([
+    '/applications', `/applications/${app.id}/analyses`, `/applications/${app.id}/rails-provisioning`,
+    `/applications/${app.id}/deployment-intent`, `/applications/${app.id}/infrastructure-plans`,
+    '/infrastructure-plans/bundle/validations',
+  ])
 })
 
 test('resumes automatic preparation from saved delivery settings without writing them again', async ({ page }) => {

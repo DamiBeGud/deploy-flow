@@ -27,7 +27,10 @@ from app.api.schemas import (
 )
 from app.bootstrap.contracts import INFRASTRUCTURE_PLAN_SCHEMA_VERSION
 from app.bootstrap.generator import MANAGED_PATHS, TEMPLATE_VERSION, PlanError, render
+from app.bootstrap.managed_rails import ManagedRailsError, managed_profile
+from app.bootstrap.postgres import configured_postgres
 from app.bootstrap.profiles import local_k3s_profile
+from app.bootstrap.rails_jobs import eligible, request_provisioning, scoped
 from app.bootstrap.recommendations import recommend, resolve_field_recommendations
 from app.config import settings
 from app.kubernetes.gateway import GatewayError, call_kubernetes
@@ -49,6 +52,7 @@ from app.persistence.models import (
     InfrastructurePlanValidation,
     InfrastructurePullRequest,
     PlanApproval,
+    RailsProvisionJob,
     ReleaseSpecificationRecord,
     VerifiedBuild,
 )
@@ -606,11 +610,43 @@ def connections(identity: Actor):
     return []
 
 
+@router.post("/applications/{app_id}/rails-provisioning", status_code=202)
+def start_rails_provisioning(app_id: UUID, analysis_run_id: UUID, identity: Actor):
+    identity.require_write()
+    with Session.begin() as db:
+        application = application_for(db, app_id, identity)
+        run = run_for(db, analysis_run_id, identity, lock=True)
+        if run.application_id != app_id:
+            raise HTTPException(404, "Analysis not found")
+        if identity.actor_id != application.owner_id:
+            raise HTTPException(403, "Only the approved application owner can provision its database")
+        assessment = db.get(AssessmentVersion, (run.id, run.assessment_version))
+        try:
+            profile = managed_profile()
+            if not profile or not assessment or configured_postgres(str(app_id)):
+                raise ManagedRailsError("rails_provisioning_not_available")
+            job = request_provisioning(db, profile, application, run, assessment)
+        except ManagedRailsError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return {"status": job.status, "code": job.error_code}
+
+
+def _rails_provisioning(db, application, run, assessment):
+    if assessment.document.get("review", {}).get("runtime") != "ruby" or configured_postgres(str(application.id)):
+        return None
+    profile = managed_profile()
+    if not profile or not scoped(profile, application, run):
+        return None
+    eligible(profile, application, run, assessment.document)
+    job = db.get(RailsProvisionJob, (application.id, run.commit_sha))
+    return {"status": job.status, "code": job.error_code} if job else {"status": "required", "code": None}
+
+
 @router.get("/applications/{app_id}/kubernetes-recommendation")
 def kubernetes_recommendation(app_id: UUID, analysis_run_id: UUID, identity: Actor):
     """Return one complete, editable Kubernetes recommendation without asking the user."""
     with Session() as db:
-        application_for(db, app_id, identity)
+        application = application_for(db, app_id, identity)
         run = run_for(db, analysis_run_id, identity)
         if run.application_id != app_id or run.status not in {"completed", "needs_input"}:
             raise HTTPException(409, "Assessment is not ready for Kubernetes recommendations")
@@ -618,6 +654,7 @@ def kubernetes_recommendation(app_id: UUID, analysis_run_id: UUID, identity: Act
         if assessment is None:
             raise HTTPException(409, "Assessment has no reviewable version")
         try:
+            provisioning = _rails_provisioning(db, application, run, assessment)
             result = recommend(
                 assessment.document, local_k3s_profile(), run.revision, run.assessment_version,
                 application_id=str(app_id),
@@ -628,7 +665,11 @@ def kubernetes_recommendation(app_id: UUID, analysis_run_id: UUID, identity: Act
                 .order_by(DeploymentIntentVersion.version.desc())
             )
             result["intent"]["version"] = latest_version or 0
+            if provisioning:
+                result["rails_provisioning"] = provisioning
             return result
+        except ManagedRailsError as exc:
+            raise HTTPException(503 if exc.retryable else 409, str(exc)) from None
         except ValueError as exc:
             raise HTTPException(409, "Kubernetes profile is not configured") from exc
 
@@ -760,7 +801,12 @@ def create_infrastructure_plan(
             try:
                 profile = local_k3s_profile()
                 profile["application_id"] = str(app_id)
+                provisioning = _rails_provisioning(db, application, run, assessment)
+                if provisioning and provisioning["status"] != "ready":
+                    raise PlanError(provisioning["code"] or "rails_provisioning_required")
                 bundle = render(assessment.document, intent.document, profile)
+            except ManagedRailsError as exc:
+                raise HTTPException(503 if exc.retryable else 422, str(exc)) from None
             except (PlanError, ValueError) as exc:
                 raise HTTPException(
                     422, f"Infrastructure plan cannot be generated: {exc}"

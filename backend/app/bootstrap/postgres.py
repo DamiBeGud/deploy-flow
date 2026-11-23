@@ -37,6 +37,7 @@ class PostgresBinding(BaseModel):
     liveness_path: str = Field(pattern=r"^/[a-zA-Z0-9/_-]*$", max_length=128)
 
     ephemeral: bool = False
+    managed: bool = False
 
     def postgres_env(self) -> list[dict]:
         variable, key = ("POSTGRES_PASSWORD", "password") if self.ephemeral else ("DATABASE_URL", "DATABASE_URL")
@@ -113,11 +114,17 @@ def configured_postgres(application_id: str) -> PostgresBinding | None:
 
 
 def postgres_for_source(assessment: dict, application_id: str) -> PostgresBinding | None:
-    binding = configured_postgres(application_id)
-    if not binding:
-        return None
     source = assessment.get("repository", {})
     slug = f"{source.get('owner', '')}/{source.get('name', '')}".lower()
+    binding = configured_postgres(application_id)
+    if not binding and assessment.get("review", {}).get("runtime") == "ruby":
+        from app.bootstrap.managed_rails import managed_binding, managed_profile
+
+        profile = managed_profile()
+        if profile and slug == profile.repository and source.get("commit_sha") == profile.source_sha:
+            binding = managed_binding(application_id, profile.source_sha)
+    if not binding:
+        return None
     allowed_dependencies = {
         "python": {"psycopg"}, "nodejs": {"postgresql"}, "ruby": {"postgresql"},
         "java": {"spring-jdbc", "postgresql", "flyway-core", "flyway-database-postgresql"},

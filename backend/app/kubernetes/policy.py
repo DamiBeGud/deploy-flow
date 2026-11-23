@@ -8,6 +8,7 @@ import re
 import yaml
 
 from app.bootstrap.generator import canonical_digest
+from app.bootstrap.managed_rails import SOURCE_MARKER, ManagedRailsError, managed_binding
 from app.bootstrap.native_runtime import NATIVE_UID, RUNTIME_SCRATCH_MOUNT, RUNTIME_SCRATCH_VOLUME
 from app.bootstrap.postgres import configured_postgres, postgres_volumes
 from app.bootstrap.redis import REDIS_PORT, redis_for_manifest
@@ -107,6 +108,20 @@ def checked_manifests(
     container = containers[0]
     token = configured_token(application_id) if not redis and container.get("env") else None
     postgres = configured_postgres(application_id) if not redis and (container.get("env") or pod.get("initContainers")) else None
+    if SOURCE_MARKER in config["data"]:
+        source_sha = config["data"][SOURCE_MARKER]
+        if (
+            postgres or redis or token or not isinstance(source_sha, str)
+            or not re.fullmatch(r"[0-9a-f]{40}", source_sha)
+            or namespace != "deployflow-test"
+        ):
+            raise ManifestPolicyError("rails_binding_denied")
+        try:
+            postgres = managed_binding(application_id, source_sha)
+        except ManagedRailsError as exc:
+            raise ManifestPolicyError(str(exc)) from None
+        if not postgres or not postgres.managed:
+            raise ManifestPolicyError("rails_binding_denied")
     embedded = bool(postgres and postgres.ephemeral)
     if not redis and (pod.get("initContainers") or embedded):
         if (

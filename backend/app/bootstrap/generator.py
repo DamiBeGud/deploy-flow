@@ -17,6 +17,7 @@ from app.bootstrap.contracts import (
     IMAGE_BINDING_NAME,
     INFRASTRUCTURE_PLAN_SCHEMA_VERSION,
 )
+from app.bootstrap.managed_rails import SOURCE_MARKER
 from app.bootstrap.native_runtime import (
     NATIVE_DOCKERIGNORE,
     NATIVE_UID,
@@ -220,8 +221,12 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     if any(re.search(r"(?i)(secret|token|password|api[_-]?key)", key) for key in environment):
         raise PlanError("sensitive_environment_value")
     secret_env = []
+    if SOURCE_MARKER in environment:
+        raise PlanError("managed_rails_source_marker_reserved")
     if postgres:
         secret_env = postgres.secret_env()
+        if postgres.managed:
+            environment[SOURCE_MARKER] = postgres.source_sha
     if token:
         secret_env = token.secret_env()
     if redis:

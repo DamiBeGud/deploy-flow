@@ -1,8 +1,9 @@
-import { command } from '../../shared/api'
+import { command, request } from '../../shared/api'
 import type { DeploymentIntent, InfrastructurePlan } from './contracts'
 
 type ConfigurationRecommendation = { name: string; required: boolean; recommended_value: string | null; purpose: string; source: string; confidence: number; evidence: { file_path: string; line_start: number | null } | null }
-export type Recommendation = { intent: DeploymentIntent; generation_blocker?: string | null; approved_database?: { migration: string; ephemeral?: boolean } | null; approved_queue?: { worker: string } | null; approved_api_token?: boolean; application_configuration: ConfigurationRecommendation[] }
+type RailsProvisioning = { status: 'required' | 'queued' | 'ready' | 'blocked'; code: string | null }
+export type Recommendation = { rails_provisioning?: RailsProvisioning; intent: DeploymentIntent; generation_blocker?: string | null; approved_database?: { migration: string; ephemeral?: boolean } | null; approved_queue?: { worker: string } | null; approved_api_token?: boolean; application_configuration: ConfigurationRecommendation[] }
 
 function writableIntent(intent: DeploymentIntent) {
   return {
@@ -50,3 +51,32 @@ export function generateDeliveryBundle(applicationId: string, runId: string, int
     intent_version: intent.version, environment_profile_id: intent.environment_profile_id,
   }, 'POST', preparationKey(runId, intent, automatic))
 }
+
+export async function deliveryRecommendation(
+  applicationId: string, runId: string, signal: AbortSignal, onProvisioning: () => void,
+) {
+  const path = `/applications/${applicationId}`
+  const query = `?analysis_run_id=${encodeURIComponent(runId)}`
+  const load = () => request<Recommendation>(`${path}/kubernetes-recommendation${query}`, { signal })
+  let result = await load()
+  if (result.rails_provisioning?.status === 'required') {
+    onProvisioning()
+    await request<RailsProvisioning>(`${path}/rails-provisioning${query}`, { method: 'POST', signal })
+    result = await load()
+  }
+  for (let attempt = 0; result.rails_provisioning?.status === 'queued' && attempt < 45; attempt++) {
+    onProvisioning()
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    signal.throwIfAborted()
+    result = await load()
+  }
+  if (result.rails_provisioning?.status === 'queued') {
+    throw new DatabaseSetupPending('Database setup is still queued. Reload this page to check its progress.')
+  }
+  if (result.rails_provisioning?.status === 'blocked') {
+    throw new Error(`Database setup stopped (${result.rails_provisioning.code ?? 'status unavailable'}).`)
+  }
+  return result
+}
+
+export class DatabaseSetupPending extends Error {}

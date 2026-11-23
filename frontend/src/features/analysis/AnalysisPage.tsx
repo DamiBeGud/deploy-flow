@@ -11,8 +11,7 @@ import { PlanFileReview } from '../infrastructure/PlanFileReview'
 import { ClusterValidation } from '../infrastructure/ClusterValidation'
 import { PullRequestReview } from '../infrastructure/PullRequestReview'
 import type { DeploymentIntent, InfrastructurePlan } from '../infrastructure/contracts'
-import { generateDeliveryBundle, saveDeliveryIntent } from '../infrastructure/deliveryPreparation'
-import type { Recommendation } from '../infrastructure/deliveryPreparation'
+import { DatabaseSetupPending, deliveryRecommendation, generateDeliveryBundle, saveDeliveryIntent } from '../infrastructure/deliveryPreparation'
 import { useAnalysis } from './useAnalysis'
 
 const steps = [
@@ -40,6 +39,7 @@ export function AnalysisPage({ canWrite, canDeploy }: { canWrite: boolean; canDe
   const [draft, setDraft] = useState(emptySource)
   const [error, setError] = useState('')
   const [preparationFailure, setPreparationFailure] = useState<{ runId: string; message: string } | null>(null)
+  const [databaseSetupRun, setDatabaseSetupRun] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(Boolean(appId))
   const [loadAttempt, setLoadAttempt] = useState(0)
@@ -101,10 +101,15 @@ export function AnalysisPage({ canWrite, canDeploy }: { canWrite: boolean; canDe
         const { name, ...repository } = draft
         current = await command<Application>('/applications', name ? { ...repository, name } : repository)
         setApplication(current)
-        setParams({ application: current.id }, { replace: true })
       }
-      const queued = await command<QueuedAnalysis>(`/applications/${current.id}/analyses`, {})
-      setParams({ application: current.id, run: queued.run_id, step: 'source', ...(prepare ? { prepare: '1' } : {}) }, { replace: true })
+      try {
+        const queued = await command<QueuedAnalysis>(`/applications/${current.id}/analyses`, {})
+        setParams({ application: current.id, run: queued.run_id, step: 'source', ...(prepare ? { prepare: '1' } : {}) }, { replace: true })
+      } catch (error) {
+        // Recover the created application if only the analysis request failed.
+        if (!appId) setParams({ application: current.id }, { replace: true })
+        throw error
+      }
     })
   }
   const active = Boolean(run && !isTerminal(run.status))
@@ -157,7 +162,8 @@ export function AnalysisPage({ canWrite, canDeploy }: { canWrite: boolean; canDe
     async function prepare(appId: string, runId: string) {
       if (reviewPlan) { finish('review'); return }
       if (!canPrepare) throw new Error('Automatic preparation requires a complete, source-pinned assessment. Review the analysis before continuing.')
-      const result = await request<Recommendation>(`/applications/${appId}/kubernetes-recommendation?analysis_run_id=${runId}`, { signal: abort.signal })
+      const result = await deliveryRecommendation(appId, runId, abort.signal, () => setDatabaseSetupRun(runId))
+      if (!abort.signal.aborted) setDatabaseSetupRun(null)
       if (abort.signal.aborted) return
       if (result.generation_blocker) throw new Error(result.generation_blocker)
       const intent = reviewIntent ?? result.intent
@@ -179,7 +185,7 @@ export function AnalysisPage({ canWrite, canDeploy }: { canWrite: boolean; canDe
     void prepare(appId, runId).catch(reason => {
       if (abort.signal.aborted) return
       setPreparationFailure({ runId, message: errorMessage(reason) })
-      finish('connectivity')
+      if (!(reason instanceof DatabaseSetupPending)) finish('connectivity')
     })
     return () => abort.abort()
   }, [analyzedRevision, appId, assessmentVersion, canPrepare, preparing, review.runId, reviewIntent, reviewPlan, runId, setParams])
@@ -228,7 +234,7 @@ export function AnalysisPage({ canWrite, canDeploy }: { canWrite: boolean; canDe
               </details>
             </>}
           </form>
-          {preparing && <p role="status">Preparing the infrastructure bundle…</p>}
+          {preparing && preparationFailure?.runId !== runId && <p role="status">{databaseSetupRun === runId ? 'Preparing the test database…' : 'Preparing the infrastructure bundle…'}</p>}
           {runId && matchesApplication && <section className="analysis-banner" aria-label="Analysis summary">
             <div><div><b role="status">{run ? analysisLabels[run.status] : 'Loading analysis…'}</b>
               {active && message && <p>{message}</p>}

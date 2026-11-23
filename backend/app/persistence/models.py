@@ -438,3 +438,16 @@ class IdempotencyRecord(Base):
     response: Mapped[dict | None] = mapped_column(JSONB)
     status_code: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RailsProvisionJob(Base):
+    __tablename__ = "rails_provision_jobs"
+
+    application_id: Mapped[UUID] = mapped_column(ForeignKey("applications.id"), primary_key=True)
+    source_sha: Mapped[str] = mapped_column(String(40), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("analysis_runs.id"))
+    status: Mapped[str] = mapped_column(String(16), server_default="queued")
+    attempts: Mapped[int] = mapped_column(server_default=text("0"))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -1,8 +1,8 @@
 """Bind a verified CI image to the exact reviewed Kubernetes manifests.
 
-This module is deliberately pure: it does not contact GitHub or Kubernetes and
-cannot apply resources. The final bytes are suitable for a later dry-run and
-immutable release record, not for direct execution by an API caller.
+This module does not mutate GitHub or Kubernetes resources. Manifest policy
+can read the approved managed binding catalog. The final bytes are retained for
+dry-run and the immutable release record.
 """
 
 from __future__ import annotations

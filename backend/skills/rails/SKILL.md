@@ -1,0 +1,11 @@
+# Rails delivery evidence
+
+Begin with one batch of parallel reads of the pinned Gemfile.lock, config/puma.rb, config/database.yml, config/environments/production.rb, config/routes.rb, Rakefile and one versioned migration. Use the migration path from the supplied scanner facts. Use repo_read_file with start_line 1 and end_line 250 for the lockfile and end_line 100 for short source files. Limit reads to paths present in the supplied facts and avoid repeating a failed call. These content reads and the skill hash form the managed pilot's review record. Use a remaining call for the health controller when present. Do not execute source or read encrypted credentials, keys or environment files.
+
+Corroborate a database requirement with both the locked adapter and production connection settings. Cite the actual required environment-variable references and supply names only. Distinguish development and test settings from production. A database gem by itself does not establish a production dependency.
+
+Cite the production launcher, its locked dependencies, the external listen binding, the port source and the routes. Distinguish liveness from readiness and trace readiness to the application controller. Cite a native migration declaration and source-owned migration files. Treat unclear or conflicting alternatives as requiring review. Do not claim migration safety from a command or directory name alone.
+
+Use structured command candidates with argument lists and evidence IDs when available. Keep credential creation and deployment out of the analysis. Backend policy decides whether the deployment target can satisfy a requirement.
+
+Ask a required question only when the evidence leaves an unresolved delivery decision. Backend policy supplies approved references for the disposable database. Report the declared environment variable names without asking for their values. Summarize the result as the requested bare JSON object.

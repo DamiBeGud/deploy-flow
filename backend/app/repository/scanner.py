@@ -9,7 +9,7 @@ from app.repository.native import detect_native
 
 IGNORED = {".git", "node_modules", "vendor", ".venv", "dist", "build", "coverage"}
 SENSITIVE = {".env", ".pem", ".key", "id_rsa"}
-SCANNER_VERSION = "phase3-v3"
+SCANNER_VERSION = "phase3-v4"
 
 
 @dataclass

@@ -276,8 +276,31 @@ def _rails(read, paths):
     if "ENV" in database and "DATABASE_URL" in database:
         result.required_variables.append("DATABASE_URL")
         result.service_dependencies.append("postgresql")
-    if "SECRET_KEY_BASE" in read("config/environments/production.rb"):
+    production = read("config/environments/production.rb")
+    if "SECRET_KEY_BASE" in production:
         result.required_variables.append("SECRET_KEY_BASE")
+
+    # Record stronger evidence for the narrowly scoped managed profile. Preserve
+    # the existing broad detector for assessments and operator-managed bindings.
+    default = re.search(r"(?m)^default: *&default *$\n(?: +[^\n]*\n)*", database)
+    adapter = re.search(r"(?m)^ +adapter: *postgresql *$", default[0]) if default else None
+    url = re.search(r"""(?m)^ +url: *<%= ENV\.fetch\(['"]DATABASE_URL['"]\) %> *$""", default[0]) if default else None
+    pg = re.search(r"(?m)^    pg \(", lock)
+    production_database = re.findall(r"(?m)^production: *\n((?: +[^\n]*(?:\n|\Z))*)", database)
+    if adapter and url and pg and [block.strip() for block in production_database] == ["<<: *default"]:
+        first_line = database.count("\n", 0, default.start()) + 1
+        result.add("rails.database.adapter", "postgresql", "config/database.yml", adapter[0],
+                   first_line + default[0].count("\n", 0, adapter.start()))
+        _add_match(result, "rails.database.driver", "pg", "Gemfile.lock", lock, pg)
+        result.add("rails.database.url_reference", "DATABASE_URL", "config/database.yml", url[0],
+                   first_line + default[0].count("\n", 0, url.start()))
+    if key := re.search(r"""(?m)^ *config\.secret_key_base *= *ENV\.fetch\(['"]SECRET_KEY_BASE['"]\) *$""", production):
+        _add_match(result, "rails.production.secret_reference", "SECRET_KEY_BASE",
+                   "config/environments/production.rb", production, key)
+    if bind := re.search(r"""(?m)^ *bind +["']tcp://0\.0\.0\.0:""", puma):
+        _add_match(result, "rails.production.listen_host", "0.0.0.0", "config/puma.rb", puma, bind)
+    if load_tasks := re.search(r"(?m)^ +Rails\.application\.load_tasks *$", rakefile):
+        _add_match(result, "rails.migration.tasks", "Rails.application.load_tasks", "Rakefile", rakefile, load_tasks)
     if any(
         re.search(r"(?m)^\s*before_action\s+:authenticate\b", read(path))
         for path in paths if path.startswith("app/controllers/") and path.endswith(".rb")

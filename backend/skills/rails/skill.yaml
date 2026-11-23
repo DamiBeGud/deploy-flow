@@ -1,0 +1,16 @@
+id: rails
+version: 1.0.0
+description: Inspect pinned Ruby on Rails delivery evidence as text.
+triggers:
+  any_files:
+  - Gemfile.lock
+  - config/application.rb
+  any_languages:
+  - ruby
+allowed_tools:
+- repo.read_file
+- repo.search_text
+risk_tier: read_only
+input_schema: analysis-facts-v1
+output_schema: infrastructure-assessment-v2
+max_context_chars: 12000

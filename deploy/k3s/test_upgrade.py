@@ -141,6 +141,68 @@ class UpgradePlanTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "expected controller"):
             remote.inspect_failed_redis_deployment(deployment_id, work, policies)
 
+    def test_stopped_recovery_requires_applied_owned_inventory_with_no_pods_or_scalers(self):
+        deployment_ids = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]
+        jobs = [{"deployment_id": identifier, "application_id": f"app-{index}", "application_name": f"stopped-{index}"}
+                for index, identifier in enumerate(deployment_ids, 1)]
+        policies = [{"application_id": job["application_id"], "enabled": False} for job in jobs]
+        work = {"execution": 2, "analysis": 0, "github": 0, "delivery": 0}
+        inventories = {}
+        objects = {}
+        for job in jobs:
+            name = job["application_name"]
+            inventories[job["deployment_id"]] = []
+            for kind, resource_name in (("ConfigMap", name + "-config"), ("Deployment", name), ("Service", name)):
+                uid = f"{kind}-{resource_name}"
+                inventories[job["deployment_id"]].append({"kind": kind, "name": resource_name, "uid": uid, "status": "applied"})
+                objects[kind, resource_name] = {
+                    "metadata": {"uid": uid, "name": resource_name, "namespace": remote.TARGET, "resourceVersion": "22",
+                                 "generation": 3, "labels": {"app.kubernetes.io/instance": job["application_id"],
+                                                               "app.kubernetes.io/managed-by": "deployflow"}},
+                    "spec": {"replicas": 0}, "status": {"observedGeneration": 3},
+                }
+        replica_set = {"metadata": {"uid": "rs-1", "resourceVersion": "1", "ownerReferences": [
+                           {"kind": "Deployment", "controller": True, "uid": "Deployment-stopped-1"},
+                       ]}, "spec": {"replicas": 0}}
+        pod = {"metadata": {"ownerReferences": [{"kind": "ReplicaSet", "controller": True, "uid": "rs-1"}]}}
+        hpa = {"spec": {"scaleTargetRef": {"kind": "Deployment", "name": "stopped-1"}}}
+
+        def inspect(*, actual_work=work, actual_policies=policies, actual_jobs=jobs, pods=(), scalers=()):
+            def query(sql):
+                if "FROM execution_jobs" in sql:
+                    self.assertIn("j.lease_token IS NULL", sql)
+                    self.assertIn("j.deadline_at < now()", sql)
+                    self.assertIn("r.previous_release_id IS NULL", sql)
+                    return actual_jobs
+                return next(inventory for identifier, inventory in inventories.items() if identifier in sql)
+
+            data = {"replicasets": [replica_set], "pods": list(pods), "horizontalpodautoscalers": list(scalers)}
+            with patch.object(remote, "query", side_effect=query), \
+                    patch.object(remote, "rows", side_effect=lambda kind, ns: data[kind]), \
+                    patch.object(remote, "get", side_effect=lambda kind, name, ns: objects[kind, name]):
+                return remote.inspect_stopped_deployments(deployment_ids, actual_work, actual_policies)
+
+        retained = inspect()
+        self.assertEqual([item["deployment_id"] for item in retained], deployment_ids)
+        self.assertEqual(retained[0]["replica_sets"], {"rs-1": "1"})
+        for pattern, kwargs in (
+            ("Unrelated or active", {"actual_work": work | {"execution": 3}}),
+            ("Unrelated or active", {"actual_work": work | {"analysis": 1}}),
+            ("expired, unleased", {"actual_jobs": jobs[:1]}),
+            ("disabled policy", {"actual_policies": [policies[0] | {"enabled": True}, policies[1]]}),
+            ("Pod still belongs", {"pods": [pod]}),
+            ("autoscaler", {"scalers": [hpa]}),
+        ):
+            with self.subTest(pattern=pattern), self.assertRaisesRegex(ValueError, pattern):
+                inspect(**kwargs)
+        objects["Deployment", "stopped-1"]["status"]["observedGeneration"] = 2
+        with self.assertRaisesRegex(ValueError, "observed at zero"):
+            inspect()
+        objects["Deployment", "stopped-1"]["status"]["observedGeneration"] = 3
+        objects["Service", "stopped-1"]["metadata"]["uid"] = "replacement"
+        with self.assertRaisesRegex(ValueError, "UID or ownership"):
+            inspect()
+
     def test_snapshot_hashes_private_inline_configuration_without_exporting_it(self):
         items, _, _ = fixtures()
         items[0]["spec"]["template"]["spec"]["containers"][0]["env"].append({"name": "EXAMPLE_PRIVATE", "value": "synthetic-private-marker"})
@@ -395,6 +457,45 @@ class UpgradeRemoteTests(unittest.TestCase):
             remote.execute({"operation": "apply", "release": release, "retain_failed_deployment": deployment_id,
                             "approval": preview["plan_sha256"]})
         files.assert_not_called()
+
+    def test_stopped_recovery_requires_exact_preview_and_rejects_evidence_drift(self):
+        _, state, release = fixtures()
+        identifier = "11111111-1111-4111-8111-111111111111"
+        state["retained_stopped_deployments"] = [{"deployment_id": identifier, "resource_versions": {"Deployment": "7"}}]
+        request = {"operation": "preview", "release": release, "retain_stopped_deployments": [identifier]}
+        with patch.object(remote, "snapshot", return_value=state) as snapshot, \
+                patch.object(remote, "unfinished", return_value=[]), patch.object(remote, "private_base") as files:
+            preview = remote.execute(request)
+            snapshot.assert_called_once_with(origin=None, retain_stopped_deployments=[identifier])
+            state["retained_stopped_deployments"][0]["resource_versions"]["Deployment"] = "8"
+            with self.assertRaisesRegex(ValueError, "differs from exact approval"):
+                remote.execute(request | {"operation": "apply", "approval": preview["plan_sha256"]})
+            files.assert_not_called()
+        for changes in ({"operation": "auto-apply"}, {"operation": "finalize"},
+                        {"retain_stopped_deployments": [identifier, identifier]}, {"retain_failed_deployment": identifier}):
+            with self.subTest(changes=changes), patch.object(remote, "snapshot") as snapshot, self.assertRaises(ValueError):
+                remote.execute(request | changes)
+                snapshot.assert_not_called()
+
+    def test_stopped_recovery_finalization_rejects_changed_pilot_evidence(self):
+        from contextlib import nullcontext
+
+        _, state, _ = fixtures()
+        stopped = "11111111-1111-4111-8111-111111111111"
+        state["retained_stopped_deployments"] = [{"deployment_id": stopped, "resource_versions": {"Deployment": "7"}}]
+        controller = {"run_id": 1}
+        receipt = {"status": "awaiting_public_verification", "before": copy.deepcopy(state),
+                   "controller": controller, "cluster_verified_at": "2026-01-01T00:00:00Z"}
+        state["retained_stopped_deployments"][0]["resource_versions"]["Deployment"] = "8"
+        with patch.object(remote, "_locked_receipt", return_value=nullcontext()), \
+                patch.object(remote, "load_receipt", return_value=receipt), \
+                patch.object(remote, "resolved_receipts", return_value={}), \
+                patch("github_proof.GitHubProof.public_job", return_value={}), \
+                patch.object(remote, "snapshot", return_value=state) as snapshot, \
+                patch.object(remote, "save_receipt") as save, self.assertRaisesRegex(ValueError, "Finalization context changed"):
+            remote.finalize({"receipt_id": "f" * 64, "controller": controller, "github_token": "synthetic"})
+        snapshot.assert_called_once_with(retain_stopped_deployments=[stopped])
+        save.assert_not_called()
 
     def test_no_change_recovery_reuses_retained_scope_without_allowing_image_patches(self):
         _, state, release = fixtures()

@@ -18,7 +18,7 @@ from pathlib import Path
 from bundle import validate
 from operate import ssh_command
 from render import runtime
-from upgrade_protocol import contract, digest, encoded
+from upgrade_protocol import contract, digest, encoded, stopped_deployment_ids
 
 
 def release_metadata(value):
@@ -61,6 +61,7 @@ def main():
     parser.add_argument("--receipt-id", help="Original server upgrade receipt for rollback")
     parser.add_argument("--approve-plan-sha256")
     parser.add_argument("--retain-failed-deployment", help="Exact deployment UUID in a separately approved manual upgrade")
+    parser.add_argument("--retain-stopped-deployments", help="One or two comma-separated UUIDs of failed, stopped deployments")
     parser.add_argument("--confirmation", help="UPGRADE <source SHA> or ROLLBACK <receipt ID>, after scoped approval")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--host", default="91.89.185.146")
@@ -71,6 +72,15 @@ def main():
     args = parser.parse_args()
     request = {"operation": args.operation}
     retained = args.retain_failed_deployment
+    stopped = []
+    if args.retain_stopped_deployments:
+        if retained or args.operation not in {"preview", "apply"} or args.fixed_operator:
+            parser.error("Stopped deployment recovery requires a manual preview/apply and its own scope")
+        try:
+            stopped = stopped_deployment_ids(args.retain_stopped_deployments.split(","))
+        except ValueError as exc:
+            parser.error(str(exc))
+        request["retain_stopped_deployments"] = stopped
     if retained:
         if args.operation not in {"preview", "apply"} or args.fixed_operator:
             parser.error("Retaining a failed deployment requires a manual platform preview/apply")
@@ -97,6 +107,8 @@ def main():
         confirmation = "UPGRADE " + args.source_sha
         if retained:
             confirmation += " RETAIN " + retained
+        if stopped:
+            confirmation += " RETAIN STOPPED " + ",".join(stopped)
     if args.operation.startswith("auto") or args.operation == "finalize":
         if args.approve_plan_sha256 or args.confirmation:
             parser.error("Automatic/finalize operations do not accept caller-supplied approval")
@@ -147,6 +159,8 @@ def main():
         print("Retained non-executing preparation results:", json.dumps(plan["before"].get("retained_blocked_preparations", []), sort_keys=True))
         if plan["before"].get("retained_failed_deployment"):
             print("Retained failed deployment:", json.dumps(plan["before"]["retained_failed_deployment"], sort_keys=True))
+        if plan["before"].get("retained_stopped_deployments"):
+            print("Retained stopped deployments:", json.dumps(plan["before"]["retained_stopped_deployments"], sort_keys=True))
         for change in plan.get("changes", []):
             print("Deployment", change["name"], "UID", change["uid"], "replicas", change["replicas"])
             print("  From:", json.dumps(change["from_images"], sort_keys=True))

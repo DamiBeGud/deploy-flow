@@ -81,6 +81,8 @@ def main(stage):
             args += ["--receipt-id", env["RECEIPT_ID"]]
         if env.get("RETAIN_FAILED_DEPLOYMENT"):
             args += ["--retain-failed-deployment", env["RETAIN_FAILED_DEPLOYMENT"]]
+        if env.get("RETAIN_STOPPED_DEPLOYMENTS"):
+            args += ["--retain-stopped-deployments", env["RETAIN_STOPPED_DEPLOYMENTS"]]
         if operation.endswith("apply") and not operation.startswith("auto"):
             args += ["--approve-plan-sha256", env.get("APPROVAL", ""), "--confirmation", env.get("CONFIRMATION", "")]
         elif env.get("APPROVAL") or env.get("CONFIRMATION"):

@@ -36,6 +36,7 @@ from upgrade_protocol import (
     encoded,
     image_patch,
     make_plan,
+    stopped_deployment_ids,
     target_source,
     verification_plan,
 )
@@ -86,6 +87,30 @@ def pending():
                  "'execution',(SELECT count(*) FROM execution_jobs WHERE status <> 'completed'))")[0]
 
 
+def owned_first_deployment(job):
+    application_id, name, deployment_id = (job[key] for key in ("application_id", "application_name", "deployment_id"))
+    inventory = query(
+        "SELECT json_build_object('kind',kind,'name',name,'uid',uid,'status',status) "
+        f"FROM deployment_resources WHERE deployment_run_id='{deployment_id}' ORDER BY kind, name"
+    )
+    expected = {("ConfigMap", name + "-config"), ("Deployment", name), ("Service", name)}
+    if len(inventory) != len(expected) or {(r["kind"], r["name"]) for r in inventory} != expected:
+        raise ValueError("Retained deployment does not have the expected first-deployment inventory")
+    resources = {}
+    for row in inventory:
+        resource = get(row["kind"], row["name"], TARGET)
+        metadata = resource["metadata"]
+        labels = metadata.get("labels", {})
+        if (row["status"] != "applied" or not row["uid"] or row["uid"] != metadata["uid"]
+                or metadata.get("name") != row["name"] or metadata.get("namespace") != TARGET
+                or metadata.get("deletionTimestamp")
+                or labels.get("app.kubernetes.io/instance") != application_id
+                or labels.get("app.kubernetes.io/managed-by") != "deployflow"):
+            raise ValueError("Retained deployment inventory UID or ownership changed")
+        resources[row["kind"]] = resource
+    return inventory, resources
+
+
 def inspect_failed_redis_deployment(deployment_id, work, policies):
     """Prove the one explicitly named failure cannot execute during upgrade."""
     if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", deployment_id):
@@ -111,35 +136,17 @@ def inspect_failed_redis_deployment(deployment_id, work, policies):
     matching = [p for p in policies if p["application_id"] == application_id]
     if len(matching) != 1 or matching[0]["enabled"] is not False:
         raise ValueError("The retained deployment must have a disabled application policy")
-    name = job["application_name"]
-    inventory = query(
-        "SELECT json_build_object('kind',kind,'name',name,'uid',uid,'status',status) "
-        f"FROM deployment_resources WHERE deployment_run_id='{deployment_id}' ORDER BY kind, name"
-    )
-    expected = {("ConfigMap", name + "-config"), ("Deployment", name), ("Service", name)}
-    if len(inventory) != len(expected) or {(r["kind"], r["name"]) for r in inventory} != expected:
-        raise ValueError("The retained deployment does not have the expected Redis pilot inventory")
-    for row in inventory:
-        resource = get(row["kind"], row["name"], TARGET)
-        metadata = resource["metadata"]
-        labels = metadata.get("labels", {})
-        if (row["status"] != "applied" or not row["uid"] or row["uid"] != metadata["uid"]
-                or metadata.get("name") != row["name"] or metadata.get("namespace") != TARGET
-                or metadata.get("deletionTimestamp")
-                or labels.get("app.kubernetes.io/instance") != application_id
-                or labels.get("app.kubernetes.io/managed-by") != "deployflow"):
-            raise ValueError("Retained deployment inventory UID or ownership changed")
-        if row["kind"] != "Deployment":
-            continue
-        status = resource.get("status", {})
-        pod = resource["spec"]["template"]["spec"]
-        init = pod.get("initContainers", [])
-        if (status.get("readyReplicas", 0) or status.get("availableReplicas", 0)
-                or resource["spec"].get("replicas") != 1
-                or any("emptyDir" not in volume for volume in pod.get("volumes", []))
-                or len(init) != 1 or init[0].get("name") != "redis"
-                or not re.fullmatch(r"docker\.io/library/redis@sha256:[0-9a-f]{62}", init[0].get("image", ""))):
-            raise ValueError("Retained deployment no longer matches the Redis digest failure")
+    inventory, resources = owned_first_deployment(job)
+    workload = resources["Deployment"]
+    status = workload.get("status", {})
+    pod = workload["spec"]["template"]["spec"]
+    init = pod.get("initContainers", [])
+    if (status.get("readyReplicas", 0) or status.get("availableReplicas", 0)
+            or workload["spec"].get("replicas") != 1
+            or any("emptyDir" not in volume for volume in pod.get("volumes", []))
+            or len(init) != 1 or init[0].get("name") != "redis"
+            or not re.fullmatch(r"docker\.io/library/redis@sha256:[0-9a-f]{62}", init[0].get("image", ""))):
+        raise ValueError("Retained deployment no longer matches the Redis digest failure")
     pods = json.loads(kube("get", "pods", "-n", TARGET, "-l",
                            f"app.kubernetes.io/instance={application_id}", "-o", "json"))["items"]
     if len(pods) != 1 or not any(
@@ -160,6 +167,69 @@ def inspect_failed_redis_deployment(deployment_id, work, policies):
     ):
         raise ValueError("The retained Redis Pod is no longer owned by the expected controller")
     return job | {"inventory": inventory, "pod_uid": metadata["uid"]}
+
+
+def inspect_stopped_deployments(deployment_ids, work, policies):
+    deployment_ids = stopped_deployment_ids(deployment_ids)
+    if work["execution"] != len(deployment_ids) or any(value for key, value in work.items() if key != "execution"):
+        raise ValueError("Unrelated or active work blocks stopped deployment recovery")
+    selected = ",".join("'" + identifier + "'" for identifier in deployment_ids)
+    jobs = query(
+        "SELECT json_build_object('job_id',j.id,'deployment_id',r.id,'release_id',r.release_id,"
+        "'application_id',a.id,'application_name',a.name,'error_code',j.error_code,'deadline_at',j.deadline_at) "
+        "FROM execution_jobs j JOIN deployment_runs r ON r.id=j.deployment_run_id "
+        "JOIN applications a ON a.id=r.application_id JOIN release_specifications s ON s.id=r.release_id "
+        f"WHERE r.id IN ({selected}) AND r.environment_profile_id='local-k3s' "
+        "AND r.status='reconciling' AND r.previous_release_id IS NULL AND s.rollback_target_release_id IS NULL "
+        "AND r.error_code IN ('application_start_failed','execution_deadline_exceeded') AND j.error_code=r.error_code "
+        "AND j.status='blocked' AND j.purpose='deploy' AND j.lease_token IS NULL "
+        "AND j.lease_expires_at IS NULL AND j.deadline_at < now() ORDER BY r.id"
+    )
+    if sorted(job["deployment_id"] for job in jobs) != deployment_ids:
+        raise ValueError("Retained deployments must be expired, unleased first-deployment failures")
+
+    replica_sets = rows("replicasets", TARGET)
+    pods = rows("pods", TARGET)
+    autoscalers = rows("horizontalpodautoscalers", TARGET)
+    results = []
+    for job in jobs:
+        application_id = job["application_id"]
+        matching = [policy for policy in policies if policy["application_id"] == application_id]
+        if len(matching) != 1 or matching[0]["enabled"] is not False:
+            raise ValueError("Each retained stopped deployment must have a disabled policy")
+        inventory, resources = owned_first_deployment(job)
+        workload = resources["Deployment"]
+        workload_meta = workload["metadata"]
+        status = workload.get("status", {})
+        if (workload["spec"].get("replicas") != 0 or status.get("observedGeneration") != workload_meta["generation"]
+                or any(status.get(field, 0) for field in (
+                    "replicas", "readyReplicas", "availableReplicas", "updatedReplicas", "terminatingReplicas",
+                ))):
+            raise ValueError("Retained deployment must be observed at zero replicas")
+        if any(hpa["spec"]["scaleTargetRef"].get("kind") == "Deployment"
+               and hpa["spec"]["scaleTargetRef"].get("name") == workload_meta["name"] for hpa in autoscalers):
+            raise ValueError("An autoscaler targets a retained deployment")
+
+        children = [row for row in replica_sets if owned_by(row, "Deployment", {workload_meta["uid"]})]
+        if any(row["spec"].get("replicas") != 0 or row.get("status", {}).get("replicas", 0)
+               for row in children):
+            raise ValueError("Retained ReplicaSets must be at zero replicas")
+        child_ids = {row["metadata"]["uid"] for row in children}
+        if any(owned_by(pod, "ReplicaSet", child_ids) or owned_by(pod, "Deployment", {workload_meta["uid"]})
+               or pod["metadata"].get("labels", {}).get("app.kubernetes.io/instance") == application_id for pod in pods):
+            raise ValueError("A Pod still belongs to a retained deployment")
+
+        results.append(job | {"inventory": inventory, "replicas": 0,
+                              "resource_versions": {kind: value["metadata"]["resourceVersion"]
+                                                    for kind, value in resources.items()},
+                              "replica_sets": {row["metadata"]["uid"]: row["metadata"]["resourceVersion"]
+                                               for row in children}})
+    return results
+
+
+def owned_by(resource, kind, uids):
+    return any(owner.get("controller") and owner.get("kind") == kind and owner.get("uid") in uids
+               for owner in resource["metadata"].get("ownerReferences", []))
 
 
 def identity():
@@ -225,7 +295,7 @@ def schema_fingerprint(pod, user, database):
     return digest(json.loads(payload))
 
 
-def snapshot(*, origin=None, retain_failed_deployment=None):
+def snapshot(*, origin=None, retain_failed_deployment=None, retain_stopped_deployments=None):
     identity()
     deployments = {}
     for item in rows("deployments"):
@@ -286,6 +356,9 @@ def snapshot(*, origin=None, retain_failed_deployment=None):
     if retain_failed_deployment:
         state["retained_failed_deployment"] = inspect_failed_redis_deployment(retain_failed_deployment, work, policies)
         work["execution"] -= 1
+    elif retain_stopped_deployments:
+        state["retained_stopped_deployments"] = inspect_stopped_deployments(retain_stopped_deployments, work, policies)
+        work["execution"] -= len(state["retained_stopped_deployments"])
     return state
 
 
@@ -549,10 +622,20 @@ def verify_running(targets, verified):
             raise ValueError("Ready Pods with verified image IDs are missing")
 
 
+def stopped_scope(before):
+    retained = before.get("retained_stopped_deployments")
+    return {"retain_stopped_deployments": [job["deployment_id"] for job in retained]} if retained else {}
+
+
 def execute(request):
     retained = request.get("retain_failed_deployment")
     if retained and request["operation"] not in {"preview", "apply"}:
         raise ValueError("A retained deployment requires a protected manual upgrade")
+    stopped = request.get("retain_stopped_deployments")
+    if stopped is not None:
+        if retained or request["operation"] not in {"preview", "apply"}:
+            raise ValueError("Stopped deployment recovery requires a protected manual upgrade and its own scope")
+        stopped = stopped_deployment_ids(stopped)
     if request["operation"] == "status":
         value = load_receipt(request["receipt_id"])
         return {"receipt_id": value["id"], "recorded_status": value["status"],
@@ -572,6 +655,10 @@ def execute(request):
             raise ValueError("Only a failed retained-scope upgrade with zero image patches can use no-change recovery")
         retained = retained_origin["deployment_id"]
     scope = {"retain_failed_deployment": retained} if retained else {}
+    if stopped:
+        scope["retain_stopped_deployments"] = stopped
+    elif origin:
+        scope.update(stopped_scope(origin["before"]))
     if unfinished(origin["id"] if origin else None):
         raise ValueError("Unfinished platform upgrade/rollback exists; inspect private receipts before proceeding")
     release = origin["release"] if origin else request["release"]
@@ -584,6 +671,8 @@ def execute(request):
             for key in ("retained_failed_deployment", "deployments", "protected", "flags", "application_policies")
         )):
             raise ValueError("Retained-scope no-change recovery requires unchanged platform and pilot state")
+        if origin and before.get("retained_stopped_deployments") != origin["before"].get("retained_stopped_deployments"):
+            raise ValueError("Stopped deployment evidence changed before rollback")
         return candidate
 
     plan = current_plan()
@@ -630,6 +719,8 @@ def execute(request):
                 journal["backups"] = backup(path)
                 verified = verify_images([image for target in targets.values() for image in target["images"].values()])
                 fence.check()
+                if scope.get("retain_stopped_deployments") and digest(current_plan()) != identifier:
+                    raise ValueError("Stopped deployment recovery context changed before the first image patch")
                 journal["status"] = "applying"
                 save_receipt(path, journal)
                 for change in plan["changes"]:
@@ -658,7 +749,8 @@ def execute(request):
                         or current["flags"] != plan["before"]["flags"]
                         or current["schema_fingerprints"] != plan["before"]["schema_fingerprints"]
                         or current["application_policies"] != plan["before"]["application_policies"]
-                        or current.get("retained_failed_deployment") != plan["before"].get("retained_failed_deployment")):
+                        or current.get("retained_failed_deployment") != plan["before"].get("retained_failed_deployment")
+                        or current.get("retained_stopped_deployments") != plan["before"].get("retained_stopped_deployments")):
                     raise ValueError("Schema/provider/authorization context changed during upgrade")
             journal["status"] = "awaiting_public_verification"
             journal["cluster_verified_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -705,7 +797,8 @@ def recover_verification(request):
         cursor = load_receipt(cursor)["plan"].get("origin_receipt")
     if set(unfinished(origin["id"])) - ancestors:
         raise ValueError("Unrelated unfinished operation blocks verification recovery")
-    plan = verification_plan(snapshot(), origin)
+    scope = stopped_scope(origin["before"])
+    plan = verification_plan(snapshot(**scope), origin)
     identifier = digest(plan)
     if request["operation"] == "verify-preview":
         return {"plan": plan, "plan_sha256": identifier}
@@ -714,7 +807,7 @@ def recover_verification(request):
     with _locked_receipt(origin["id"]):
         if origin["id"] in resolved_receipts():
             raise ValueError("Receipt resolved after review")
-        if digest(verification_plan(snapshot(), load_receipt(origin["id"]))) != identifier:
+        if digest(verification_plan(snapshot(**scope), load_receipt(origin["id"]))) != identifier:
             raise ValueError("Verification recovery changed after lock")
         verify_running(origin["targets"], verify_images([i for t in origin["targets"].values() for i in t["images"].values()]))
         path = private_base() / identifier
@@ -741,9 +834,10 @@ def finalize(request):
             raise ValueError("Finalization controller differs from original operation")
         proof = GitHubProof(request.get("github_token")).public_job(journal["controller"], since=journal["cluster_verified_at"])
         retained = journal["before"].get("retained_failed_deployment")
-        current = snapshot(retain_failed_deployment=retained["deployment_id"]) if retained else snapshot()
+        scope = {"retain_failed_deployment": retained["deployment_id"]} if retained else stopped_scope(journal["before"])
+        current = snapshot(**scope)
         for key in ("protected", "schema_fingerprints", "schema_revision", "keycloak_version", "flags",
-                    "application_policies", "retained_failed_deployment"):
+                    "application_policies", "retained_failed_deployment", "retained_stopped_deployments"):
             if current.get(key) != journal["before"].get(key):
                 raise ValueError("Finalization context changed: " + key)
         if set(current["deployments"]) != set(journal["targets"]):

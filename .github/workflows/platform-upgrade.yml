@@ -24,8 +24,11 @@ on:
       retain_failed_deployment:
         description: 'Exact disabled, unleased first deployment to retain during a separately approved Redis recovery (preview/apply only)'
         type: string
+      retain_stopped_deployments:
+        description: 'One or two comma-separated failed deployment UUIDs at zero replicas (manual recovery preview/apply only)'
+        type: string
       confirmation:
-        description: 'UPGRADE <source SHA> [RETAIN <deployment UUID>], ROLLBACK <receipt ID> or VERIFY <receipt ID>'
+        description: 'UPGRADE <source SHA> [RETAIN <UUID> or RETAIN STOPPED <sorted UUIDs>], ROLLBACK <receipt ID> or VERIFY <receipt ID>'
         type: string
 
 permissions:
@@ -84,6 +87,7 @@ jobs:
           APPROVAL: ${{ inputs.approve_plan_sha256 }}
           CONFIRMATION: ${{ inputs.confirmation }}
           RETAIN_FAILED_DEPLOYMENT: ${{ inputs.retain_failed_deployment }}
+          RETAIN_STOPPED_DEPLOYMENTS: ${{ inputs.retain_stopped_deployments }}
           SSH_KEY: ${{ secrets.K3S_SSH_PRIVATE_KEY }}
           SSH_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
           SSH_HOST: ${{ secrets.K3S_SSH_HOST }}

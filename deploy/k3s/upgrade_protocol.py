@@ -110,6 +110,15 @@ def deployment_snapshot(item):
             "images": refs, "contract_sha256": digest(contract(spec))}
 
 
+def stopped_deployment_ids(values):
+    if (not isinstance(values, list) or not 1 <= len(values) <= 2
+            or any(not isinstance(value, str) or not re.fullmatch(
+                r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value) for value in values)
+            or len(set(values)) != len(values)):
+        raise ValueError("Retaining stopped deployments requires one or two distinct, exact deployment UUIDs")
+    return sorted(values)
+
+
 def make_plan(snapshot, release, *, origin=None):
     if snapshot["namespace_uid"] != NS_UID or snapshot["target_namespace_uid"] != TARGET_UID:
         raise ValueError("Namespace identity changed")
@@ -197,6 +206,8 @@ def verification_plan(current, origin):
                 "keycloak_version", "protected", "flags", "application_policies"):
         if current[key] != before[key]:
             raise ValueError("Recovery context changed: " + key)
+    if current.get("retained_stopped_deployments") != before.get("retained_stopped_deployments"):
+        raise ValueError("Stopped deployment evidence changed before verification recovery")
     if set(current["deployments"]) != set(origin["targets"]):
         raise ValueError("Recovery workload inventory changed")
     for name, target in origin["targets"].items():

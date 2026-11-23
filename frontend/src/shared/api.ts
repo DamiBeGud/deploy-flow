@@ -42,7 +42,7 @@ export async function openEventStream(path: string, signal: AbortSignal): Promis
     })
   } catch (error) {
     if (signal.aborted) throw error
-    throw new ApiError(0, 'Cannot reach the backend. Check Docker and retry.')
+    throw new ApiError(0, 'Cannot reach the backend. Reconnecting to analysis updates.')
   }
   if (!response.ok) {
     reportExpiredSession(response.status)
@@ -62,7 +62,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     })
   } catch (error) {
     if (init.signal?.aborted) throw error
-    throw new ApiError(0, 'Cannot reach the backend. Check Docker and retry; your request can be retried safely.')
+    throw new ApiError(0, 'Cannot reach the backend. Check your connection and try again.')
   }
   if (!response.ok) {
     reportExpiredSession(response.status)
@@ -74,14 +74,14 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 
 // Keep a command key until its successful response has reached this browser.
 // Scope includes identity, action, target and body; reloads preserve uncertain requests.
-export async function command<T>(path: string, body: object = {}, method = 'POST'): Promise<T> {
+export async function command<T>(path: string, body: object = {}, method = 'POST', stableKey?: string): Promise<T> {
   const fingerprint = `command:${actorScope}:${method}:${path}:${JSON.stringify(body)}`
-  const key = storage.get(fingerprint) ?? crypto.randomUUID()
-  storage.set(fingerprint, key)
+  const key = stableKey ?? storage.get(fingerprint) ?? crypto.randomUUID()
+  if (!stableKey) storage.set(fingerprint, key)
   const result = await request<T>(path, {
     method, body: JSON.stringify(body), headers: { 'Idempotency-Key': key },
   })
-  storage.remove(fingerprint)
+  if (!stableKey) storage.remove(fingerprint)
   return result
 }
 

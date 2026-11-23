@@ -88,3 +88,97 @@ a.button{text-decoration:none}
 .lifecycle-history table{table-layout:fixed}.lifecycle-history th:nth-child(1){width:24%}.lifecycle-history th:nth-child(2){width:15%}.lifecycle-history th:nth-child(3){width:31%}.lifecycle-history th:nth-child(4){width:20%}.lifecycle-history th:nth-child(5){width:10%}.lifecycle-history td{white-space:normal;overflow-wrap:anywhere}.lifecycle-history .image-name{display:table-cell;max-width:none;overflow:visible}.lifecycle-history td,.lifecycle-history th{padding:14px 12px}
 
 .lifecycle-actions form{max-width:760px;padding:18px;border:1px solid var(--line);border-radius:8px}.lifecycle-actions form>label{display:block;font-size:12px;margin:14px 0}.lifecycle-actions form select,.lifecycle-actions form input:not([type=checkbox]){display:block;margin-top:6px}.lifecycle-actions input[type=checkbox]{width:auto;margin-right:7px}
+
+/* Workflow summaries keep technical evidence within the owning panel. */
+.stepper button:focus-visible, .workspace a:focus-visible, .workspace summary:focus-visible,
+.workspace button:focus-visible, .workspace [tabindex="0"]:focus-visible {
+  outline: 2px solid #08777f;
+  outline-offset: 3px;
+}
+.workspace-meta { margin-bottom: 10px; color: #c5d0e0; }
+.workspace-meta small { display: block; overflow-wrap: anywhere; }
+.workspace-meta summary, .workflow-details summary { cursor: pointer; }
+.workflow-details { margin: 10px 0; font-size: 12px; color: #495c72; overflow-wrap: anywhere; }
+.workflow-details summary { font-weight: 600; }
+.source-hints { display: flex; flex-wrap: wrap; gap: 5px 18px; color: #4e6076; margin: 0 0 16px; }
+.analysis-banner { margin-top: 18px; }
+.analysis-banner p { overflow-wrap: anywhere; }
+.analysis-banner b[role="status"] { display: block; }
+.application-list { margin-bottom: 24px; }
+.application-list .table-heading, .cluster-observations .table-heading, .lifecycle-history .table-heading {
+  height: auto;
+  min-height: 60px;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-block: 12px;
+}
+.application-search { display: flex; align-items: center; gap: 8px; flex: 1 1 260px; max-width: 360px; color: #475972; }
+.application-search input { width: 100%; min-width: 0; }
+.application-rows { margin: 0; padding: 0; list-style: none; }
+.application-rows li {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px 18px;
+  border-top: 1px solid var(--line);
+  padding: 14px 18px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.application-rows a { color: #08777f; font-weight: 700; }
+.lifecycle-history table { min-width: 0; table-layout: fixed; }
+.lifecycle-history td, .lifecycle-history th { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+.cluster-observations table { min-width: 620px; table-layout: fixed; }
+.cluster-observations td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+.cluster-observations .service-name { display: grid; gap: 5px; }
+.lifecycle-history th:nth-child(n) { width: auto; }
+.lifecycle-history button { white-space: normal; }
+.lifecycle-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.lifecycle-summary strong { color: var(--ink); font-size: 14px; }
+.lifecycle-summary .lifecycle-detail { min-width: 0; }
+.release-checklist {
+  list-style: none;
+  margin: 10px 0 14px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.lifecycle-detail .release-checklist { padding-left: 0; }
+.release-checklist li {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+  color: #3e5269;
+}
+.release-checklist li[data-tone="complete"] { background: #ecf8f2; color: #19553c; }
+.release-checklist li[data-tone="attention"] { background: #fdf1eb; color: #853a26; }
+.file-review-summary { flex-wrap: wrap; }
+.file-review-summary input[type="checkbox"] { width: auto; }
+.file-content { overflow-wrap: anywhere; }
+.file-content p { padding: 0 12px; }
+.form-error p { margin: 4px 0; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .sidebar-footer { display: flex; margin-top: 12px; flex-wrap: wrap; align-items: start; gap: 10px; }
+  .workspace-meta { margin: 0; }
+  .sidebar .logout { width: auto; margin: 0; }
+  .sidebar nav span, .sidebar nav a { min-width: 0; }
+  .sidebar nav a { height: auto; min-height: 40px; text-align: center; }
+  .stepper { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .stepper li > i { display: none; }
+  .stepper button { width: 100%; min-height: 45px; flex-direction: column; }
+  .stepper button b { display: block; font-size: 10px; }
+  .lifecycle-summary, .release-checklist { grid-template-columns: 1fr; }
+  .lifecycle-summary .lifecycle-detail { margin-bottom: 0; }
+  .lifecycle-summary { margin-bottom: 18px; }
+    .lifecycle-history table { min-width: 480px; }
+  .application-rows li { grid-template-columns: minmax(0, 1fr) auto; }
+  .application-rows li > .repository-url { grid-column: 1 / -1; grid-row: 2; }
+  .workspace .page-header h1 { overflow-wrap: anywhere; }
+  .workspace .page-header > div { min-width: 0; }
+  .workspace .button { max-width: 100%; white-space: normal; }
+}

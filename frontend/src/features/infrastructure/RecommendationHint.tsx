@@ -14,7 +14,11 @@ export function RecommendationHint({ recommendation, effectiveValue, onReset }: 
     : null
 
   return <div className={`recommendation-hint ${overridden ? 'recommendation-overridden' : ''}`}>
-    <span><b>{overridden ? 'User override' : recommendation.source}</b> · {Math.round(recommendation.confidence * 100)}% · {recommendation.explanation}{evidence ? ` · ${evidence}` : ''}</span>
+    <div><b>{overridden ? 'User override' : recommendation.source}</b>
+      {(recommendation.explanation || evidence) && <details><summary>Evidence</summary>
+        <span>{recommendation.explanation}{evidence ? ` · ${evidence}` : ''}{recommendation.confidence > 0 ? ` · Confidence ${Math.round(recommendation.confidence * 100)}%` : ''}</span>
+      </details>}
+    </div>
     {overridden ? <button type="button" onClick={onReset}>Reset to recommendation</button> : null}
     {Boolean(recommendation.alternatives?.length) && <details>
       <summary>Other source commands</summary>

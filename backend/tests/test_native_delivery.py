@@ -1,9 +1,13 @@
+import json
+import re
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
-from app.api.schemas import BuildSpecification
+from app.api.schemas import BuildSpecification, CreateApplication
 from app.bootstrap.generator import PlanError, canonical_digest, render
 from app.bootstrap.recommendations import recommend
 from app.kubernetes.policy import ManifestPolicyError, checked_manifests
@@ -412,9 +416,8 @@ def test_reviewed_pr_policy_only_permits_the_original_merge():
     assert not source_scope_permits(db, policy, release, build)
 
 
-@pytest.mark.parametrize("token_secret", [None, "queue-api-secret"])
-def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, token_secret):
-    import json
+@pytest.mark.parametrize(("managed", "token_secret"), [(False, None), (False, "queue-api-secret"), (True, None)])
+def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, managed, token_secret):
 
     from app.bootstrap import redis
     from app.deployments.release import bind_verified_image
@@ -441,7 +444,30 @@ def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, token_se
         "application_id": profile["application_id"], "application_name": "demo", "repository": "example/demo",
         "source_sha": "a" * 40, "worker_target": "service.worker:celery", "api_token_secret": token_secret,
     }
-    monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([value]))
+    if managed:
+        monkeypatch.setenv("DF_REDIS_PILOT_REPOSITORIES", json.dumps({"example/demo": "service.worker:celery"}))
+        with monkeypatch.context() as obsolete_binding:
+            obsolete_binding.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([value | {"source_sha": "c" * 40}]))
+            assert redis.redis_for_source(assessment, profile["application_id"]) is None
+        another_id = "7be41672-22c3-4ac8-81e9-314292916555"
+        another_run = assessment | {
+            "application": assessment["application"] | {"name": "another-run"},
+            "repository": assessment["repository"] | {"commit_sha": "b" * 40},
+        }
+        assert redis.redis_for_source(another_run, another_id).environment() == {
+            "CELERY_BROKER_URL": "redis://127.0.0.1:6379/0",
+            "CELERY_RESULT_BACKEND": "redis://127.0.0.1:6379/1",
+            "QUEUE_NAMESPACE": "q-" + another_id.replace("-", ""),
+            redis.REDIS_SOURCE_KEY: "b" * 40,
+        }
+        for update in (
+            {"repository": assessment["repository"] | {"name": "another-repo"}},
+            {"workflow": assessment["workflow"] | {"worker_target": "other.worker:celery"}},
+            {"configuration": {"required_variables": list(redis.REDIS_REQUIREMENTS | {"API_TOKEN"})}},
+        ):
+            assert redis.redis_for_source(assessment | update, profile["application_id"]) is None
+    else:
+        monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([value]))
     result = recommend(assessment, profile, "main", 1, application_id=profile["application_id"])
     assert not result["generation_blocker"]
     intent = result["intent"]
@@ -459,6 +485,17 @@ def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, token_se
     assert pod["containers"][1]["command"][:4] == ["celery", "-A", "service.worker:celery", "worker"]
     assert token_secret is None or pod["containers"][0]["env"][0]["valueFrom"]["secretKeyRef"]["name"] == token_secret
     assert "env" not in pod["containers"][1]
+    if managed:
+        config_path = "deploy/kubernetes/configmap.yaml"
+        config = yaml.safe_load(bundle.files[config_path])
+        assert config["data"][redis.REDIS_SOURCE_KEY] == "a" * 40
+        config["data"][redis.REDIS_SOURCE_KEY] = "c" * 40
+        tampered = bundle.files | {config_path: yaml.safe_dump(config)}
+        with pytest.raises(ManifestPolicyError, match="redis_binding_denied"):
+            checked_manifests(
+                tampered, digest=canonical_digest(tampered), namespace=profile["namespace"],
+                application_id=profile["application_id"], registry=profile["registry"],
+            )
     redis_container = pod["initContainers"][0]
     valid_image = redis_container["image"]
     redis_container["image"] = valid_image[:-2]
@@ -478,6 +515,23 @@ def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, token_se
             files, digest=canonical_digest(files), namespace=profile["namespace"],
             application_id=profile["application_id"], registry=profile["registry"],
         )
+
+
+def test_application_names_can_be_generated_from_repository_and_unique_identity():
+    application_id = UUID("4374b5cc-a306-4fda-ab0b-560d8d6ed1a5")
+    another_id = UUID("7be41672-22c3-4ac8-81e9-314292916555")
+    repository = "https://github.com/Example/01_app.Name"
+    application = CreateApplication(repository_url=repository + ".git/", revision="release/next")
+    assert application.repository_url == repository
+    assert application.revision == "release/next"
+    assert application.name_for(application_id) == "df-01-app-name-4374b5cca3064fda"
+    assert application.name_for(application_id) != application.name_for(another_id)
+    assert CreateApplication(repository_url=repository, name="custom").name_for(application_id) == "custom"
+    long_name = CreateApplication(repository_url=repository + "a" * 100).name_for(application_id)
+    assert len(long_name) == 63
+    assert re.fullmatch(r"[a-z][a-z0-9-]*[a-z0-9]", long_name)
+    with pytest.raises(ValidationError):
+        CreateApplication(repository_url="https://github.com/Example/.git")
 
 
 def test_node_runtime_uses_its_repository_and_blocks_missing_database(tmp_path):

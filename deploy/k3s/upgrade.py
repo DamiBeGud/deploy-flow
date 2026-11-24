@@ -18,19 +18,48 @@ from pathlib import Path
 from bundle import validate
 from operate import ssh_command
 from render import runtime
-from upgrade_protocol import contract, digest, encoded, stopped_deployment_ids
+from upgrade_protocol import contract, digest, encoded, managed_rails_contract, stopped_deployment_ids
 
 
-def release_metadata(value):
+def release_metadata(value, *, preserve_managed_rails=False):
     validate(value)
     deployments = value["stages"]["workloads"]["items"]
     # Optional cleaner is upgraded only if it already exists. Never install it
     # or enable either capability as a side effect of upgrading images.
     cleaner = runtime("kube-cleaner", value["images"]["backend"],
                       ["dramatiq", "app.worker", "--processes", "1", "--threads", "1", "--queues", "cleanup"], identity=True)
-    return {"source_sha": value["source_sha"], "images": value["images"],
-            "schema_revision": value["schema_revision"], "keycloak_version": value["keycloak_version"],
-            "contracts": {item["metadata"]["name"]: contract(item["spec"]) for item in [*deployments, cleaner]}}
+    release = {"source_sha": value["source_sha"], "images": value["images"],
+               "schema_revision": value["schema_revision"], "keycloak_version": value["keycloak_version"],
+               "contracts": {item["metadata"]["name"]: contract(item["spec"]) for item in [*deployments, cleaner]}}
+    if preserve_managed_rails:
+        from render_managed_rails import render_managed_rails
+
+        reference_profile = {"owner_id": "reference", "organization_id": "reference",
+                             "repository": "example/reference", "revision": "reference", "source_sha": "0" * 40}
+        overlay = render_managed_rails(value["images"]["backend"], reference_profile)
+        overlaid = {"rails-provisioner": managed_rails_contract(overlay["provisioner"]["spec"])[0]}
+        for name, patch in overlay["deployment_patches"].items():
+            base = release["contracts"][name]
+            expected = json.loads(json.dumps(base))
+            pod = expected["template"]["spec"]
+            spec = patch["spec"]["template"]["spec"]
+            for field in ("serviceAccountName", "automountServiceAccountToken"):
+                pod[field] = spec[field]
+            additions = {entry["name"]: entry["env"] for entry in spec["containers"]}
+            for container in pod["containers"]:
+                addition_env = additions.pop(container["name"], [])
+                if not addition_env:
+                    continue
+                replacements = {entry["name"]: entry for entry in addition_env}
+                original = container.get("env", [])
+                existing = {entry["name"] for entry in original}
+                container["env"] = [replacements.get(entry["name"], entry) for entry in original]
+                container["env"].extend(entry for entry in addition_env if entry["name"] not in existing)
+            if additions:
+                raise ValueError("Unexpected managed Rails overlay container")
+            overlaid[name] = managed_rails_contract(expected)[0]
+        release["managed_rails_contracts"] = overlaid
+    return release
 
 
 def command(args):
@@ -61,6 +90,7 @@ def main():
     parser.add_argument("--receipt-id", help="Original server upgrade receipt for rollback")
     parser.add_argument("--approve-plan-sha256")
     parser.add_argument("--retain-failed-deployment", help="Exact deployment UUID in a separately approved manual upgrade")
+    parser.add_argument("--preserve-managed-rails", action="store_true", help="Retain the installed managed Rails overlay during a manual upgrade")
     parser.add_argument("--retain-stopped-deployments", help="One or two comma-separated UUIDs of failed, stopped deployments")
     parser.add_argument("--confirmation", help="UPGRADE <source SHA> or ROLLBACK <receipt ID>, after scoped approval")
     parser.add_argument("--output", type=Path, required=True)
@@ -72,6 +102,8 @@ def main():
     args = parser.parse_args()
     request = {"operation": args.operation}
     retained = args.retain_failed_deployment
+    if args.preserve_managed_rails and (args.fixed_operator or args.operation not in {"preview", "apply"}):
+        parser.error("Preserving managed Rails requires a manual upgrade preview/apply")
     stopped = []
     if args.retain_stopped_deployments:
         if retained or args.operation not in {"preview", "apply"} or args.fixed_operator:
@@ -103,12 +135,14 @@ def main():
         value = validate(json.loads(args.bundle.read_text()))
         if value["source_sha"] != args.source_sha:
             parser.error("Publication source differs from current main checkout")
-        request["release"] = release_metadata(value)
+        request["release"] = release_metadata(value, preserve_managed_rails=args.preserve_managed_rails)
         confirmation = "UPGRADE " + args.source_sha
         if retained:
             confirmation += " RETAIN " + retained
         if stopped:
             confirmation += " RETAIN STOPPED " + ",".join(stopped)
+        if args.preserve_managed_rails:
+            confirmation += " PRESERVE MANAGED RAILS"
     if args.operation.startswith("auto") or args.operation == "finalize":
         if args.approve_plan_sha256 or args.confirmation:
             parser.error("Automatic/finalize operations do not accept caller-supplied approval")

@@ -11,7 +11,8 @@ import yaml
 from kubernetes.client.exceptions import ApiException
 from sqlalchemy import select
 
-from app.agents.harness import _merge
+from app.agents.harness import _matches_locked_rails_value, _merge
+from app.analysis.command_inference import SourceExcerpt
 from app.analysis.contracts import AssessmentDraftV2
 from app.bootstrap import managed_rails
 from app.bootstrap.generator import canonical_digest
@@ -159,6 +160,16 @@ def test_profile_denies_unapproved_sha_fallback_and_conflicting_model_claim(tmp_
     }
     with pytest.raises(managed_rails.ManagedRailsError, match="critical_evidence_conflict"):
         eligible(PROFILE, application, run, assessment)
+
+
+def test_rails_lockfile_equivalence_requires_cited_matching_identity_and_version():
+    lock = SourceExcerpt("Gemfile.lock", 1, "    pg (1.6.3-aarch64-linux)\nRUBY VERSION\n   ruby 3.3.10p183\n")
+    assert _matches_locked_rails_value("rails.database.driver", "pg (1.6.3)", "pg", [lock])
+    assert _matches_locked_rails_value("runtime.version", "ruby 3.3.10p183", "3.3.10", [lock])
+    assert not _matches_locked_rails_value("rails.database.driver", "pg (2.0.0)", "pg", [lock])
+    assert not _matches_locked_rails_value("rails.database.driver", "mysql2", "pg", [lock])
+    assert not _matches_locked_rails_value("runtime.version", "3.3.10p184", "3.3.10", [lock])
+    assert not _matches_locked_rails_value("runtime.version", "3.3.10p183", "3.3.10", [])
 
 
 def test_multiple_declared_variables_are_distinct_findings(tmp_path):

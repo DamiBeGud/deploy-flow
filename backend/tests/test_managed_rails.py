@@ -204,6 +204,9 @@ def test_profile_denies_unapproved_sha_fallback_and_conflicting_model_claim(tmp_
     assessment["conflicts"] = ["Model claim conflicts with scanner fact: rails.database.adapter"]
     with pytest.raises(managed_rails.ManagedRailsError, match="critical_evidence_conflict"):
         eligible(PROFILE, application, run, assessment)
+    assessment["conflicts"] = ["Model claim conflicts with scanner fact: configuration.required_variable"]
+    with pytest.raises(managed_rails.ManagedRailsError, match="critical_evidence_conflict"):
+        eligible(PROFILE, application, run, assessment)
     assessment["conflicts"] = []
     with pytest.raises(managed_rails.ManagedRailsError, match="agent_source_review_incomplete"):
         eligible(PROFILE, application, run, assessment)
@@ -223,6 +226,51 @@ def test_rails_lockfile_equivalence_requires_cited_matching_identity_and_version
     assert not _matches_locked_rails_value("rails.database.driver", "mysql2", "pg", [lock])
     assert not _matches_locked_rails_value("runtime.version", "3.3.10p184", "3.3.10", [lock])
     assert not _matches_locked_rails_value("runtime.version", "3.3.10p183", "3.3.10", [])
+
+
+@pytest.mark.parametrize(
+    "claim,path,excerpt,conflicts",
+    [
+        ("Rails.application.load_tasks()", "Rakefile", "  Rails.application.load_tasks", False),
+        ("`Rails.application.load_tasks()`", "Rakefile", "  Rails.application.load_tasks", False),
+        ("Rails.application.load_tasks()", "README.md", "  Rails.application.load_tasks", True),
+        ("Rails.application.load_tasks()", "Rakefile", "  # Rails.application.load_tasks", True),
+        ("Rails.application.load_tasks(false)", "Rakefile", "  Rails.application.load_tasks", True),
+        ("bundle exec rails db:migrate", "Rakefile", "  Rails.application.load_tasks", True),
+        (False, "Rakefile", "  Rails.application.load_tasks", True),
+    ],
+)
+def test_rails_task_loader_equivalence_is_evidence_bound(tmp_path, claim, path, excerpt, conflicts):
+    _, _, document = fixture(tmp_path)
+    category = "rails.migration.tasks"
+    marker = next(item for item in document["findings"] if item["category"] == category)
+    key = marker["evidence_ids"][0]
+    draft = AssessmentDraftV2.model_validate({
+        "summary": "Synthetic task-loader finding",
+        "findings": [{"category": category, "value": claim, "status": "explicit",
+                      "confidence": 1, "evidence_ids": [key]}],
+    })
+    merged, _ = _merge(document, draft, [], {key: SourceExcerpt(path, 1, excerpt)})
+    assert merged["conflicts"] == ([f"Model claim conflicts with scanner fact: {category}"] if conflicts else [])
+    assert [f["value"] for f in merged["findings"] if f["category"] == category] == ["Rails.application.load_tasks"]
+
+
+def test_rails_required_variable_findings_are_distinct_and_unknown_names_block(tmp_path):
+    _, _, document = fixture(tmp_path)
+    document["configuration"]["optional_variables"] = ["OPTIONAL_FLAG"]
+    key = document["evidence"][0]["id"]
+    category = "configuration.required_variable"
+    claims = ["DATABASE_URL", "SECRET_KEY_BASE", "DATABASE_URL", "OPTIONAL_FLAG", "UNKNOWN_REQUIRED"]
+    draft = AssessmentDraftV2.model_validate({
+        "summary": "Synthetic required variable findings",
+        "findings": [{"category": category, "value": value, "status": "explicit", "confidence": 1,
+                      "evidence_ids": [key]} for value in claims],
+    })
+    corroborated, _ = _merge(document, draft.model_copy(update={"findings": draft.findings[:3]}), [])
+    assert corroborated["conflicts"] == []
+    assert [f["value"] for f in corroborated["findings"] if f["category"] == category] == claims[:2]
+    disputed, _ = _merge(document, draft, [])
+    assert disputed["conflicts"] == [f"Model claim conflicts with scanner fact: {category}"]
 
 
 def test_multiple_declared_variables_are_distinct_findings(tmp_path):

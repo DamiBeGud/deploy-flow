@@ -140,6 +140,21 @@ def _matches_locked_rails_value(category, claim, scanner_value, excerpts):
     return False
 
 
+def _matches_rails_task_loader(claim, scanner_value, excerpts: list[SourceExcerpt]) -> bool:
+    if scanner_value != "Rails.application.load_tasks" or not isinstance(claim, str):
+        return False
+    literal = claim.strip()
+    if literal.startswith("`") and literal.endswith("`"):
+        literal = literal[1:-1].strip()
+    if not re.fullmatch(r"Rails\.application\.load_tasks(?:\(\s*\))?", literal):
+        return False
+    return any(
+        excerpt.path == "Rakefile"
+        and re.search(r"(?m)^ +Rails\.application\.load_tasks *$", excerpt.text)
+        for excerpt in excerpts
+    )
+
+
 def _merge(
     base: dict, draft: AssessmentDraftV2, extra_evidence: list[dict],
     command_sources: dict[str, SourceExcerpt] | None = None,
@@ -149,8 +164,13 @@ def _merge(
     findings = list(base.get("findings", []))
     known = {item["category"]: item["value"] for item in findings}
     variables = base.get("configuration", {})
-    declared_variables = set(variables.get("required_variables", [])) | set(variables.get("optional_variables", []))
-    recorded_variables = {f["value"] for f in findings if f["category"] == "configuration.variable"}
+    required_variables = set(variables.get("required_variables", []))
+    declared_variables = required_variables | set(variables.get("optional_variables", []))
+    is_rails = base.get("review", {}).get("runtime") == "ruby"
+    recorded_variables = {
+        (f["category"], f["value"]) for f in findings
+        if f["category"] in {"configuration.variable", "configuration.required_variable"}
+    }
     conflicts = list(base.get("conflicts", []))
     for index, item in enumerate(draft.findings, start=1):
         if item.status != "unknown" and not item.evidence_ids:
@@ -159,18 +179,29 @@ def _merge(
             raise AgentError("assessment_evidence_invalid")
         if _contains_secret(item.value):
             raise AgentError("assessment_secret_detected")
-        if (item.category == "configuration.variable" and declared_variables
-                and (item.value in declared_variables or base.get("review", {}).get("runtime") == "ruby")):
-            if item.value not in declared_variables:
-                conflicts.append("Model claim conflicts with scanner fact: configuration.variable")
-            elif item.value not in recorded_variables:
+        variable_set = None
+        if item.category == "configuration.variable" and declared_variables and (
+            item.value in declared_variables or is_rails
+        ):
+            variable_set = declared_variables
+        elif item.category == "configuration.required_variable" and is_rails:
+            variable_set = required_variables
+        if variable_set is not None:
+            key = (item.category, item.value)
+            if item.value not in variable_set:
+                conflicts.append(f"Model claim conflicts with scanner fact: {item.category}")
+            elif key not in recorded_variables:
                 findings.append(FindingV2(id=f"finding-agent-{index}", **item.model_dump()).model_dump())
-                recorded_variables.add(item.value)
+                recorded_variables.add(key)
             continue
         if item.category in known and known[item.category] != item.value:
-            if base.get("review", {}).get("runtime") == "ruby" and command_sources:
+            if is_rails and command_sources:
                 cited = [command_sources[key] for key in item.evidence_ids if key in command_sources]
-                if _matches_locked_rails_value(item.category, item.value, known[item.category], cited):
+                expected = known[item.category]
+                if (
+                    item.category == "rails.migration.tasks"
+                    and _matches_rails_task_loader(item.value, expected, cited)
+                ) or _matches_locked_rails_value(item.category, item.value, expected, cited):
                     continue
             conflicts.append(f"Model claim conflicts with scanner fact: {item.category}")
             continue

@@ -44,7 +44,9 @@ CRITICAL_PATHS = {
     "health_check": "config/routes.rb",
     "health.liveness": "config/routes.rb",
 }
-CRITICAL_FIELDS = set(CRITICAL_PATHS) | {"workflow.migration_command", "configuration.variable"}
+CRITICAL_FIELDS = set(CRITICAL_PATHS) | {
+    "workflow.migration_command", "configuration.variable", "configuration.required_variable",
+}
 AGENT_REQUIRED_PATHS = set(CRITICAL_PATHS.values())
 
 

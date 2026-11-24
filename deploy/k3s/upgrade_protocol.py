@@ -18,7 +18,12 @@ ROLES = {name: "backend" for name in (
     "api", "webhook", "dispatcher", "kube-reader", "kube-validator", "worker",
     "github-worker", "delivery-worker", "kube-deployer", "external-probe", "kube-cleaner",
 )} | {"frontend": "frontend", "keycloak": "keycloak"}
-REQUIRED = set(ROLES) - {"kube-cleaner"}
+RAILS_PROVISIONER = "rails-provisioner"
+RAILS_PROFILE_ENV = "DF_MANAGED_RAILS_PROFILE"
+RAILS_CONTRACTS = {RAILS_PROVISIONER, "api", "delivery-worker"}
+RAILS_PROFILE_FIELDS = {"owner_id", "organization_id", "repository", "revision", "source_sha"}
+ROLES[RAILS_PROVISIONER] = "backend"
+REQUIRED = set(ROLES) - {"kube-cleaner", RAILS_PROVISIONER}
 
 
 def encoded(value):
@@ -95,19 +100,51 @@ def contract(spec):
     return result
 
 
+def managed_rails_contract(spec):
+    """Compare an overlay to the renderer while checking its profile separately."""
+    normalized = contract(spec)
+    entries = [
+        entry for container in normalized["template"]["spec"]["containers"]
+        for entry in container.get("env", []) if entry.get("name") == RAILS_PROFILE_ENV
+    ]
+    if not entries:
+        return normalized, None
+    if len(entries) != 1 or set(entries[0]) != {"name", "value"}:
+        raise ValueError("Unexpected managed Rails profile environment")
+    try:
+        profile = json.loads(entries[0]["value"])
+    except (TypeError, ValueError):
+        raise ValueError("Invalid managed Rails profile environment") from None
+    if (not isinstance(profile, dict) or set(profile) != RAILS_PROFILE_FIELDS
+            or not all(isinstance(value, str) and 0 < len(value) <= 255 for value in profile.values())
+            or not all(len(profile[key]) <= 128 for key in ("owner_id", "organization_id"))
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*", profile["repository"])
+            or not re.fullmatch(r"[a-f0-9]{40}", profile["source_sha"])):
+        raise ValueError("Invalid managed Rails profile environment")
+    entries[0]["value"] = "<verified managed Rails profile>"
+    return normalized, digest(profile)
+
+
 def deployment_snapshot(item):
     meta, spec = item["metadata"], item["spec"]
     name = meta["name"]
+    expected_part = "deployflow-managed-rails" if name == RAILS_PROVISIONER else PART
     if (name not in ROLES or meta.get("namespace") != NS
-            or meta.get("labels", {}).get("app.kubernetes.io/part-of") != PART):
+            or meta.get("labels", {}).get("app.kubernetes.io/part-of") != expected_part):
         raise ValueError("Unknown or unowned platform Deployment")
     refs = images(spec)
     if not refs or any(image_role(ref) != ROLES[name] for ref in refs.values()):
         raise ValueError("Existing container image has unexpected repository/role")
-    return {"uid": meta["uid"], "generation": meta["generation"], "spec_sha256": digest(spec),
+    result = {"uid": meta["uid"], "generation": meta["generation"], "spec_sha256": digest(spec),
             "annotations_sha256": digest(meta.get("annotations", {})), "replicas": spec.get("replicas", 1),
             "source_sha": meta.get("annotations", {}).get(SOURCE_ANNOTATION),
             "images": refs, "contract_sha256": digest(contract(spec))}
+    if name in RAILS_CONTRACTS:
+        overlay, profile_digest = managed_rails_contract(spec)
+        if profile_digest is not None:
+            result["managed_rails_profile_sha256"] = profile_digest
+            result["managed_rails_contract_sha256"] = digest(overlay)
+    return result
 
 
 def stopped_deployment_ids(values):
@@ -135,9 +172,24 @@ def make_plan(snapshot, release, *, origin=None):
     deployments = snapshot["deployments"]
     if not REQUIRED <= set(deployments) or set(deployments) - set(ROLES):
         raise ValueError("Platform workload inventory changed")
+    overlay_contracts = release.get("managed_rails_contracts")
+    if RAILS_PROVISIONER in deployments:
+        if not overlay_contracts or set(overlay_contracts) != RAILS_CONTRACTS:
+            raise ValueError("Managed Rails requires an explicitly scoped platform upgrade")
+        profile_digest = deployments[RAILS_PROVISIONER].get("managed_rails_profile_sha256")
+        if not profile_digest or profile_digest != deployments["api"].get("managed_rails_profile_sha256"):
+            raise ValueError("API and provisioner managed Rails profiles differ")
+    elif overlay_contracts:
+        raise ValueError("Managed Rails overlay was requested but the provisioner is absent")
     changes = []
     for name, current in sorted(deployments.items()):
-        if current["contract_sha256"] != digest(release["contracts"].get(name)):
+        if overlay_contracts and name in RAILS_CONTRACTS:
+            expected = digest(overlay_contracts[name])
+            observed = current.get("managed_rails_contract_sha256", current["contract_sha256"])
+        else:
+            expected = digest(release["contracts"].get(name))
+            observed = current["contract_sha256"]
+        if observed != expected:
             raise ValueError("Workload configuration change requires separate review: " + name)
         if origin:
             old = origin["before"]["deployments"].get(name)

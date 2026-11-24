@@ -27,8 +27,12 @@ on:
       retain_stopped_deployments:
         description: 'One or two comma-separated failed deployment UUIDs at zero replicas (manual recovery preview/apply only)'
         type: string
+      preserve_managed_rails:
+        description: 'Preserve and validate the installed managed Rails overlay during manual preview/apply'
+        type: boolean
+        default: false
       confirmation:
-        description: 'UPGRADE <source SHA> [RETAIN <UUID> or RETAIN STOPPED <sorted UUIDs>], ROLLBACK <receipt ID> or VERIFY <receipt ID>'
+        description: 'UPGRADE <source SHA> [RETAIN <UUID> or RETAIN STOPPED <sorted UUIDs>] [PRESERVE MANAGED RAILS], ROLLBACK <receipt ID> or VERIFY <receipt ID>'
         type: string
 
 permissions:
@@ -88,6 +92,7 @@ jobs:
           CONFIRMATION: ${{ inputs.confirmation }}
           RETAIN_FAILED_DEPLOYMENT: ${{ inputs.retain_failed_deployment }}
           RETAIN_STOPPED_DEPLOYMENTS: ${{ inputs.retain_stopped_deployments }}
+          PRESERVE_MANAGED_RAILS: ${{ inputs.preserve_managed_rails }}
           SSH_KEY: ${{ secrets.K3S_SSH_PRIVATE_KEY }}
           SSH_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
           SSH_HOST: ${{ secrets.K3S_SSH_HOST }}

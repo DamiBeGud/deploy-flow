@@ -82,6 +82,56 @@ class UpgradePlanTests(unittest.TestCase):
         change = next(c for c in plan["changes"] if c["name"] == "kube-cleaner")
         self.assertEqual(set(change["to_images"].values()), {NEW["backend"]})
 
+    def test_managed_rails_plans_preserve_the_installed_overlay_and_require_opt_in(self):
+        from render_managed_rails import render_managed_rails
+
+        items, state, ordinary_release = fixtures()
+        profile = {"owner_id": "synthetic-owner", "organization_id": "synthetic-org",
+                   "repository": "example/rails", "revision": "fixture", "source_sha": "1" * 40}
+        overlay = render_managed_rails(OLD["backend"], profile)
+        provisioner = overlay["provisioner"]
+        provisioner["metadata"].update(uid="uid-rails-provisioner", generation=1)
+        items.append(provisioner)
+        for item in items:
+            patch = overlay["deployment_patches"].get(item["metadata"]["name"])
+            if patch:
+                pod = item["spec"]["template"]["spec"]
+                desired = patch["spec"]["template"]["spec"]
+                for field in ("serviceAccountName", "automountServiceAccountToken"):
+                    pod[field] = desired[field]
+                for entry in desired["containers"][0]["env"]:
+                    env = pod["containers"][0].setdefault("env", [])
+                    env.extend([entry])
+        state["deployments"] = {item["metadata"]["name"]: deployment_snapshot(item) for item in items}
+        release = upgrade.release_metadata(create(NEW, SOURCE), preserve_managed_rails=True)
+        with self.assertRaisesRegex(ValueError, "explicitly scoped"):
+            make_plan(state, ordinary_release)
+        plan = make_plan(state, release)
+        self.assertEqual(len(plan["changes"]), 13)
+        changes = {change["name"]: change for change in plan["changes"]}
+        for item in items:
+            name = item["metadata"]["name"]
+            updated = apply_json_patch(item, image_patch(item, changes[name]))
+            self.assertEqual(contract(updated["spec"]), contract(item["spec"]))
+        self.assertNotIn("synthetic-owner", json.dumps(plan))
+        self.assertNotIn("synthetic-org", json.dumps(plan))
+
+        state["deployments"]["api"]["managed_rails_profile_sha256"] = "another-profile"
+        with self.assertRaisesRegex(ValueError, "profiles differ"):
+            make_plan(state, release)
+        state["deployments"]["api"]["managed_rails_profile_sha256"] = (
+            state["deployments"]["rails-provisioner"]["managed_rails_profile_sha256"]
+        )
+        state["deployments"]["delivery-worker"]["contract_sha256"] = "unexpected-service-account"
+        with self.assertRaisesRegex(ValueError, "configuration change.*delivery-worker"):
+            make_plan(state, release)
+
+    def test_managed_rails_scope_refuses_an_absent_provisioner(self):
+        _, state, _ = fixtures()
+        release = upgrade.release_metadata(create(NEW, SOURCE), preserve_managed_rails=True)
+        with self.assertRaisesRegex(ValueError, "provisioner is absent"):
+            make_plan(state, release)
+
     def test_retaining_failed_redis_requires_exact_disabled_and_unleased_scope(self):
         deployment_id = "c7f6a678-38ac-4308-898a-4567b7cffc18"
         app_id = "f1868e91-15c6-4255-9636-ed2e47005809"

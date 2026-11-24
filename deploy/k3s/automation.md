@@ -407,6 +407,17 @@ its own independently installed policy and restricted key (section 8).
    The server never needs to connect to its own public address. Full signed-in
    workflows and application-CD acceptance are separate evidence.
 
+### Preserve an installed managed Rails overlay
+
+For a protected manual preview/apply on a platform with managed Rails already
+installed, set `preserve_managed_rails=true`. The plan checks the existing
+provisioner and both service-account overlays against the reviewed renderer.
+The API and provisioner must have the same valid profile. The plan binds its
+hash and the full live Deployment contracts, and only changes images and source
+annotations. Append ` PRESERVE MANAGED RAILS` after the source confirmation and
+any `RETAIN STOPPED` suffix. Use the same option for preview and apply. Existing
+maintenance checks, including explicit retained-deployment scope, still apply.
+
 ### What this upgrade changes and preserves
 
 Only existing platform Deployment **container/init-container images** and a source

@@ -11,6 +11,9 @@ import yaml
 from kubernetes.client.exceptions import ApiException
 from sqlalchemy import select
 
+from app.agents.harness import _matches_locked_rails_value, _merge
+from app.analysis.command_inference import SourceExcerpt
+from app.analysis.contracts import AssessmentDraftV2
 from app.bootstrap import managed_rails
 from app.bootstrap.generator import canonical_digest
 from app.bootstrap.rails_jobs import eligible, process_one
@@ -157,6 +160,66 @@ def test_profile_denies_unapproved_sha_fallback_and_conflicting_model_claim(tmp_
     }
     with pytest.raises(managed_rails.ManagedRailsError, match="critical_evidence_conflict"):
         eligible(PROFILE, application, run, assessment)
+
+
+def test_rails_lockfile_equivalence_requires_cited_matching_identity_and_version():
+    lock = SourceExcerpt("Gemfile.lock", 1, "    pg (1.6.3-aarch64-linux)\nRUBY VERSION\n   ruby 3.3.10p183\n")
+    assert _matches_locked_rails_value("rails.database.driver", "pg (1.6.3)", "pg", [lock])
+    assert _matches_locked_rails_value("runtime.version", "ruby 3.3.10p183", "3.3.10", [lock])
+    assert not _matches_locked_rails_value("rails.database.driver", "pg (2.0.0)", "pg", [lock])
+    assert not _matches_locked_rails_value("rails.database.driver", "mysql2", "pg", [lock])
+    assert not _matches_locked_rails_value("runtime.version", "3.3.10p184", "3.3.10", [lock])
+    assert not _matches_locked_rails_value("runtime.version", "3.3.10p183", "3.3.10", [])
+
+
+def test_multiple_declared_variables_are_distinct_findings(tmp_path):
+    _, _, document = fixture(tmp_path)
+    values = ["DATABASE_URL", "SECRET_KEY_BASE", "DATABASE_URL", "UNDECLARED_VARIABLE"]
+    draft = AssessmentDraftV2.model_validate({
+        "summary": "Synthetic scanner corroboration",
+        "findings": [{"category": "configuration.variable", "value": value, "status": "explicit",
+                      "confidence": 1, "evidence_ids": [document["evidence"][0]["id"]]} for value in values],
+    })
+    verified, _ = _merge(document, draft, [])
+    assert [f["value"] for f in verified["findings"] if f["category"] == "configuration.variable"] == values[:2]
+    assert verified["conflicts"] == ["Model claim conflicts with scanner fact: configuration.variable"]
+    verified, _ = _merge(document, draft.model_copy(update={"findings": draft.findings[:3]}), [])
+    assert verified["conflicts"] == []
+
+
+def test_scoped_profile_resolves_only_verified_delivery_decisions(tmp_path):
+    application, run, document = fixture(tmp_path)
+    document = copy.deepcopy(document)
+    run.status = "needs_input"
+    run.analysis_mode = document["mode"] = "agent"
+    run.model_provider, run.model_name = "deepseek", "scripted-test-model"
+    run.reproducibility_json = {
+        "fallback_used": False, "provider_response_ids": ["synthetic-response"],
+        "skills": [{"id": "rails", "hash": "a" * 64}],
+    }
+    document["evidence"] = document["evidence"] + [
+        {"file_path": path, "detector": "repository-mcp.read-file.v1"} for path in SOURCE
+    ]
+    document["questions"] = [
+        {"field_path": field, "required": True}
+        for field in ("bootstrap.dockerfile_source", "workflow.migration_execution")
+    ]
+    assert eligible(PROFILE, application, run, document).managed
+    assert run.status == "needs_input"
+    assert all(q["required"] for q in document["questions"])
+    with pytest.raises(managed_rails.ManagedRailsError, match="outside_approved_scope"):
+        eligible(PROFILE.model_copy(update={"revision": "other"}), application, run, document)
+    with pytest.raises(managed_rails.ManagedRailsError, match="assessment_not_eligible"):
+        eligible(PROFILE, application, run, document | {"questions": []})
+    with pytest.raises(managed_rails.ManagedRailsError, match="critical_evidence_missing"):
+        scanner = run.scanner_facts_json["document"]
+        original = scanner["findings"]
+        scanner["findings"] = [f for f in original if f["category"] != "workflow.migration_command"]
+        eligible(PROFILE, application, run, document)
+    scanner["findings"] = original
+    document["questions"].append({"field_path": "workflow.migration_command", "required": True})
+    with pytest.raises(managed_rails.ManagedRailsError, match="assessment_not_eligible"):
+        eligible(PROFILE, application, run, document)
 
 
 def test_catalog_rejects_foreign_secret_and_never_rotates_ready_credentials(tmp_path, core):

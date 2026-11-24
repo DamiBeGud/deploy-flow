@@ -119,6 +119,27 @@ def _contains_secret(value: object) -> bool:
     )
 
 
+def _matches_locked_rails_value(category, claim, scanner_value, excerpts):
+    """Accept a version-qualified spelling only if a cited lockfile proves it."""
+    if not isinstance(claim, str) or not isinstance(scanner_value, str):
+        return False
+    for excerpt in excerpts:
+        if excerpt.path != "Gemfile.lock":
+            continue
+        if category == "rails.database.driver" and scanner_value == "pg":
+            for version in re.findall(r"(?m)^    pg \(([^()\s]+)\)$", excerpt.text):
+                for suffix in {version, version.split("-", 1)[0]}:
+                    if claim in {f"pg ({suffix})", f"pg {suffix}"}:
+                        return True
+        if category == "runtime.version":
+            locked = re.search(r"(?m)^RUBY VERSION\n\s+ruby (\d+\.\d+\.\d+)(p\d+)?$", excerpt.text)
+            if locked and locked[1] == scanner_value:
+                full_version = locked[1] + (locked[2] or "")
+                if claim in {full_version, f"ruby {full_version}", f"ruby {scanner_value}"}:
+                    return True
+    return False
+
+
 def _merge(
     base: dict, draft: AssessmentDraftV2, extra_evidence: list[dict],
     command_sources: dict[str, SourceExcerpt] | None = None,
@@ -127,6 +148,9 @@ def _merge(
     evidence_ids = {item["id"] for item in evidence}
     findings = list(base.get("findings", []))
     known = {item["category"]: item["value"] for item in findings}
+    variables = base.get("configuration", {})
+    declared_variables = set(variables.get("required_variables", [])) | set(variables.get("optional_variables", []))
+    recorded_variables = {f["value"] for f in findings if f["category"] == "configuration.variable"}
     conflicts = list(base.get("conflicts", []))
     for index, item in enumerate(draft.findings, start=1):
         if item.status != "unknown" and not item.evidence_ids:
@@ -135,7 +159,19 @@ def _merge(
             raise AgentError("assessment_evidence_invalid")
         if _contains_secret(item.value):
             raise AgentError("assessment_secret_detected")
+        if (item.category == "configuration.variable" and declared_variables
+                and (item.value in declared_variables or base.get("review", {}).get("runtime") == "ruby")):
+            if item.value not in declared_variables:
+                conflicts.append("Model claim conflicts with scanner fact: configuration.variable")
+            elif item.value not in recorded_variables:
+                findings.append(FindingV2(id=f"finding-agent-{index}", **item.model_dump()).model_dump())
+                recorded_variables.add(item.value)
+            continue
         if item.category in known and known[item.category] != item.value:
+            if base.get("review", {}).get("runtime") == "ruby" and command_sources:
+                cited = [command_sources[key] for key in item.evidence_ids if key in command_sources]
+                if _matches_locked_rails_value(item.category, item.value, known[item.category], cited):
+                    continue
             conflicts.append(f"Model claim conflicts with scanner fact: {item.category}")
             continue
         if item.category in known:

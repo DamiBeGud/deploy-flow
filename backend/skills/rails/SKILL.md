@@ -13,3 +13,6 @@ For source-only Rails repositories, the absence of a Dockerfile is expected. Whe
 Backend policy supplies approved references for the disposable database. Report the declared environment variable names without asking for their values. Summarize the result as the requested bare JSON object.
 
 Corroborate existing scanner findings with the requested source reads. Put supporting detail in the summary. Add a finding for an existing category only when source evidence contradicts the scanner. Use bare gem names for driver identity, semantic Ruby versions for runtime.version, integer ports, and one environment variable name per finding. Preserve disagreements about actual requirements.
+
+
+Keep the two migration findings distinct. If the cited Rakefile line invokes Rails.application.load_tasks, corroborate the scanner's rails.migration.tasks value with that exact bare Ruby method name. Describe any branch condition in the summary. workflow.migration_command is the separate shell command for running the versioned migrations. Preserve an unexpected or missing task loader as a conflict or a required question. Report each required variable name separately.

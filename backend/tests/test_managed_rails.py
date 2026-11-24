@@ -11,6 +11,8 @@ import yaml
 from kubernetes.client.exceptions import ApiException
 from sqlalchemy import select
 
+from app.agents.harness import _merge
+from app.analysis.contracts import AssessmentDraftV2
 from app.bootstrap import managed_rails
 from app.bootstrap.generator import canonical_digest
 from app.bootstrap.rails_jobs import eligible, process_one
@@ -157,6 +159,21 @@ def test_profile_denies_unapproved_sha_fallback_and_conflicting_model_claim(tmp_
     }
     with pytest.raises(managed_rails.ManagedRailsError, match="critical_evidence_conflict"):
         eligible(PROFILE, application, run, assessment)
+
+
+def test_multiple_declared_variables_are_distinct_findings(tmp_path):
+    _, _, document = fixture(tmp_path)
+    values = ["DATABASE_URL", "SECRET_KEY_BASE", "DATABASE_URL", "UNDECLARED_VARIABLE"]
+    draft = AssessmentDraftV2.model_validate({
+        "summary": "Synthetic scanner corroboration",
+        "findings": [{"category": "configuration.variable", "value": value, "status": "explicit",
+                      "confidence": 1, "evidence_ids": [document["evidence"][0]["id"]]} for value in values],
+    })
+    verified, _ = _merge(document, draft, [])
+    assert [f["value"] for f in verified["findings"] if f["category"] == "configuration.variable"] == values[:2]
+    assert verified["conflicts"] == ["Model claim conflicts with scanner fact: configuration.variable"]
+    verified, _ = _merge(document, draft.model_copy(update={"findings": draft.findings[:3]}), [])
+    assert verified["conflicts"] == []
 
 
 def test_scoped_profile_resolves_only_verified_delivery_decisions(tmp_path):

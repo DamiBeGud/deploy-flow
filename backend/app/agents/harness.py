@@ -127,6 +127,9 @@ def _merge(
     evidence_ids = {item["id"] for item in evidence}
     findings = list(base.get("findings", []))
     known = {item["category"]: item["value"] for item in findings}
+    variables = base.get("configuration", {})
+    declared_variables = set(variables.get("required_variables", [])) | set(variables.get("optional_variables", []))
+    recorded_variables = {f["value"] for f in findings if f["category"] == "configuration.variable"}
     conflicts = list(base.get("conflicts", []))
     for index, item in enumerate(draft.findings, start=1):
         if item.status != "unknown" and not item.evidence_ids:
@@ -135,6 +138,13 @@ def _merge(
             raise AgentError("assessment_evidence_invalid")
         if _contains_secret(item.value):
             raise AgentError("assessment_secret_detected")
+        if item.category == "configuration.variable" and declared_variables:
+            if item.value not in declared_variables:
+                conflicts.append("Model claim conflicts with scanner fact: configuration.variable")
+            elif item.value not in recorded_variables:
+                findings.append(FindingV2(id=f"finding-agent-{index}", **item.model_dump()).model_dump())
+                recorded_variables.add(item.value)
+            continue
         if item.category in known and known[item.category] != item.value:
             conflicts.append(f"Model claim conflicts with scanner fact: {item.category}")
             continue

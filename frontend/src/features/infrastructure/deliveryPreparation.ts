@@ -53,11 +53,17 @@ export function generateDeliveryBundle(applicationId: string, runId: string, int
 }
 
 export async function deliveryRecommendation(
-  applicationId: string, runId: string, signal: AbortSignal, onProvisioning: () => void,
+  applicationId: string, runId: string, signal: AbortSignal, onProvisioning: () => void, requireManagedRails = false,
 ) {
   const path = `/applications/${applicationId}`
   const query = `?analysis_run_id=${encodeURIComponent(runId)}`
-  const load = () => request<Recommendation>(`${path}/kubernetes-recommendation${query}`, { signal })
+  async function load() {
+    const result = await request<Recommendation>(`${path}/kubernetes-recommendation${query}`, { signal })
+    if (requireManagedRails && !result.rails_provisioning) {
+      throw new Error('The agent requested input. Review the unresolved delivery questions.')
+    }
+    return result
+  }
   let result = await load()
   if (result.rails_provisioning?.status === 'required') {
     onProvisioning()

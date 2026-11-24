@@ -159,6 +159,41 @@ def test_profile_denies_unapproved_sha_fallback_and_conflicting_model_claim(tmp_
         eligible(PROFILE, application, run, assessment)
 
 
+def test_scoped_profile_resolves_only_verified_delivery_decisions(tmp_path):
+    application, run, document = fixture(tmp_path)
+    document = copy.deepcopy(document)
+    run.status = "needs_input"
+    run.analysis_mode = document["mode"] = "agent"
+    run.model_provider, run.model_name = "deepseek", "scripted-test-model"
+    run.reproducibility_json = {
+        "fallback_used": False, "provider_response_ids": ["synthetic-response"],
+        "skills": [{"id": "rails", "hash": "a" * 64}],
+    }
+    document["evidence"] = document["evidence"] + [
+        {"file_path": path, "detector": "repository-mcp.read-file.v1"} for path in SOURCE
+    ]
+    document["questions"] = [
+        {"field_path": field, "required": True}
+        for field in ("bootstrap.dockerfile_source", "workflow.migration_execution")
+    ]
+    assert eligible(PROFILE, application, run, document).managed
+    assert run.status == "needs_input"
+    assert all(q["required"] for q in document["questions"])
+    with pytest.raises(managed_rails.ManagedRailsError, match="outside_approved_scope"):
+        eligible(PROFILE.model_copy(update={"revision": "other"}), application, run, document)
+    with pytest.raises(managed_rails.ManagedRailsError, match="assessment_not_eligible"):
+        eligible(PROFILE, application, run, document | {"questions": []})
+    with pytest.raises(managed_rails.ManagedRailsError, match="critical_evidence_missing"):
+        scanner = run.scanner_facts_json["document"]
+        original = scanner["findings"]
+        scanner["findings"] = [f for f in original if f["category"] != "workflow.migration_command"]
+        eligible(PROFILE, application, run, document)
+    scanner["findings"] = original
+    document["questions"].append({"field_path": "workflow.migration_command", "required": True})
+    with pytest.raises(managed_rails.ManagedRailsError, match="assessment_not_eligible"):
+        eligible(PROFILE, application, run, document)
+
+
 def test_catalog_rejects_foreign_secret_and_never_rotates_ready_credentials(tmp_path, core):
     application, run, assessment = fixture(tmp_path)
     binding = eligible(PROFILE, application, run, assessment)

@@ -121,7 +121,9 @@ export function AnalysisPage({ canWrite, canDeploy }: { canWrite: boolean; canDe
   const step = Math.min(requestedStep < 0 ? furthestStep : requestedStep, furthestStep)
   const completed = [ready, Boolean(reviewIntent), Boolean(reviewPlan && ['proposed', 'approved'].includes(reviewPlan.status)), reviewPlan?.status === 'approved']
   const mode = run?.analysis_mode ?? run?.assessment?.mode
-  const canPrepare = run?.status === 'completed' && Boolean(run.commit_sha?.match(/^[a-f0-9]{40}$/)) &&
+  const needsRailsProfile = run?.status === 'needs_input' && run.assessment?.mode === 'agent' &&
+    run.assessment.review?.runtime === 'ruby'
+  const canPrepare = (run?.status === 'completed' || needsRailsProfile) && Boolean(run?.commit_sha?.match(/^[a-f0-9]{40}$/)) &&
     (mode === 'deterministic' || mode === 'agent') && run.assessment?.mode === mode &&
     run.assessment.completion === 'complete' && run.assessment.repository.commit_sha === run.commit_sha
   const preparing = canWrite && autoPrepare && ready
@@ -162,7 +164,7 @@ export function AnalysisPage({ canWrite, canDeploy }: { canWrite: boolean; canDe
     async function prepare(appId: string, runId: string) {
       if (reviewPlan) { finish('review'); return }
       if (!canPrepare) throw new Error('Automatic preparation requires a complete, source-pinned assessment. Review the analysis before continuing.')
-      const result = await deliveryRecommendation(appId, runId, abort.signal, () => setDatabaseSetupRun(runId))
+      const result = await deliveryRecommendation(appId, runId, abort.signal, () => setDatabaseSetupRun(runId), needsRailsProfile)
       if (!abort.signal.aborted) setDatabaseSetupRun(null)
       if (abort.signal.aborted) return
       if (result.generation_blocker) throw new Error(result.generation_blocker)
@@ -188,7 +190,7 @@ export function AnalysisPage({ canWrite, canDeploy }: { canWrite: boolean; canDe
       if (!(reason instanceof DatabaseSetupPending)) finish('connectivity')
     })
     return () => abort.abort()
-  }, [analyzedRevision, appId, assessmentVersion, canPrepare, preparing, review.runId, reviewIntent, reviewPlan, runId, setParams])
+  }, [analyzedRevision, appId, assessmentVersion, canPrepare, needsRailsProfile, preparing, review.runId, reviewIntent, reviewPlan, runId, setParams])
 
   useEffect(() => {
     if (!ready || review.runId !== runId || params.has('step')) return

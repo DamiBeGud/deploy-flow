@@ -38,7 +38,7 @@ const failed = {
   preflight_validation: { status: 'passed' }, rollout: { status: 'failed' }, health: { status: 'pending' },
 }
 
-async function mockWorkflow(page: Page, { viewer = false, blocked = false, editable = false, automatic = false, simulation = false, resume = false, managedRails = false } = {}) {
+async function mockWorkflow(page: Page, { viewer = false, blocked = false, editable = false, automatic = false, simulation = false, resume = false, managedRails = false, needsInput = false } = {}) {
   const commands: string[] = []
   let savedIntent = editable || (automatic && !resume) ? null : intent
   let savedPlan: (Omit<typeof plan, 'pull_request' | 'cluster_validation'> & { pull_request: typeof plan.pull_request | null; cluster_validation: typeof plan.cluster_validation | null }) | null = editable || blocked || automatic ? null : plan
@@ -46,13 +46,13 @@ async function mockWorkflow(page: Page, { viewer = false, blocked = false, edita
   let provisioning = false
   let provisioned = false
   const source = automatic ? { ...app, name: 'df-recipe-index-1111111111114111', revision: 'release/next' } : app
-  const analysisMode = simulation ? 'fake' : run.analysis_mode
+  const analysisMode = simulation ? 'fake' : needsInput ? 'agent' : run.analysis_mode
   const recommendation = automatic ? { ...intent, version: resume ? 1 : 0, build: { ...intent.build, branch: source.revision } } : intent
   if (resume) savedIntent = recommendation
   const analysis = automatic ? {
-    ...run, revision: source.revision, analysis_mode: analysisMode,
+    ...run, status: needsInput ? 'needs_input' : run.status, revision: source.revision, analysis_mode: analysisMode,
     assessment: {
-      mode: analysisMode, completion: 'complete', repository: { commit_sha: run.commit_sha },
+      mode: analysisMode, review: { runtime: 'ruby' }, completion: 'complete', repository: { commit_sha: run.commit_sha },
       configuration: { required_variables: [], optional_variables: [] },
     },
   } : run
@@ -172,6 +172,21 @@ test('provisions the approved Rails database once and resumes through dry-run af
     `/applications/${app.id}/deployment-intent`, `/applications/${app.id}/infrastructure-plans`,
     '/infrastructure-plans/bundle/validations',
   ])
+})
+
+test('agent questions need a scoped Rails profile before automatic delivery writes', async ({ page }) => {
+  const { commands } = await mockWorkflow(page, { automatic: true, needsInput: true })
+  await prepareDelivery(page)
+  await expect(page.getByText('The agent requested input. Review the unresolved delivery questions.')).toBeVisible()
+  expect(commands).toEqual(['/applications', `/applications/${app.id}/analyses`])
+})
+
+test('backend-qualified Rails agent questions allow automatic preparation', async ({ page }) => {
+  const { finishProvisioning } = await mockWorkflow(page, { automatic: true, needsInput: true, managedRails: true })
+  await prepareDelivery(page)
+  await expect(page.getByText('Preparing the test database…', { exact: true })).toBeVisible()
+  finishProvisioning()
+  await expect(page.getByText('Dry-run passed', { exact: true })).toBeVisible()
 })
 
 test('resumes automatic preparation from saved delivery settings without writing them again', async ({ page }) => {

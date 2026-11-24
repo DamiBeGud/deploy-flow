@@ -66,8 +66,21 @@ def eligible(
         raise ManagedRailsError("rails_source_outside_approved_scope")
     reproducibility = run.reproducibility_json or {}
     source = document.get("repository", {})
+    # Preserve the raw agent assessment. The scoped provisioning profile can
+    # answer only these delivery choices after all evidence checks below pass.
+    required_fields = {q["field_path"] for q in document.get("questions", []) if q["required"]}
+    bootstrap = ((run.scanner_facts_json or {}).get("document") or {}).get("bootstrap", {})
+    platform_choices = (
+        run.analysis_mode == "agent" and run.status == "needs_input"
+        and bool(required_fields)
+        and required_fields <= {"bootstrap.dockerfile_source", "workflow.migration_execution"}
+        and bootstrap.get("dockerfile_required") is True
+        and bootstrap.get("workflow_required") is True
+        and not document.get("conflicts")
+    )
     if (
-        run.status != "completed" or run.assessment_version != 1
+        not (platform_choices or (run.status == "completed" and not required_fields))
+        or run.assessment_version != 1
         or run.analysis_mode not in {"agent", "deterministic"}
         or document.get("mode") != run.analysis_mode
         or (run.analysis_mode == "agent" and (

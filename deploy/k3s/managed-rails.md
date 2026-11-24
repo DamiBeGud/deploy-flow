@@ -20,3 +20,19 @@ Start with an unused app and the pinned authorized branch. Verify a single durab
 A lost response can leave a reserved slot and an immutable Secret. A retry checks the reservation, application ID and source SHA before completing it. The worker performs up to five attempts for transient failures. A foreign or missing previously completed Secret is a conflict to investigate. The four slots cap this pilot's inventory. Slot reclamation requires reviewed inventory and release-reference cleanup. Removing a Pod alone does not release its slot. Removing the API profile prevents new requests while retained bundles can still resolve their references through the catalog. Keep reader permissions and the catalog while those bundles are retained.
 
 The PostgreSQL sidecar uses Pod-local disposable storage. Treat write/read evidence as applying to the current rollout. Hosted admission, a provider-backed run and application rollout require local or hosted acceptance before using this capability in the study.
+
+## Keep source-scoped DeepSeek analysis enabled
+
+The optional `--scoped-agent` renderer adds Deployment patches for the API
+and the analysis worker. The default analysis mode stays deterministic. The
+API queues model-backed analysis only for the approved owner, organization,
+repository and revision. The worker independently rechecks the scope and the
+resolved source SHA before downloading the archive. Moving the branch blocks
+further model calls until an operator reviews the new pin.
+
+Provide an approved `deployflow-system/deployflow-rails-deepseek` Secret with key
+`api-key`. Only the analysis worker receives its reference. The API and worker
+share the same managed Rails profile as the provisioner. Apply the rendered
+worker settings before switching the API on so the queue and worker agree.
+The worker uses the reviewed 20-tool-call limit. The normal protected platform
+upgrade with `preserve_managed_rails=true` recognizes both installed modes.

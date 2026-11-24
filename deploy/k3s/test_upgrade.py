@@ -126,6 +126,40 @@ class UpgradePlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "configuration change.*delivery-worker"):
             make_plan(state, release)
 
+    def test_scoped_agent_worker_contract_and_profile_must_match(self):
+        from render_managed_rails import render_managed_rails
+
+        _, state, _ = fixtures()
+        profile = {"owner_id": "synthetic-owner", "organization_id": "synthetic-org",
+                   "repository": "example/rails", "revision": "fixture", "source_sha": "1" * 40}
+        overlay = render_managed_rails(OLD["backend"], profile, scoped_agent=True)
+        release = upgrade.release_metadata(create(NEW, SOURCE), preserve_managed_rails=True)
+        worker = overlay["deployment_patches"]["worker"]["spec"]["template"]["spec"]["containers"][0]
+        self.assertIn({"name": "DF_DEEPSEEK_API_KEY", "valueFrom": {
+            "secretKeyRef": {"name": "deployflow-rails-deepseek", "key": "api-key"}}}, worker["env"])
+        api = overlay["deployment_patches"]["api"]["spec"]["template"]["spec"]["containers"][0]
+        self.assertNotIn("DF_DEEPSEEK_API_KEY", {entry["name"] for entry in api["env"]})
+        profile_digest = digest(profile)
+        state["deployments"]["rails-provisioner"] = deployment_snapshot(
+            overlay["provisioner"] | {
+                "metadata": overlay["provisioner"]["metadata"] | {"uid": "uid-rails", "generation": 1}
+            }
+        )
+        for name in ("api", "delivery-worker", "worker"):
+            desired = digest(release["managed_rails_agent_contracts"][name])
+            state["deployments"][name]["contract_sha256"] = desired
+            if name != "delivery-worker":
+                state["deployments"][name].update(
+                    managed_rails_contract_sha256=desired, managed_rails_profile_sha256=profile_digest)
+        self.assertEqual(len(make_plan(state, release)["changes"]), 13)
+        state["deployments"]["worker"]["managed_rails_profile_sha256"] = "changed"
+        with self.assertRaisesRegex(ValueError, "worker and provisioner.*differ"):
+            make_plan(state, release)
+        state["deployments"]["worker"]["managed_rails_profile_sha256"] = profile_digest
+        state["deployments"]["worker"]["managed_rails_contract_sha256"] = "wrong-secret-reference"
+        with self.assertRaisesRegex(ValueError, "configuration change.*worker"):
+            make_plan(state, release)
+
     def test_managed_rails_scope_refuses_an_absent_provisioner(self):
         _, state, _ = fixtures()
         release = upgrade.release_metadata(create(NEW, SOURCE), preserve_managed_rails=True)

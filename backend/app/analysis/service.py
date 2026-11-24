@@ -2,21 +2,31 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import Assessment, Finding
+from app.bootstrap.managed_rails import managed_profile
 from app.config import settings
 from app.persistence.models import AnalysisRun, AssessmentVersion, Event, PendingJob
 from app.telemetry.events import emit
 
 
+def analysis_mode(application, actor_id, revision):
+    config = settings()
+    profile = managed_profile() if config.managed_rails_agent_enabled else None
+    if profile and profile.admits(application, actor_id, revision):
+        return "agent"
+    return config.resolved_analysis_mode
+
+
 def enqueue(db: Session, application, identity, correlation_id, revision):
+    revision = revision or application.revision
     run = AnalysisRun(
         application_id=application.id,
         actor_id=identity.actor_id,
         correlation_id=correlation_id,
-        revision=revision or application.revision,
+        revision=revision,
         status="queued",
         progress=0,
         event_sequence=0,
-        analysis_mode=settings().resolved_analysis_mode,
+        analysis_mode=analysis_mode(application, identity.actor_id, revision),
     )
     db.add(run)
     db.flush()

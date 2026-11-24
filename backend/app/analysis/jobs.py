@@ -21,6 +21,7 @@ from app.agents.harness import (
 from app.agents.provider import DeepSeekResponsesProvider
 from app.agents.repository_mcp import repository_gateway
 from app.analysis.service import fake_assessment
+from app.bootstrap.managed_rails import ManagedRailsError, managed_profile
 from app.config import settings
 from app.persistence.database import Session
 from app.persistence.models import (
@@ -294,7 +295,9 @@ async def _run_agent(
         ) as gateway:
             return await run_agent(
                 provider=provider, gateway=gateway, facts=facts, skills=skills, budget=budget,
-                infer_delivery_commands=config.agent_delivery_recommendations_enabled,
+                infer_delivery_commands=(
+                    config.managed_rails_agent_enabled or config.agent_delivery_recommendations_enabled
+                ),
             )
     except BaseExceptionGroup as exc:
         # anyio wraps an error raised inside the MCP context manager in an
@@ -410,6 +413,21 @@ def _load_run_skills(db, run: AnalysisRun) -> list[SkillBundle]:
     ]
 
 
+def validate_scoped_agent(run, application):
+    config = settings()
+    if run.analysis_mode != "agent" or config.resolved_analysis_mode == "agent":
+        return None
+    try:
+        profile = managed_profile() if config.managed_rails_agent_enabled else None
+    except ManagedRailsError:
+        raise AgentError("rails_agent_profile_invalid") from None
+    if not profile or not profile.admits(application, run.actor_id, run.revision):
+        raise AgentError("rails_agent_source_outside_scope")
+    if not config.deepseek_api_key or config.deepseek_base_url.rstrip("/") != "https://api.deepseek.com":
+        raise AgentError("rails_agent_provider_unconfigured")
+    return profile
+
+
 def execute_repository(identifier: UUID, token: UUID):
     with Session() as db:
         run = db.get(AnalysisRun, identifier)
@@ -419,8 +437,15 @@ def execute_repository(identifier: UUID, token: UUID):
     match = re.fullmatch(r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", url)
     if not match:
         raise RepositoryError()
-    client = GitHubClient(settings())
+    config = settings()
+    scoped_profile = validate_scoped_agent(run, application)
+    client = GitHubClient(config)
     resolved = client.resolve(match.group(1), match.group(2), run.revision)
+    if scoped_profile and (
+        resolved.commit_sha != scoped_profile.source_sha
+        or f"{resolved.owner}/{resolved.name}".lower() != scoped_profile.repository
+    ):
+        raise AgentError("rails_agent_source_outside_scope")
     workspace = None
     try:
         workspace = tempfile.mkdtemp(prefix=f"deployflow-{identifier}-")
@@ -565,7 +590,7 @@ def execute_repository(identifier: UUID, token: UUID):
                 None,
                 "completed",
                 prompt_version=(
-                    COMMAND_PROMPT_VERSION if settings().agent_delivery_recommendations_enabled
+                    COMMAND_PROMPT_VERSION if (config.managed_rails_agent_enabled or config.agent_delivery_recommendations_enabled)
                     else PROMPT_VERSION
                 ),
                 fallback_used=True,

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # Phase 2 `.env` files. New configuration uses analysis_mode instead.
     analysis_provider: Literal["github", "fake"] | None = None
     analysis_mode: Literal["fake", "deterministic", "agent"] | None = None
+    managed_rails_agent_enabled: bool = False
     agent_delivery_recommendations_enabled: bool = False
     model_provider: Literal["deepseek"] = "deepseek"
     deepseek_api_key: str | None = None
@@ -130,6 +131,8 @@ class Settings(BaseSettings):
             )
             if not (self.oidc_audience and self.oidc_client_id and (local_provider or https_provider)):
                 raise ValueError("OIDC requires a complete HTTPS provider or the local Keycloak profile")
+        if self.managed_rails_agent_enabled and self.resolved_analysis_mode != "deterministic":
+            raise ValueError("Scoped Rails agent analysis requires deterministic analysis for other sources")
         if self.environment == "production" and self.auth_mode != "oidc":
             raise ValueError("OIDC authentication is required in production")
         if self.deployment_execution_enabled and self.auth_mode != "oidc":

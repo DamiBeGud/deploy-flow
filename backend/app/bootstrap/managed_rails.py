@@ -39,6 +39,14 @@ class RailsProfile(BaseModel):
     revision: str = Field(min_length=1, max_length=255)
     source_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
 
+    def admits(self, application, actor_id: str, revision: str) -> bool:
+        return (
+            application.repository_url.lower() == f"https://github.com/{self.repository}"
+            and application.owner_id == actor_id == self.owner_id
+            and application.organization_id == self.organization_id
+            and application.revision == revision == self.revision
+        )
+
 
 def managed_profile() -> RailsProfile | None:
     raw = os.environ.get("DF_MANAGED_RAILS_PROFILE")

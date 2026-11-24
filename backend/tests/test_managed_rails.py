@@ -11,12 +11,14 @@ import yaml
 from kubernetes.client.exceptions import ApiException
 from sqlalchemy import select
 
-from app.agents.harness import _matches_locked_rails_value, _merge
+from app.agents.harness import AgentError, _matches_locked_rails_value, _merge
+from app.analysis import jobs, service
 from app.analysis.command_inference import SourceExcerpt
 from app.analysis.contracts import AssessmentDraftV2
 from app.bootstrap import managed_rails
 from app.bootstrap.generator import canonical_digest
 from app.bootstrap.rails_jobs import eligible, process_one
+from app.config import Settings
 from app.deployments.release import bind_verified_image
 from app.kubernetes.policy import ManifestPolicyError, checked_manifests
 from app.persistence.database import Session
@@ -71,6 +73,57 @@ def fixture(tmp_path, changes=None):
         scanner_facts_json=scanned.facts,
     )
     return application, run, scanned.document
+
+
+def test_scoped_rails_agent_is_selected_only_for_the_approved_owner_and_source(monkeypatch, tmp_path):
+    app, _, _ = fixture(tmp_path)
+    monkeypatch.setenv("DF_MANAGED_RAILS_PROFILE", PROFILE.model_dump_json())
+    monkeypatch.setattr(service, "settings", lambda: Settings(analysis_mode="deterministic", managed_rails_agent_enabled=True))
+    assert service.analysis_mode(app, PROFILE.owner_id, PROFILE.revision) == "agent"
+    assert service.analysis_mode(app, "different-actor", PROFILE.revision) == "deterministic"
+    assert service.analysis_mode(app, PROFILE.owner_id, "other-branch") == "deterministic"
+    app.organization_id = "different-organization"
+    assert service.analysis_mode(app, PROFILE.owner_id, PROFILE.revision) == "deterministic"
+
+
+def test_scoped_rails_worker_refuses_an_unapproved_revision_before_archive_download(monkeypatch, tmp_path):
+    app, run, _ = fixture(tmp_path)
+    run.analysis_mode = "agent"
+    monkeypatch.setenv("DF_MANAGED_RAILS_PROFILE", PROFILE.model_dump_json())
+    config = Settings(analysis_mode="deterministic", managed_rails_agent_enabled=True)
+    monkeypatch.setattr(jobs, "settings", lambda: config)
+    with pytest.raises(AgentError, match="rails_agent_provider_unconfigured"):
+        jobs.validate_scoped_agent(run, app)
+    config.deepseek_api_key = "test-placeholder"
+    assert jobs.validate_scoped_agent(run, app) == PROFILE
+
+    class DriftedSource:
+        def __init__(self, settings):
+            assert settings is config
+
+        def resolve(self, owner, name, revision):
+            return SimpleNamespace(owner=owner, name=name, commit_sha="b" * 40)
+
+        def download(self, _):
+            pytest.fail("A changed source must be rejected before archive download")
+
+    class ReadSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def get(self, model, identity):
+            return run if model is AnalysisRun else app
+
+    monkeypatch.setattr(jobs, "Session", ReadSession)
+    monkeypatch.setattr(jobs, "GitHubClient", DriftedSource)
+    with pytest.raises(AgentError, match="rails_agent_source_outside_scope"):
+        jobs.execute_repository(run.id, uuid4())
+    config.managed_rails_agent_enabled = False
+    with pytest.raises(AgentError, match="rails_agent_source_outside_scope"):
+        jobs.validate_scoped_agent(run, app)
 
 
 class FakeCore:

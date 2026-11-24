@@ -36,30 +36,36 @@ def release_metadata(value, *, preserve_managed_rails=False):
 
         reference_profile = {"owner_id": "reference", "organization_id": "reference",
                              "repository": "example/reference", "revision": "reference", "source_sha": "0" * 40}
-        overlay = render_managed_rails(value["images"]["backend"], reference_profile)
-        overlaid = {"rails-provisioner": managed_rails_contract(overlay["provisioner"]["spec"])[0]}
-        for name, patch in overlay["deployment_patches"].items():
-            base = release["contracts"][name]
-            expected = json.loads(json.dumps(base))
-            pod = expected["template"]["spec"]
-            spec = patch["spec"]["template"]["spec"]
-            for field in ("serviceAccountName", "automountServiceAccountToken"):
-                pod[field] = spec[field]
-            additions = {entry["name"]: entry["env"] for entry in spec["containers"]}
-            for container in pod["containers"]:
-                addition_env = additions.pop(container["name"], [])
-                if not addition_env:
-                    continue
-                replacements = {entry["name"]: entry for entry in addition_env}
-                original = container.get("env", [])
-                existing = {entry["name"] for entry in original}
-                container["env"] = [replacements.get(entry["name"], entry) for entry in original]
-                container["env"].extend(entry for entry in addition_env if entry["name"] not in existing)
-            if additions:
-                raise ValueError("Unexpected managed Rails overlay container")
-            overlaid[name] = managed_rails_contract(expected)[0]
-        release["managed_rails_contracts"] = overlaid
+        for scoped_agent, key in ((False, "managed_rails_contracts"), (True, "managed_rails_agent_contracts")):
+            overlay = render_managed_rails(value["images"]["backend"], reference_profile, scoped_agent=scoped_agent)
+            release[key] = managed_overlay_contracts(release["contracts"], overlay)
     return release
+
+
+def managed_overlay_contracts(contracts, overlay):
+    overlaid = {"rails-provisioner": managed_rails_contract(overlay["provisioner"]["spec"])[0]}
+    for name, patch in overlay["deployment_patches"].items():
+        base = contracts[name]
+        expected = json.loads(json.dumps(base))
+        pod = expected["template"]["spec"]
+        spec = patch["spec"]["template"]["spec"]
+        for field in ("serviceAccountName", "automountServiceAccountToken"):
+            if field in spec:
+                pod[field] = spec[field]
+        additions = {entry["name"]: entry["env"] for entry in spec["containers"]}
+        for container in pod["containers"]:
+            addition_env = additions.pop(container["name"], [])
+            if not addition_env:
+                continue
+            replacements = {entry["name"]: entry for entry in addition_env}
+            original = container.get("env", [])
+            existing = {entry["name"] for entry in original}
+            container["env"] = [replacements.get(entry["name"], entry) for entry in original]
+            container["env"].extend(entry for entry in addition_env if entry["name"] not in existing)
+        if additions:
+            raise ValueError("Unexpected managed Rails overlay container")
+        overlaid[name] = managed_rails_contract(expected)[0]
+    return overlaid
 
 
 def command(args):

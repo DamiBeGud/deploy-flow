@@ -50,10 +50,7 @@ AGENT_REQUIRED_PATHS = set(CRITICAL_PATHS.values())
 
 def scoped(profile: RailsProfile, application: Application, run: AnalysisRun) -> bool:
     return (
-        application.repository_url.lower() == f"https://github.com/{profile.repository}"
-        and application.owner_id == run.actor_id == profile.owner_id
-        and application.organization_id == profile.organization_id
-        and application.revision == run.revision == profile.revision
+        profile.admits(application, run.actor_id, run.revision)
         and run.application_id == application.id
         and run.commit_sha == profile.source_sha
     )

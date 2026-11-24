@@ -10,6 +10,8 @@ from render import IMAGE_REPOSITORIES, NAMESPACE, REVISION, TARGET, env, policy,
 
 WORKER = "rails-provisioner"
 CATALOG = "deployflow-rails-bindings"
+AGENT_SECRET = "deployflow-rails-deepseek"
+AGENT_SECRET_KEY = "api-key"
 SLOTS = [f"deployflow-rails-slot-{index}" for index in range(1, 5)]
 GROUP = "rbac.authorization.k8s.io"
 READERS = ("api", "delivery-worker", "kube-validator", "kube-deployer", "kube-cleaner")
@@ -69,7 +71,7 @@ def admission():
     ]
 
 
-def render_managed_rails(image, profile):
+def render_managed_rails(image, profile, *, scoped_agent=False):
     if not re.fullmatch(re.escape(IMAGE_REPOSITORIES["backend"]) + r"@sha256:[a-f0-9]{64}", image):
         raise ValueError("Use an immutable DeployFlow backend image")
     if (
@@ -122,6 +124,18 @@ def render_managed_rails(image, profile):
         }}}}
         for name in READERS[:2]
     }
+    if scoped_agent:
+        enabled = env("DF_MANAGED_RAILS_AGENT_ENABLED", "true")
+        patches["api"]["spec"]["template"]["spec"]["containers"][0]["env"].append(enabled)
+        patches["worker"] = {"spec": {"template": {"spec": {"containers": [{
+            "name": "worker",
+            "env": [
+                profile_env,
+                enabled,
+                env("DF_AGENT_MAX_TOOL_CALLS", "20"),
+                env("DF_DEEPSEEK_API_KEY", secret_name=AGENT_SECRET, key=AGENT_SECRET_KEY),
+            ],
+        }]}}}}
     return {
         "schema_revision": REVISION,
         "bootstrap_resources": {"apiVersion": "v1", "kind": "List", "items": resources},
@@ -134,5 +148,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend-image", required=True)
     parser.add_argument("--profile-file", type=argparse.FileType("r"), required=True)
+    parser.add_argument("--scoped-agent", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(render_managed_rails(args.backend_image, json.load(args.profile_file)), indent=2))
+    print(json.dumps(render_managed_rails(args.backend_image, json.load(args.profile_file),
+                                         scoped_agent=args.scoped_agent), indent=2))

@@ -21,6 +21,7 @@ ROLES = {name: "backend" for name in (
 RAILS_PROVISIONER = "rails-provisioner"
 RAILS_PROFILE_ENV = "DF_MANAGED_RAILS_PROFILE"
 RAILS_CONTRACTS = {RAILS_PROVISIONER, "api", "delivery-worker"}
+RAILS_AGENT_CONTRACTS = RAILS_CONTRACTS | {"worker"}
 RAILS_PROFILE_FIELDS = {"owner_id", "organization_id", "repository", "revision", "source_sha"}
 ROLES[RAILS_PROVISIONER] = "backend"
 REQUIRED = set(ROLES) - {"kube-cleaner", RAILS_PROVISIONER}
@@ -139,7 +140,7 @@ def deployment_snapshot(item):
             "annotations_sha256": digest(meta.get("annotations", {})), "replicas": spec.get("replicas", 1),
             "source_sha": meta.get("annotations", {}).get(SOURCE_ANNOTATION),
             "images": refs, "contract_sha256": digest(contract(spec))}
-    if name in RAILS_CONTRACTS:
+    if name in RAILS_AGENT_CONTRACTS:
         overlay, profile_digest = managed_rails_contract(spec)
         if profile_digest is not None:
             result["managed_rails_profile_sha256"] = profile_digest
@@ -179,11 +180,18 @@ def make_plan(snapshot, release, *, origin=None):
         profile_digest = deployments[RAILS_PROVISIONER].get("managed_rails_profile_sha256")
         if not profile_digest or profile_digest != deployments["api"].get("managed_rails_profile_sha256"):
             raise ValueError("API and provisioner managed Rails profiles differ")
+        worker_profile = deployments["worker"].get("managed_rails_profile_sha256")
+        if worker_profile:
+            if worker_profile != profile_digest:
+                raise ValueError("Analysis worker and provisioner managed Rails profiles differ")
+            overlay_contracts = release.get("managed_rails_agent_contracts")
+            if not overlay_contracts or set(overlay_contracts) != RAILS_AGENT_CONTRACTS:
+                raise ValueError("Scoped managed Rails agent requires matching upgrade contracts")
     elif overlay_contracts:
         raise ValueError("Managed Rails overlay was requested but the provisioner is absent")
     changes = []
     for name, current in sorted(deployments.items()):
-        if overlay_contracts and name in RAILS_CONTRACTS:
+        if overlay_contracts and name in overlay_contracts:
             expected = digest(overlay_contracts[name])
             observed = current.get("managed_rails_contract_sha256", current["contract_sha256"])
         else:

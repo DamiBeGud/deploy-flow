@@ -292,9 +292,21 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
     first_receipt = {"is_simulated": True, "fallback": False, "provider_calls": [
         {"sequence": 1, "status": "error", "error_code": "model_timeout"},
     ]}
-    second_receipt = {"is_simulated": True, "fallback": False, "provider_calls": [
-        {"sequence": 1, "status": "completed"},
-    ]}
+    second_receipt = {
+        "is_simulated": True,
+        "fallback": False,
+        "validation_repair_version": "bounded-validation-repair-v2",
+        "provider_calls": [
+            {
+                "sequence": 1,
+                "status": "completed",
+                "assessment_validation": {
+                    "stage": "draft_schema", "code": "missing_field", "fields": ["command_candidates"],
+                },
+            },
+            {"sequence": 2, "status": "completed"},
+        ],
+    }
     receipts = iter([first_receipt, second_receipt])
 
     async def simulated_agent(root, metadata, facts, skills, budget):

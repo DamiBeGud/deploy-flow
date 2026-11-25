@@ -266,3 +266,71 @@ def test_harness_retains_allowlisted_provider_receipts_on_failed_attempt(tmp_pat
     assert all(row["finished_at"] >= row["started_at"] for row in (first, failed))
     summary = json.dumps(provenance)
     assert "not-part-of-receipt" not in summary and "fixture-auth-only" not in summary and "package.json" not in summary
+
+
+@pytest.mark.parametrize("valid_repair", [True, False])
+def test_assessment_repair_records_only_bounded_validation_feedback(tmp_path, valid_repair):
+    scan, _ = fixture_scan(tmp_path)
+    tool = {
+        "type": "function_call",
+        "call_id": "fixture-read",
+        "name": "repo_read_manifest",
+        "arguments": '{"path":"package.json"}',
+    }
+    usage = ModelUsage(12, 10, 1, "fixture")
+    draft = {"summary": "Confirmed fixture metadata.", "command_candidates": []}
+    invalid = {"summary": "Confirmed fixture metadata.", "sentinel-user-request-key": "sentinel-user-value"}
+    repair = draft if valid_repair else {
+        **draft,
+        "findings": [{
+            "category": "workflow.install",
+            "value": "npm ci",
+            "status": "explicit",
+            "confidence": 0.9,
+            "evidence_ids": ["sentinel-invented-evidence"],
+        }],
+    }
+
+    class CapturingProvider(ScriptedProvider):
+        repair_prompt = ""
+
+        async def respond(self, **kwargs):
+            action = await super().respond(**kwargs)
+            last = kwargs["history"][-1]
+            if last.get("role") == "user" and "Validation category:" in last.get("content", ""):
+                self.repair_prompt = last["content"]
+            return action
+
+    provider = CapturingProvider([
+        ModelAction([tool], None, [tool], usage),
+        ModelAction([], json.dumps(invalid), [], usage),
+        ModelAction([], json.dumps(repair), [], usage),
+    ])
+    execution = run_agent(
+        provider=provider, gateway=FakeGateway(), facts=scan.facts, skills=[],
+        budget=AgentBudget(8, 12, 120_000, 32_000, 180),
+        infer_delivery_commands=True,
+    )
+    if valid_repair:
+        outcome = asyncio.run(execution)
+        assert outcome.status == "completed"
+        provenance = outcome.provenance
+    else:
+        with pytest.raises(AgentError, match="invalid_model_output") as raised:
+            asyncio.run(execution)
+        assert not raised.value.retryable
+        provenance = raised.value.provenance
+
+    assert provenance["validation_repair_version"] == "bounded-validation-repair-v2"
+    _, first, second = provenance["provider_calls"]
+    assert first["assessment_validation"] == {
+        "stage": "draft_schema", "code": "missing_field", "fields": ["command_candidates"],
+    }
+    assert "command_candidates" in provider.repair_prompt
+    if valid_repair:
+        assert "assessment_validation" not in second
+    else:
+        assert second["assessment_validation"] == {
+            "stage": "assessment_projection", "code": "assessment_evidence_invalid", "fields": [],
+        }
+    assert "sentinel" not in json.dumps(provenance) + provider.repair_prompt

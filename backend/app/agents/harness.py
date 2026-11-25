@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from time import monotonic
 
+from pydantic import ValidationError
+
 from app.agents.provider import (
     DeepSeekResponsesProvider,
     ModelAction,
@@ -243,6 +245,29 @@ def _merge(
     return InfrastructureAssessmentV2.model_validate(document).model_dump(exclude=excluded), status
 
 
+def _assessment_validation_failure(exc: Exception, stage: str, draft_model) -> dict:
+    if isinstance(exc, ValidationError):
+        errors = exc.errors(include_input=False, include_context=False, include_url=False)
+        types = {error["type"] for error in errors}
+        fields = sorted({
+            error["loc"][0]
+            for error in errors
+            if error["loc"] and error["loc"][0] in draft_model.model_fields
+        })
+        code = (
+            "invalid_json" if "json_invalid" in types
+            else "missing_field" if "missing" in types
+            else "extra_fields" if "extra_forbidden" in types
+            else "invalid_field_value"
+        )
+        return {"stage": stage, "code": code, "fields": fields}
+    if isinstance(exc, AgentError) and exc.code in {
+        "assessment_evidence_missing", "assessment_evidence_invalid", "assessment_secret_detected",
+    }:
+        return {"stage": stage, "code": exc.code, "fields": []}
+    return {"stage": stage, "code": "validation_failed", "fields": []}
+
+
 async def run_agent(
     *,
     provider: ModelProvider,
@@ -419,8 +444,10 @@ async def _run_agent(
                 }
             )
             continue
+        stage = "draft_schema"
         try:
             draft = draft_model.model_validate_json(action.text)
+            stage = "assessment_projection"
             document, status = _merge(base, draft, extra_evidence, command_sources)
             return HarnessOutcome(
                 document,
@@ -440,12 +467,19 @@ async def _run_agent(
                 ),
             )
         except Exception as exc:
+            failure = _assessment_validation_failure(exc, stage, draft_model)
+            record["assessment_validation"] = failure
+            provenance["validation_repair_version"] = "bounded-validation-repair-v2"
             if repair_used:
                 raise AgentError("invalid_model_output") from exc
             repair_used = True
             history.append(
                 {
                     "role": "user",
-                    "content": "The prior JSON assessment failed host validation. Return a corrected JSON assessment only; cite only supplied evidence IDs and do not include secrets.",
+                    "content": (
+                        "The prior JSON assessment failed host validation. "
+                        f"Validation category: {json.dumps(failure, sort_keys=True)}. "
+                        "Return a corrected JSON assessment only. Cite only supplied evidence IDs and do not include secrets."
+                    ),
                 }
             )

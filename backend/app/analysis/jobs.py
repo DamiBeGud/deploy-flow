@@ -45,7 +45,23 @@ from app.telemetry.events import TERMINAL, emit
 log = logging.getLogger(__name__)
 
 
-def finish(db, run, status, message, error_code=None):
+def _record_agent_attempt(run, status, *, error_code=None, provenance=None):
+    if run.analysis_mode != "agent" or run.status != "running":
+        return
+    previous = run.reproducibility_json or {}
+    history = [row for row in previous.get("attempt_history", []) if row["attempt"] != run.attempts]
+    history.append({
+        "attempt": run.attempts,
+        "status": status,
+        "error_code": error_code,
+        "fallback": provenance.get("fallback") if provenance else None,
+        "provenance": provenance,
+    })
+    run.reproducibility_json = {**previous, "attempt_history": history}
+
+
+def finish(db, run, status, message, error_code=None, *, provenance=None):
+    _record_agent_attempt(run, status, error_code=error_code, provenance=provenance)
     run.status = status
     run.error_code = error_code
     run.finished_at = db.scalar(select(func.now()))
@@ -57,12 +73,13 @@ def finish(db, run, status, message, error_code=None):
     emit(db, run, f"analysis.{status}", message)
 
 
-def retry_or_fail(db, run, code, message=None):
+def retry_or_fail(db, run, code, message=None, *, provenance=None):
     run.lease_token = None
     run.lease_expires_at = None
     if run.attempts >= settings().max_attempts:
-        finish(db, run, "failed", message or "Analysis failed after bounded attempts.", code)
+        finish(db, run, "failed", message or "Analysis failed after bounded attempts.", code, provenance=provenance)
     else:
+        _record_agent_attempt(run, "retrying", error_code=code, provenance=provenance)
         run.status = "queued"
         run.progress = 0
         run.error_code = code
@@ -77,6 +94,9 @@ def claim(run_id: UUID) -> UUID | None:
         run = db.scalar(select(AnalysisRun).where(AnalysisRun.id == run_id).with_for_update())
         if not run or run.status != "queued":
             return None
+        if "study_scope_sha256" in (run.reproducibility_json or {}) and settings().resolved_analysis_mode == "fake":
+            finish(db, run, "failed", "Study agent analysis is unavailable.", "study_agent_source_outside_scope")
+            return None
         now = db.scalar(select(func.now()))
         if (now - run.created_at).total_seconds() >= settings().queue_timeout_seconds:
             finish(db, run, "failed", "Analysis exceeded its total queue deadline.", "job_timeout")
@@ -90,6 +110,7 @@ def claim(run_id: UUID) -> UUID | None:
             return None
         run.status = "running"
         run.attempts += 1
+        _record_agent_attempt(run, "started")
         run.lease_token = uuid4()
         run.lease_expires_at = now + timedelta(seconds=settings().job_timeout_seconds)
         run.attempt_deadline_at = now + timedelta(seconds=settings().analysis_attempt_seconds)
@@ -170,9 +191,11 @@ def execute(run_id: str):
             )
             if run and run.status not in TERMINAL and run.lease_token == token:
                 if exc.retryable:
-                    retry_or_fail(db, run, exc.code)
+                    retry_or_fail(db, run, exc.code, provenance=exc.provenance)
                 else:
-                    finish(db, run, "failed", "Agent analysis could not be completed.", exc.code)
+                    finish(
+                        db, run, "failed", "Agent analysis could not be completed.", exc.code, provenance=exc.provenance,
+                    )
     except Exception as exc:
         # The traceback identifies our failing code path without logging exception
         # text, request payloads, repository contents, or credentials.
@@ -295,9 +318,7 @@ async def _run_agent(
         ) as gateway:
             return await run_agent(
                 provider=provider, gateway=gateway, facts=facts, skills=skills, budget=budget,
-                infer_delivery_commands=(
-                    config.managed_rails_agent_enabled or config.agent_delivery_recommendations_enabled
-                ),
+                infer_delivery_commands=config.use_agent_delivery_recommendations,
             )
     except BaseExceptionGroup as exc:
         # anyio wraps an error raised inside the MCP context manager in an
@@ -340,6 +361,7 @@ def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: Har
     run.agent_tool_output_bytes = outcome.tool_output_bytes
     run.agent_latency_ms = outcome.budget.used_latency_ms
     run.reproducibility_json = {
+        **(run.reproducibility_json or {}),
         "scanner_version": (run.scanner_facts_json or {}).get("scanner_version", "phase3-v1"),
         "github_api_version": settings().github_api_version,
         "commit_sha": run.commit_sha,
@@ -350,6 +372,7 @@ def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: Har
         "prompt_sha256": outcome.prompt_sha256,
         "provider_response_ids": list(outcome.response_ids),
         "fallback_used": outcome.fallback_used,
+        "agent_provenance": outcome.provenance,
         "settings": {
             "reasoning_effort": settings().deepseek_reasoning_effort,
             "max_output_tokens": settings().agent_response_max_tokens,
@@ -391,6 +414,7 @@ def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: Har
         "Agent assessment requires review."
         if outcome.status == "needs_input"
         else "Agent assessment ready for review.",
+        provenance=outcome.provenance,
     )
 
 
@@ -415,6 +439,20 @@ def _load_run_skills(db, run: AnalysisRun) -> list[SkillBundle]:
 
 def validate_scoped_agent(run, application):
     config = settings()
+    saved = run.reproducibility_json or {}
+    pin = config.study_agent_pin(application.id)
+    if "study_scope_sha256" in saved:
+        if (
+            run.analysis_mode != "agent" or config.resolved_analysis_mode != "deterministic"
+            or not pin or not pin.admits(application, run.actor_id, run.revision)
+            or pin.fingerprint() != saved["study_scope_sha256"]
+        ):
+            raise AgentError("study_agent_source_outside_scope")
+        if not config.deepseek_api_key or config.deepseek_base_url.rstrip("/") != "https://api.deepseek.com":
+            raise AgentError("study_agent_provider_unconfigured")
+        return pin
+    if run.analysis_mode == "agent" and pin is not None:
+        raise AgentError("study_agent_source_outside_scope")
     if run.analysis_mode != "agent" or config.resolved_analysis_mode == "agent":
         return None
     try:
@@ -445,6 +483,8 @@ def execute_repository(identifier: UUID, token: UUID):
         resolved.commit_sha != scoped_profile.source_sha
         or f"{resolved.owner}/{resolved.name}".lower() != scoped_profile.repository
     ):
+        if "study_scope_sha256" in (run.reproducibility_json or {}):
+            raise AgentError("study_agent_source_outside_scope")
         raise AgentError("rails_agent_source_outside_scope")
     workspace = None
     try:
@@ -590,11 +630,11 @@ def execute_repository(identifier: UUID, token: UUID):
                 None,
                 "completed",
                 prompt_version=(
-                    COMMAND_PROMPT_VERSION if (config.managed_rails_agent_enabled or config.agent_delivery_recommendations_enabled)
-                    else PROMPT_VERSION
+                    COMMAND_PROMPT_VERSION if config.use_agent_delivery_recommendations else PROMPT_VERSION
                 ),
                 fallback_used=True,
                 provider_kind="deepseek",
+                provenance={**exc.provenance, "fallback": True} if exc.provenance is not None else None,
             )
         with Session.begin() as db:
             current = db.scalar(

@@ -1,4 +1,4 @@
-"""Pinned ephemeral Redis and native Celery workload for approved Python sources."""
+"""Pinned Redis connections and native Celery workloads for approved Python sources."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ REDIS_IMAGE = "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d6
 REDIS_PORT = 6379
 REDIS_REQUIREMENTS = {"CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "QUEUE_NAMESPACE"}
 REDIS_SOURCE_KEY = "DEPLOYFLOW_REDIS_SOURCE_SHA"
+REDIS_RESERVED_ENVIRONMENT = REDIS_REQUIREMENTS | {REDIS_SOURCE_KEY}
 Repository = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$")]
 WorkerTarget = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+:celery$", max_length=140)]
 _PILOT_REPOSITORIES = TypeAdapter(dict[Repository, WorkerTarget])
@@ -29,6 +30,7 @@ class RedisBinding(BaseModel):
     source_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     worker_target: WorkerTarget
     api_token_secret: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    redis_connection_secret: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
 
     def image_repository(self, registry: str) -> str:
         return f"{registry.rstrip('/')}/{self.repository}"
@@ -40,25 +42,40 @@ class RedisBinding(BaseModel):
         ))
 
     def environment(self) -> dict:
+        environment = {"QUEUE_NAMESPACE": f"q-{self.application_id.hex}"}
+        if self.redis_connection_secret:
+            return environment
         return {
             "CELERY_BROKER_URL": f"redis://127.0.0.1:{REDIS_PORT}/0",
             "CELERY_RESULT_BACKEND": f"redis://127.0.0.1:{REDIS_PORT}/1",
-            "QUEUE_NAMESPACE": f"q-{self.application_id.hex}",
+            **environment,
         }
 
-    def secret_env(self) -> list[dict]:
-        if not self.api_token_secret:
+    def connection_env(self) -> list[dict]:
+        if not self.redis_connection_secret:
             return []
-        return [{
-            "name": "API_TOKEN",
-            "valueFrom": {"secretKeyRef": {"name": self.api_token_secret, "key": "API_TOKEN"}},
-        }]
+        return [
+            {
+                "name": key,
+                "valueFrom": {"secretKeyRef": {"name": self.redis_connection_secret, "key": key}},
+            }
+            for key in ("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND")
+        ]
+
+    def secret_env(self) -> list[dict]:
+        environment = self.connection_env()
+        if self.api_token_secret:
+            environment.append({
+                "name": "API_TOKEN",
+                "valueFrom": {"secretKeyRef": {"name": self.api_token_secret, "key": "API_TOKEN"}},
+            })
+        return environment
 
     def worker_argv(self) -> list[str]:
         return ["celery", "-A", self.worker_target, "worker", "--loglevel=warning", "--concurrency=1"]
 
     def worker(self, image: str, config_name: str) -> dict:
-        return {
+        worker = {
             "name": "queue-worker",
             "image": image,
             "imagePullPolicy": "IfNotPresent",
@@ -68,9 +85,14 @@ class RedisBinding(BaseModel):
             "securityContext": self.security(10001),
             "resources": self.resources(),
         }
+        if environment := self.connection_env():
+            worker["env"] = environment
+        return worker
 
-    def sidecar(self) -> dict:
-        return {
+    def init_containers(self) -> list[dict]:
+        if self.redis_connection_secret:
+            return []
+        return [{
             "name": "redis",
             "image": REDIS_IMAGE,
             "imagePullPolicy": "IfNotPresent",
@@ -85,7 +107,7 @@ class RedisBinding(BaseModel):
                 "exec": {"command": ["redis-cli", "-h", "127.0.0.1", "-p", str(REDIS_PORT), "PING"]},
                 "periodSeconds": 2, "failureThreshold": 30,
             },
-        }
+        }]
 
     @staticmethod
     def security(uid: int) -> dict:

@@ -1,9 +1,36 @@
 from functools import lru_cache
+from hashlib import sha256
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class StudyAgentPin(BaseModel):
+    """An operator-approved analysis input for one existing application."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    application_id: UUID
+    owner_id: str = Field(min_length=1, max_length=128)
+    organization_id: str = Field(min_length=1, max_length=128)
+    repository: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$")
+    revision: str = Field(min_length=1, max_length=255)
+    source_sha: str = Field(pattern=r"^[a-f0-9]{40}$")
+
+    def admits(self, application, actor_id: str, revision: str) -> bool:
+        return (
+            application.id == self.application_id
+            and application.owner_id == actor_id == self.owner_id
+            and application.organization_id == self.organization_id
+            and application.repository_url.lower() == f"https://github.com/{self.repository}"
+            and application.revision == revision == self.revision
+        )
+
+    def fingerprint(self) -> str:
+        return sha256(self.model_dump_json().encode()).hexdigest()
 
 
 class Settings(BaseSettings):
@@ -31,6 +58,7 @@ class Settings(BaseSettings):
     analysis_provider: Literal["github", "fake"] | None = None
     analysis_mode: Literal["fake", "deterministic", "agent"] | None = None
     managed_rails_agent_enabled: bool = False
+    study_agent_pins: tuple[StudyAgentPin, ...] = ()
     agent_delivery_recommendations_enabled: bool = False
     model_provider: Literal["deepseek"] = "deepseek"
     deepseek_api_key: str | None = None
@@ -112,6 +140,15 @@ class Settings(BaseSettings):
             return "fake"
         return "deterministic"
 
+    def study_agent_pin(self, application_id: UUID) -> StudyAgentPin | None:
+        return next((pin for pin in self.study_agent_pins if pin.application_id == application_id), None)
+
+    @property
+    def use_agent_delivery_recommendations(self) -> bool:
+        return bool(
+            self.study_agent_pins or self.managed_rails_agent_enabled or self.agent_delivery_recommendations_enabled
+        )
+
     @model_validator(mode="after")
     def local_auth_only(self):
         if self.auth_mode == "oidc":
@@ -131,6 +168,14 @@ class Settings(BaseSettings):
             )
             if not (self.oidc_audience and self.oidc_client_id and (local_provider or https_provider)):
                 raise ValueError("OIDC requires a complete HTTPS provider or the local Keycloak profile")
+        if self.study_agent_pins:
+            if self.resolved_analysis_mode != "deterministic" or self.auth_mode != "oidc":
+                raise ValueError("Study agent analysis requires OIDC and deterministic analysis outside enrollment")
+            if (
+                len({pin.application_id for pin in self.study_agent_pins}) != len(self.study_agent_pins)
+                or len({(pin.repository, pin.revision) for pin in self.study_agent_pins}) != len(self.study_agent_pins)
+            ):
+                raise ValueError("Each study application and repository revision may be enrolled only once")
         if self.managed_rails_agent_enabled and self.resolved_analysis_mode != "deterministic":
             raise ValueError("Scoped Rails agent analysis requires deterministic analysis for other sources")
         if self.environment == "production" and self.auth_mode != "oidc":

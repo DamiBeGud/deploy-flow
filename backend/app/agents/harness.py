@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from time import monotonic
 
 from app.agents.provider import (
@@ -15,6 +16,7 @@ from app.agents.provider import (
     ModelProviderError,
     ModelUsage,
     ScriptedProvider,
+    provider_label,
 )
 from app.agents.repository_mcp import (
     TOOL_DEFINITIONS,
@@ -41,6 +43,7 @@ class AgentError(Exception):
         self.code = code
         self.retryable = retryable
         self.diagnostic = diagnostic
+        self.provenance: dict | None = None
         super().__init__(code)
 
 
@@ -59,8 +62,8 @@ class AgentBudget:
 
     def add_usage(self, usage: ModelUsage):
         self.used_turns += 1
-        self.used_input_tokens += usage.input_tokens
-        self.used_output_tokens += usage.output_tokens
+        self.used_input_tokens += usage.input_tokens or 0
+        self.used_output_tokens += usage.output_tokens or 0
         self.used_latency_ms += usage.latency_ms
         if (
             self.used_turns > self.max_turns
@@ -95,6 +98,7 @@ class HarnessOutcome:
     fallback_used: bool = False
     prompt_sha256: str | None = None
     provider_kind: str = "unknown"
+    provenance: dict | None = None
 
 
 def _instructions(skills: list[SkillBundle]) -> str:
@@ -248,6 +252,40 @@ async def run_agent(
     budget: AgentBudget,
     infer_delivery_commands: bool = False,
 ) -> HarnessOutcome:
+    real_provider = isinstance(provider, DeepSeekResponsesProvider)
+    supplied_stub = isinstance(provider, ScriptedProvider)
+    provenance = {
+        "actual_mode": "agent",
+        "provider_implementation": f"{type(provider).__module__}.{type(provider).__name__}",
+        "is_simulated": False if real_provider else True if supplied_stub else None,
+        "fallback": False,
+        "requested_model": provider_label(provider.model) if real_provider else None,
+        "sent_settings": {},
+        "not_sent_settings": [],
+        "provider_calls": [],
+    }
+    try:
+        outcome = await _run_agent(
+            provider=provider, gateway=gateway, facts=facts, skills=skills, budget=budget,
+            infer_delivery_commands=infer_delivery_commands, provenance=provenance,
+        )
+    except AgentError as exc:
+        exc.provenance = provenance
+        raise
+    outcome.provenance = provenance
+    return outcome
+
+
+async def _run_agent(
+    *,
+    provider: ModelProvider,
+    gateway: RepositoryGateway,
+    facts: dict,
+    skills: list[SkillBundle],
+    budget: AgentBudget,
+    infer_delivery_commands: bool,
+    provenance: dict,
+) -> HarnessOutcome:
     started = monotonic()
     base = facts["document"]
     history = [
@@ -279,6 +317,13 @@ async def run_agent(
         # rejects a final assessment until a content-bearing repository tool
         # has supplied evidence, then prompts the model to use one.
         choice = "auto"
+        records = provenance["provider_calls"]
+        record = {"sequence": len(records) + 1, "started_at": datetime.now(UTC).isoformat()}
+        records.append(record)
+        call_started = monotonic()
+        if isinstance(provider, DeepSeekResponsesProvider) and provider.api_key:
+            provenance["sent_settings"] = provider.generation_settings
+            provenance["not_sent_settings"] = ["temperature", "top_p", "seed"]
         try:
             action: ModelAction = await provider.respond(
                 instructions=instructions,
@@ -288,7 +333,16 @@ async def run_agent(
                 output_schema=output_schema,
             )
         except ModelProviderError as exc:
+            if exc.usage is not None:
+                record.update(asdict(exc.usage))
+            record.update(status="error", error_code=provider_label(exc.code))
             raise AgentError(exc.code, retryable=exc.retryable, diagnostic=exc.diagnostic) from exc
+        finally:
+            record["finished_at"] = datetime.now(UTC).isoformat()
+            record.setdefault("latency_ms", int((monotonic() - call_started) * 1000))
+        record.update(asdict(action.usage), status="completed")
+        for field in ("response_id", "returned_model"):
+            record[field] = provider_label(record[field])
         budget.add_usage(action.usage)
         returned_model = action.usage.returned_model or returned_model
         if action.usage.response_id:

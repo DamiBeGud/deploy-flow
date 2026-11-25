@@ -11,17 +11,20 @@ import httpx
 
 
 class ModelProviderError(Exception):
-    def __init__(self, code: str, *, retryable: bool = False, diagnostic: str | None = None):
+    def __init__(
+        self, code: str, *, retryable: bool = False, diagnostic: str | None = None, usage: ModelUsage | None = None,
+    ):
         self.code = code
         self.retryable = retryable
         self.diagnostic = diagnostic
+        self.usage = usage
         super().__init__(code)
 
 
 @dataclass
 class ModelUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     latency_ms: int = 0
     returned_model: str | None = None
     response_id: str | None = None
@@ -86,6 +89,16 @@ def _provider_diagnostic(response: httpx.Response) -> str:
     return f"http_status={response.status_code} provider_code={code} message={message or '[none]'}"
 
 
+def provider_label(value) -> str | None:
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:+/-]{1,180}", value):
+        return value
+    return None
+
+
+def reported_token_count(value) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
 class DeepSeekResponsesProvider:
     def __init__(
         self,
@@ -104,6 +117,10 @@ class DeepSeekResponsesProvider:
         self.timeout_seconds = timeout_seconds
         self.max_output_tokens = max_output_tokens
 
+    @property
+    def generation_settings(self) -> dict:
+        return {"reasoning_effort": self.reasoning_effort, "max_output_tokens": self.max_output_tokens}
+
     async def respond(
         self,
         *,
@@ -115,12 +132,13 @@ class DeepSeekResponsesProvider:
     ) -> ModelAction:
         if not self.api_key:
             raise ModelProviderError("model_auth_unconfigured")
+        generation = self.generation_settings
         payload = {
             "model": self.model,
             "instructions": instructions,
             "input": history,
-            "reasoning": {"effort": self.reasoning_effort},
-            "max_output_tokens": self.max_output_tokens,
+            "reasoning": {"effort": generation["reasoning_effort"]},
+            "max_output_tokens": generation["max_output_tokens"],
             "tools": tools,
             "tool_choice": tool_choice,
             "text": {
@@ -154,9 +172,23 @@ class DeepSeekResponsesProvider:
             raise ModelProviderError(
                 "model_request_failed", diagnostic=_provider_diagnostic(response)
             )
-        body = response.json()
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ModelProviderError("model_invalid_response", retryable=True) from exc
+        if not isinstance(body, dict):
+            raise ModelProviderError("model_invalid_response", retryable=True)
+        usage = body.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        metadata = ModelUsage(
+            input_tokens=reported_token_count(usage.get("input_tokens")),
+            output_tokens=reported_token_count(usage.get("output_tokens")),
+            latency_ms=int((time.monotonic() - started) * 1000),
+            returned_model=provider_label(body.get("model")) if body.get("model") != self.api_key else None,
+            response_id=provider_label(body.get("id")) if body.get("id") != self.api_key else None,
+        )
         if body.get("status") in {"failed", "incomplete"}:
-            raise ModelProviderError("model_incomplete")
+            raise ModelProviderError("model_incomplete", usage=metadata)
         output = body.get("output") or []
         calls = [item for item in output if item.get("type") == "function_call"]
         text = None
@@ -167,19 +199,7 @@ class DeepSeekResponsesProvider:
                     for part in item.get("content", [])
                     if part.get("type") == "output_text"
                 )
-        usage = body.get("usage") or {}
-        return ModelAction(
-            calls=calls,
-            text=text,
-            history_items=_history_items(output),
-            usage=ModelUsage(
-                input_tokens=int(usage.get("input_tokens") or 0),
-                output_tokens=int(usage.get("output_tokens") or 0),
-                latency_ms=int((time.monotonic() - started) * 1000),
-                returned_model=body.get("model"),
-                response_id=body.get("id"),
-            ),
-        )
+        return ModelAction(calls=calls, text=text, history_items=_history_items(output), usage=metadata)
 
 
 class ScriptedProvider:

@@ -27,7 +27,7 @@ from app.bootstrap.native_runtime import (
 )
 from app.bootstrap.node_runtime import select_node_runtime
 from app.bootstrap.postgres import migrated_start, postgres_for_source, postgres_volumes
-from app.bootstrap.redis import REDIS_PORT, redis_for_source
+from app.bootstrap.redis import REDIS_PORT, REDIS_RESERVED_ENVIRONMENT, redis_for_source
 from app.bootstrap.tokens import token_for_source
 
 MANAGED_PATHS = {
@@ -173,7 +173,7 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
         or intent["connectivity"]["replicas"] != 1
         or intent["connectivity"].get("connections")
         or port == REDIS_PORT
-        or set(redis.environment()) & intent["connectivity"].get("environment", {}).keys()
+        or REDIS_RESERVED_ENVIRONMENT & intent["connectivity"].get("environment", {}).keys()
     ):
         raise PlanError("approved_redis_binding_mismatch")
     if token and (
@@ -453,7 +453,8 @@ PY"""
     if redis:
         pod["securityContext"]["fsGroup"] = NATIVE_UID
         pod["volumes"] = [RUNTIME_SCRATCH_VOLUME]
-        pod["initContainers"] = [redis.sidecar()]
+        if init_containers := redis.init_containers():
+            pod["initContainers"] = init_containers
         pod["containers"].append(redis.worker(f"{image}:{image_tag}", config["metadata"]["name"]))
         deployment["spec"]["strategy"] = {"type": "Recreate"}
     service = {

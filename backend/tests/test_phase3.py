@@ -1,9 +1,10 @@
 import asyncio
 import json
 
+import httpx
 import pytest
 
-from app.agents.harness import AgentBudget, run_agent
+from app.agents.harness import AgentBudget, AgentError, run_agent
 from app.agents.provider import (
     DeepSeekResponsesProvider,
     ModelAction,
@@ -106,8 +107,6 @@ def test_deepseek_provider_refuses_unconfigured_credentials():
 
 
 def test_provider_diagnostic_is_short_and_redacts_credentials():
-    import httpx
-
     response = httpx.Response(
         400,
         json={
@@ -215,3 +214,55 @@ def test_harness_requires_repository_evidence_and_returns_needs_input(tmp_path):
     assert outcome.document["mode"] == "agent"
     assert outcome.document["questions"][0]["id"] == "question-agent-1"
     assert outcome.document["findings"][-1]["evidence_ids"] == ["ev-agent-1"]
+
+    provenance = outcome.provenance
+    assert provenance["is_simulated"] is True and provenance["sent_settings"] == {}
+    assert [record["status"] for record in provenance["provider_calls"]] == ["completed", "completed"]
+
+
+def test_harness_retains_allowlisted_provider_receipts_on_failed_attempt(tmp_path, monkeypatch):
+    scan, _ = fixture_scan(tmp_path)
+    calls = []
+
+    def response(request):
+        payload = json.loads(request.content)
+        calls.append(payload)
+        assert str(request.url) == "https://api.deepseek.com/responses"
+        if len(calls) == 1:
+            return httpx.Response(200, json={
+                "id": "test-turn-1", "model": "test-served", "usage": {"input_tokens": 0},
+                "output": [{"type": "function_call", "call_id": "test-tool", "name": "repo_read_manifest",
+                            "arguments": '{"path":"package.json"}'}],
+            })
+        return httpx.Response(200, json={
+            "id": "test-turn-2", "status": "incomplete", "model": "test-served",
+            "usage": {"input_tokens": -1, "output_tokens": 10}, "unretained": "not-part-of-receipt",
+        })
+
+    create_client = httpx.AsyncClient
+    transport = httpx.MockTransport(response)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: create_client(transport=transport, **kwargs))
+    provider = DeepSeekResponsesProvider(
+        api_key="fixture-auth-only", base_url="https://api.deepseek.com", model="test-requested",
+        reasoning_effort="high", timeout_seconds=5, max_output_tokens=2000,
+    )
+    with pytest.raises(AgentError, match="model_incomplete") as raised:
+        asyncio.run(run_agent(
+            provider=provider, gateway=FakeGateway(), facts=scan.facts, skills=[],
+            budget=AgentBudget(8, 12, 120_000, 32_000, 180),
+        ))
+    provenance = raised.value.provenance
+    first, failed = provenance["provider_calls"]
+    assert provenance["requested_model"] == "test-requested"
+    assert provenance["sent_settings"] == {"reasoning_effort": "high", "max_output_tokens": 2000}
+    assert all(body["reasoning"] == {"effort": "high"} and body["max_output_tokens"] == 2000 for body in calls)
+    assert all(key not in body for key in provenance["not_sent_settings"] for body in calls)
+    assert (first["response_id"], first["status"], first["input_tokens"], first["output_tokens"]) == (
+        "test-turn-1", "completed", 0, None,
+    )
+    assert (failed["response_id"], failed["error_code"], failed["input_tokens"], failed["output_tokens"]) == (
+        "test-turn-2", "model_incomplete", None, 10,
+    )
+    assert all(row["finished_at"] >= row["started_at"] for row in (first, failed))
+    summary = json.dumps(provenance)
+    assert "not-part-of-receipt" not in summary and "fixture-auth-only" not in summary and "package.json" not in summary

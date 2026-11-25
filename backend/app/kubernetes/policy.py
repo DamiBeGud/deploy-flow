@@ -11,7 +11,7 @@ from app.bootstrap.generator import canonical_digest
 from app.bootstrap.managed_rails import SOURCE_MARKER, ManagedRailsError, managed_binding
 from app.bootstrap.native_runtime import NATIVE_UID, RUNTIME_SCRATCH_MOUNT, RUNTIME_SCRATCH_VOLUME
 from app.bootstrap.postgres import configured_postgres, postgres_volumes
-from app.bootstrap.redis import REDIS_PORT, redis_for_manifest
+from app.bootstrap.redis import REDIS_PORT, REDIS_RESERVED_ENVIRONMENT, redis_for_manifest
 from app.bootstrap.tokens import configured_token
 
 KINDS = {
@@ -73,7 +73,7 @@ def checked_manifests(
     if not isinstance(config.get("data"), dict):
         raise ManifestPolicyError("configmap_data_denied")
     redis = None
-    if isinstance(containers, list) and len(containers) == 2 and isinstance(containers[0], dict):
+    if isinstance(containers, list) and containers and isinstance(containers[0], dict):
         image = containers[0].get("image")
         if isinstance(image, str):
             redis = redis_for_manifest(
@@ -179,11 +179,12 @@ def checked_manifests(
     ]:
         raise ManifestPolicyError("configmap_reference_denied")
     if redis:
+        redis_environment = redis.environment()
         if (
             namespace != "deployflow-test"
             or redis.application_name != deployment["metadata"]["name"]
             or not redis.allows_image(container["image"], registry)
-            or pod.get("initContainers") != [redis.sidecar()]
+            or init_containers != redis.init_containers()
             or containers[1] != redis.worker(container["image"], config["metadata"]["name"])
             or pod_security.get("fsGroup") != NATIVE_UID
             or spec.get("replicas") != 1
@@ -193,7 +194,8 @@ def checked_manifests(
             or container.get("args")
             or (container.get("env") or []) != redis.secret_env()
             or "API_TOKEN" in config["data"]
-            or any(config["data"].get(key) != value for key, value in redis.environment().items())
+            or (config["data"].keys() & REDIS_RESERVED_ENVIRONMENT) != redis_environment.keys()
+            or any(config["data"].get(key) != value for key, value in redis_environment.items())
             or "Ingress" in by_kind
         ):
             raise ManifestPolicyError("redis_binding_denied")

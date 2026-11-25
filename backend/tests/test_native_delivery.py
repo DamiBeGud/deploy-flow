@@ -416,8 +416,14 @@ def test_reviewed_pr_policy_only_permits_the_original_merge():
     assert not source_scope_permits(db, policy, release, build)
 
 
-@pytest.mark.parametrize(("managed", "token_secret"), [(False, None), (False, "queue-api-secret"), (True, None)])
-def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, managed, token_secret):
+@pytest.mark.parametrize(("managed", "token_secret", "connection_secret"), [
+    (False, None, None),
+    (False, "queue-api-secret", None),
+    (True, None, None),
+    (False, None, "redis-run-01"),
+    (False, "queue-api-secret", "redis-run-01"),
+])
+def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, managed, token_secret, connection_secret):
 
     from app.bootstrap import redis
     from app.deployments.release import bind_verified_image
@@ -443,6 +449,7 @@ def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, managed,
     value = {
         "application_id": profile["application_id"], "application_name": "demo", "repository": "example/demo",
         "source_sha": "a" * 40, "worker_target": "service.worker:celery", "api_token_secret": token_secret,
+        "redis_connection_secret": connection_secret,
     }
     if managed:
         monkeypatch.setenv("DF_REDIS_PILOT_REPOSITORIES", json.dumps({"example/demo": "service.worker:celery"}))
@@ -471,6 +478,22 @@ def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, managed,
     result = recommend(assessment, profile, "main", 1, application_id=profile["application_id"])
     assert not result["generation_blocker"]
     intent = result["intent"]
+    if connection_secret:
+        # Each approved app gets a distinct queue scope even when the broker host is shared.
+        other_id = "7be41672-22c3-4ac8-81e9-314292916555"
+        other_binding = value | {"application_id": other_id, "application_name": "another-run"}
+        monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([value, other_binding]))
+        other_assessment = assessment | {"application": assessment["application"] | {"name": "another-run"}}
+        first = redis.redis_for_source(assessment, profile["application_id"])
+        second = redis.redis_for_source(other_assessment, other_id)
+        assert first.environment()["QUEUE_NAMESPACE"] != second.environment()["QUEUE_NAMESPACE"]
+        moved = assessment | {"repository": assessment["repository"] | {"commit_sha": "b" * 40}}
+        assert redis.redis_for_source(moved, profile["application_id"]) is None
+
+        intent["connectivity"]["environment"]["CELERY_BROKER_URL"] = "unapproved"
+        with pytest.raises(PlanError, match="approved_redis_binding_mismatch"):
+            render(assessment, intent, profile)
+        del intent["connectivity"]["environment"]["CELERY_BROKER_URL"]
     bundle = render(assessment, intent, profile)
     release = bind_verified_image(
         bundle_files=bundle.files, bundle_digest=bundle.digest, image_binding=bundle.validation["image_binding"],
@@ -480,11 +503,55 @@ def test_redis_worker_and_verified_image_binding(tmp_path, monkeypatch, managed,
     path = "deploy/kubernetes/deployment.yaml"
     manifest = yaml.safe_load(release.files[path])
     pod = manifest["spec"]["template"]["spec"]
+    web, worker = pod["containers"]
+    assert [web["image"], worker["image"]] == [release.image_reference] * 2
+    assert worker["command"][:4] == ["celery", "-A", "service.worker:celery", "worker"]
+    if connection_secret:
+        assert not pod.get("initContainers")
+        refs = [
+            {"name": key, "valueFrom": {"secretKeyRef": {"name": connection_secret, "key": key}}}
+            for key in ("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND")
+        ]
+        assert worker["env"] == refs
+        assert web["env"][:2] == refs
+        if token_secret:
+            assert web["env"][2] == {
+                "name": "API_TOKEN", "valueFrom": {"secretKeyRef": {"name": token_secret, "key": "API_TOKEN"}},
+            }
+        else:
+            assert web["env"] == refs
+
+        config_path = "deploy/kubernetes/configmap.yaml"
+        config = yaml.safe_load(release.files[config_path])
+        assert all(entry["name"] not in config["data"] for entry in refs)
+        assert config["data"]["QUEUE_NAMESPACE"] == "q-" + profile["application_id"].replace("-", "")
+        config["data"]["CELERY_RESULT_BACKEND"] = "unapproved"
+        tampered = release.files | {config_path: yaml.safe_dump(config)}
+        with pytest.raises(ManifestPolicyError, match="redis_binding_denied"):
+            checked_manifests(
+                tampered, digest=canonical_digest(tampered), namespace=profile["namespace"],
+                application_id=profile["application_id"], registry=profile["registry"],
+            )
+
+        worker["env"][0]["valueFrom"]["secretKeyRef"]["name"] = "different-secret"
+        tampered = release.files | {path: yaml.safe_dump(manifest)}
+        with pytest.raises(ManifestPolicyError, match="redis_binding_denied"):
+            checked_manifests(
+                tampered, digest=canonical_digest(tampered), namespace=profile["namespace"],
+                application_id=profile["application_id"], registry=profile["registry"],
+            )
+        pod["containers"] = [{"name": web["name"], **{k: v for k, v in web.items() if k != "env"}}]
+        tampered = release.files | {path: yaml.safe_dump(manifest)}
+        with pytest.raises(ManifestPolicyError, match="deployment_policy_denied"):
+            checked_manifests(
+                tampered, digest=canonical_digest(tampered), namespace=profile["namespace"],
+                application_id=profile["application_id"], registry=profile["registry"],
+            )
+        return
+
     assert pod["initContainers"][0]["args"][2] == "127.0.0.1"
-    assert [c["image"] for c in pod["containers"]] == [release.image_reference] * 2
-    assert pod["containers"][1]["command"][:4] == ["celery", "-A", "service.worker:celery", "worker"]
-    assert token_secret is None or pod["containers"][0]["env"][0]["valueFrom"]["secretKeyRef"]["name"] == token_secret
-    assert "env" not in pod["containers"][1]
+    assert token_secret is None or web["env"][0]["valueFrom"]["secretKeyRef"]["name"] == token_secret
+    assert "env" not in worker
     if managed:
         config_path = "deploy/kubernetes/configmap.yaml"
         config = yaml.safe_load(bundle.files[config_path])

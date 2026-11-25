@@ -77,6 +77,28 @@ the reviewed Gunicorn ASGI-worker shape when verified against the pinned
 entry point and requirements. A candidate outside the supported command
 patterns stays available for review and can block bundle generation.
 
+For a study with explicit repository and provider approval, keep
+`DF_ANALYSIS_MODE=deterministic` and use OIDC. Set the same `DF_STUDY_AGENT_PINS`
+JSON array in the API and analysis worker. Each entry contains the registered
+`application_id` UUID, `owner_id`, `organization_id`, lowercase `repository`
+(owner/name), exact writable GitHub `revision`, and full `source_sha`. Assign
+one fresh application and branch to each logical study slot. Supply the
+approved `DF_DEEPSEEK_API_KEY` via the analysis worker's Secret reference.
+
+The API admits one agent job for the enrolled application. Repeating the same
+idempotent request returns its original run. A new start for that app receives a conflict. The worker validates the saved scope hash and the
+resolved source before downloading the archive. Queue retries continue within
+the same job. The run preserves `study_scope_sha256` in its reproducibility
+metadata. The empty array is the default and the existing Rails pilot scope
+remains available.
+
+`attempt_history` records each claimed agent attempt. The provider call receipts
+retain sequence, outcome, timestamps, available usage, returned model, and
+response identifiers. The successful analysis also exposes `agent_provenance`.
+Missing reported usage and interrupted attempts without recovered call records
+remain unknown. The provider receipts contain metadata only. Independently
+check actual provider evidence and the enrolled scope before qualifying a run.
+
 For a disposable development stack only, from `backend/`:
 
 ~~~bash
@@ -87,6 +109,31 @@ Watch syncs/restarts those processes and rebuilds on Dockerfile/dependency-lock
 changes. Stopping Watch leaves containers running. It does not activate migration
 edits. Do not use Watch or rebuild/recreate an existing operational stack without
 the [activation review](ops/README.md#activation-and-database-recovery).
+
+## Shared study dependency bindings
+
+Assign each app and pinned source its own approved binding. Configure matching
+catalogs in the API and the Kubernetes validation, release preparation and
+execution consumers. The runtime values belong in namespace-local Secrets
+created by the authorized fixture operator.
+
+- For PostgreSQL, use an explicit entry in `DF_APPROVED_POSTGRES_BINDINGS`
+  with `ephemeral: false` and the run's `secret_name`. The existing binding
+  reads `DATABASE_URL` from that Secret, runs the supported native migration,
+  and uses the supplied database. The operator assigns an empty logical
+  database and a restricted role on the study server.
+- For Redis, include `redis_connection_secret` in the explicit
+  `DF_APPROVED_REDIS_BINDINGS` entry. The named Secret supplies
+  `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` to both the web app and
+  Celery worker. The worker receives those two keys. An optional
+  `api_token_secret` is used by the web app only. Each app gets the same
+  deterministic `QUEUE_NAMESPACE` in its web and worker config, derived from
+  the app UUID. The source must use that namespace for its queue and result
+  keys. Binding entries without `redis_connection_secret` use a Redis sidecar.
+
+The fixture operator owns database allocation, Redis access control and
+run-owned closure. Prefixes separate controlled work and results on the shared
+broker. Plan authentication and network isolation for the deployed service.
 
 ## Authentication and API contracts
 

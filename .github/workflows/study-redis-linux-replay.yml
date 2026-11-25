@@ -1,0 +1,93 @@
+name: BA native Redis worker replay
+
+on:
+  push:
+    branches: ['codex/ba-redis-linux-replay-20261125']
+
+permissions:
+  contents: read
+
+jobs:
+  native-replay:
+    if: github.repository == 'DamiBeGud/deploy-flow'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: DamiBeGud/deploy-flow
+          ref: '7cff4fb7f7783ab0cd3f630701335c5836696186'
+          path: evaluated-platform
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: DamiBeGud/M-PY05-checksum-jobs
+          ref: '9938bbf748987ef8362ee305d10f4ab35327b37e'
+          path: exact-source
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Verify input pins and prepare native dependencies
+        run: |
+          test "$(uname -s)" = Linux
+          test "$(git -C evaluated-platform rev-parse HEAD)" = '7cff4fb7f7783ab0cd3f630701335c5836696186'
+          test "$(git -C exact-source rev-parse HEAD)" = '9938bbf748987ef8362ee305d10f4ab35327b37e'
+          test "$(git -C exact-source rev-parse 'HEAD^{tree}')" = 'c7b4d8561735b6cabe99c7ad1efdaa9bc13f92f9'
+          python -m venv "$RUNNER_TEMP/replay-venv"
+          "$RUNNER_TEMP/replay-venv/bin/python" -m pip install --only-binary=:all: -r exact-source/requirements.txt
+          "$RUNNER_TEMP/replay-venv/bin/python" -m pip check
+      - name: Compile checksum-verified Redis 7.4.11
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --silent --show-error --max-time 60 \
+            'https://download.redis.io/releases/redis-7.4.11.tar.gz' -o redis-7.4.11.tar.gz
+          printf '%s\n' '3c266ece0abd54ed3b1c912c6eb86b7508cf382cb690ee6649d3843f018f6357  redis-7.4.11.tar.gz' | sha256sum --check
+          tar -xzf redis-7.4.11.tar.gz
+          make -C redis-7.4.11 -j2 MALLOC=libc OPT=-O2 redis-server > "$RUNNER_TEMP/redis-build.log" 2>&1 || {
+            tail -60 "$RUNNER_TEMP/redis-build.log"
+            exit 1
+          }
+      - name: Exercise the generated Celery command with isolated Redis
+        run: |
+          mkdir -p "$RUNNER_TEMP/redis-evidence"
+          "$RUNNER_TEMP/replay-venv/bin/python" -B study-tools/verify-shared-redis-worker.py \
+            --source exact-source --backend evaluated-platform/backend \
+            --redis-server "$RUNNER_TEMP/redis-7.4.11/src/redis-server" \
+            > "$RUNNER_TEMP/redis-evidence/worker-result.json"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import platform
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          root = Path(os.environ['RUNNER_TEMP']) / 'redis-evidence'
+          worker = json.loads((root / 'worker-result.json').read_text())
+          assert worker['system'] == 'Linux' and worker['worker_pool'] == 'default'
+          assert worker['used_generated_worker_args'] and worker['real_worker_result_count'] == 2
+          assert worker['test_processes_stopped']
+          metadata = {
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'workflow_sha': os.environ['GITHUB_SHA'],
+              'runner_image_version': os.environ.get('ImageVersion'),
+              'machine': platform.machine(),
+              'python_version': sys.version.split()[0],
+              'platform_sha': subprocess.check_output(['git', '-C', 'evaluated-platform', 'rev-parse', 'HEAD'], text=True).strip(),
+              'requirements_sha256': hashlib.sha256(Path('exact-source/requirements.txt').read_bytes()).hexdigest(),
+              'verifier_sha256': hashlib.sha256(Path('study-tools/verify-shared-redis-worker.py').read_bytes()).hexdigest(),
+          }
+          (root / 'runner.json').write_text(json.dumps(metadata, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ba-redis-linux-replay-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/redis-evidence/*.json
+          if-no-files-found: error
+          retention-days: 7

@@ -246,6 +246,7 @@ def test_study_api_scopes_concurrent_starts_and_preserves_worker_retry(monkeypat
     "approved", "security_question", "missing_binding", "wrong_source", "unsupported_python",
     "tokened", "unbound_token_reference", "missing_without_questions",
     "another_decision", "rotation_open", "rotation_approved", "binding_changed",
+    "access_policy_missing", "access_policy_wrong_source", "access_policy_changed",
 ])
 def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch, scenario):
     application, pin = source()
@@ -277,11 +278,16 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
         DecisionId.REDIS_CONNECTION, DecisionId.QUEUE_NAMESPACE, DecisionId.WORKER_LAYOUT,
         DecisionId.DOCKERFILE, DecisionId.WORKFLOW,
     ]
-    token_configured = scenario in {"tokened", "rotation_open", "rotation_approved"}
+    missing_access = scenario in {"access_policy_missing", "access_policy_wrong_source"}
+    token_configured = missing_access or scenario in {
+        "tokened", "rotation_open", "rotation_approved", "access_policy_changed",
+    }
     if token_configured or scenario == "unbound_token_reference":
         sources["service/main.py"] += '\nimport os\ntoken = os.environ.get("API_TOKEN")\n'
         known.append(DecisionId.TOKEN_REFERENCE)
     asked = list(known)
+    if token_configured and scenario != "access_policy_missing":
+        asked.append(DecisionId.AUTH_ENFORCEMENT)
     unresolved = set()
     binding_missing = scenario in {
         "missing_binding", "wrong_source", "missing_without_questions", "unbound_token_reference",
@@ -290,6 +296,8 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
         unresolved.update({DecisionId.REDIS_CONNECTION, DecisionId.QUEUE_NAMESPACE, DecisionId.WORKER_LAYOUT})
     if scenario == "unbound_token_reference":
         unresolved.add(DecisionId.TOKEN_REFERENCE)
+    if scenario == "access_policy_wrong_source":
+        unresolved.add(DecisionId.AUTH_ENFORCEMENT)
     if scenario == "missing_without_questions":
         asked = []
         unresolved = set()
@@ -315,6 +323,15 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
             **({"api_token_secret": "test-study-api-token"} if token_configured else {}),
             **({"api_token_lifecycle": "fixed_for_assignment"} if scenario == "rotation_approved" else {}),
         }]))
+    policy = {
+        "application_id": str(pin.application_id), "application_name": application.name,
+        "repository": pin.repository, "source_sha": "b" * 40 if scenario == "access_policy_wrong_source" else pin.source_sha,
+        "profile_id": "local-k3s", "namespace": "deployflow-test",
+        "exposure": "internal", "authentication": "application_bearer", "probe_authentication": "none",
+        "readiness_path": "/status", "liveness_path": "/health/live",
+    }
+    if token_configured and scenario != "access_policy_missing":
+        monkeypatch.setenv("DF_APPROVED_ACCESS_POLICIES", json.dumps([policy]))
 
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w:gz") as tar:
@@ -372,6 +389,16 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
         assert "test-study-redis" not in json.dumps(context)
         assert "test-study-api-token" not in json.dumps(context)
         assert f"q-{pin.application_id.hex}" not in json.dumps(context)
+        auth = next(entry for entry in context if entry["decision_id"] == DecisionId.AUTH_ENFORCEMENT)
+        if token_configured and not missing_access:
+            assert auth["availability"] == "provided"
+            assert auth["approved_policy"] == {
+                key: policy[key] for key in (
+                    "exposure", "authentication", "probe_authentication", "readiness_path", "liveness_path",
+                )
+            }
+        else:
+            assert auth["availability"] == "unresolved" and "approved_policy" not in auth
         questions = [
             {
                 "id": f"question-agent-{index}", "decision_id": choice, "field_path": CATALOG[choice][0],
@@ -396,7 +423,7 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
     jobs.execute(str(run_id))
     with Session() as db:
         run = db.get(AnalysisRun, run_id)
-        expected_status = "needs_input" if unresolved or binding_missing else "completed"
+        expected_status = "needs_input" if unresolved or binding_missing or missing_access else "completed"
         assert run.status == expected_status and run.commit_sha == pin.source_sha
         assert run.reproducibility_json["study_scope_sha256"] == pin.fingerprint()
         assert run.reproducibility_json["provider"] == "scripted"
@@ -425,6 +452,10 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
             assert resolutions[DecisionId.QUEUE_NAMESPACE]["value"] == f"q-{pin.application_id.hex}"
         assert "test-study-redis" not in json.dumps(resolutions)
         assert "test-study-api-token" not in json.dumps(resolutions)
+        if token_configured and not missing_access:
+            assert resolutions[DecisionId.AUTH_ENFORCEMENT]["origin"] == "approved_access_policy"
+        if missing_access:
+            assert DecisionId.AUTH_ENFORCEMENT in provenance["deployment_decision_missing"]
         if scenario in {"rotation_open", "security_question"}:
             question, = (q for q in rendered_questions if q["required"])
             answered = client.patch(
@@ -456,6 +487,8 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
             binding, = json.loads(os.environ["DF_APPROVED_REDIS_BINDINGS"])
             binding["redis_connection_secret"] = "test-replacement-redis"
             monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([binding]))
+        if scenario == "access_policy_changed":
+            monkeypatch.setenv("DF_APPROVED_ACCESS_POLICIES", "[]")
         response = client.post(
             f"{endpoint}/infrastructure-plans",
             headers={"Idempotency-Key": "study-redis-bundle"},
@@ -464,7 +497,7 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
                 "intent_version": saved.json()["version"], "environment_profile_id": "local-k3s",
             },
         )
-    if binding_missing or scenario in {"binding_changed", "unsupported_python"}:
+    if binding_missing or missing_access or scenario in {"binding_changed", "access_policy_changed", "unsupported_python"}:
         assert response.status_code == 409
         assert "missing or changed" in response.json()["detail"]
         return

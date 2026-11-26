@@ -377,13 +377,15 @@ async def _run_agent(
         instructions += COMMAND_PROMPT
     if decisions is not None:
         draft_model = DecisionCommandAssessmentDraft if infer_delivery_commands else DecisionAssessmentDraft
-        prompt_version = "phase3-agent-v3-redis-decisions"
+        prompt_version = "phase3-agent-v4-redis-decisions"
         if infer_delivery_commands:
             prompt_version += "-commands"
         instructions += (
             " Use the deployment_decisions catalog from the initial input. Report only unresolved deployment "
             "decisions in questions, with one allowed decision_id per question. Provided and platform_default "
             "entries already have an answer. Separate API token wiring, lifecycle, and authorization. "
+            "An approved access policy sets the allowed exposure and probe behavior. If repository evidence "
+            "conflicts with it, report the conflict as a required other decision. "
             "Use other for an unresolved decision outside the catalog. Put informational observations in risks or unknowns."
         )
     output_schema = draft_model.model_json_schema()

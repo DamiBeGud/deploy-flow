@@ -7,6 +7,9 @@ import json
 
 from app.config import settings
 
+LOCAL_PROFILE_ID = "local-k3s"
+LOCAL_PROFILE_NAMESPACE = "deployflow-test"
+
 
 def local_k3s_profile() -> dict:
     config = settings()
@@ -15,8 +18,8 @@ def local_k3s_profile() -> dict:
     if not registry or not image:
         raise ValueError("environment_profile_unconfigured")
     profile = {
-        "id": "local-k3s",
-        "namespace": "deployflow-test",
+        "id": LOCAL_PROFILE_ID,
+        "namespace": LOCAL_PROFILE_NAMESPACE,
         "registry": registry,
         "default_image": image,
         "ingress_class": "nginx",

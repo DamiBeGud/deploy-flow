@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import yaml
 
 from app.analysis.command_inference import command_blocker, command_inference
+from app.bootstrap.access_policy import AccessPolicyError, access_policy_for_source
 from app.bootstrap.contracts import (
     BUILD_SPECIFICATION_SCHEMA_VERSION,
     DEPLOYMENT_INTENT_SCHEMA_VERSION,
@@ -161,6 +162,20 @@ def render(assessment: dict, intent: dict, profile: dict) -> GeneratedBundle:
     live = assessment.get("review", {}).get("liveness_path")
     if live and (not isinstance(live, str) or not re.fullmatch(r"/[A-Za-z0-9/_-]*", live)):
         raise PlanError("invalid_liveness_path")
+    liveness = postgres.liveness_path if postgres else live or health
+    try:
+        access = access_policy_for_source(
+            assessment, profile.get("application_id", ""),
+            profile_id=profile.get("id", ""), namespace=profile["namespace"],
+        )
+    except AccessPolicyError as exc:
+        raise PlanError(str(exc)) from exc
+    if access and (
+        not (token or (redis and redis.api_token_secret) or (postgres and postgres.api_token))
+        or intent["connectivity"]["exposure"]["kind"] != access.exposure
+        or (health, liveness) != (access.readiness_path, access.liveness_path)
+    ):
+        raise PlanError("approved_access_policy_mismatch")
     image = build["image"]
     if not image.startswith(profile["registry"].rstrip("/") + "/"):
         raise PlanError("image_registry_denied")
@@ -425,7 +440,7 @@ PY"""
                             },
                             "readinessProbe": {"httpGet": {"path": health, "port": "http"}},
                             "livenessProbe": {
-                                "httpGet": {"path": postgres.liveness_path if postgres else live or health, "port": "http"}
+                                "httpGet": {"path": liveness, "port": "http"}
                             },
                             **({
                                 "startupProbe": {

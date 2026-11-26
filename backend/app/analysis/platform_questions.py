@@ -5,8 +5,10 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 
+from app.bootstrap.access_policy import AccessPolicyError, access_policy_for_source
 from app.bootstrap.contracts import GENERATED_WORKFLOW_PATH
 from app.bootstrap.native_runtime import python_base_image
+from app.bootstrap.profiles import LOCAL_PROFILE_ID, LOCAL_PROFILE_NAMESPACE
 from app.bootstrap.redis import REDIS_WORKLOAD_REPLICAS, redis_for_source
 
 DECISION_CONTRACT_VERSION = "study-redis-deployment-decisions-v1"
@@ -42,10 +44,17 @@ class DecisionSnapshot:
     answers: dict[DecisionId, tuple[str, str]]
     missing: tuple[DecisionId, ...]
     fingerprint: str
+    access_policy: dict[str, str] | None = None
 
-    def model_context(self) -> list[dict[str, str]]:
+    def model_context(self) -> list[dict]:
         return [
-            {"decision_id": choice, "description": detail, "availability": self.answers.get(choice, ("unresolved", ""))[0]}
+            {
+                "decision_id": choice,
+                "description": detail,
+                "availability": self.answers.get(choice, ("unresolved", ""))[0],
+                **({"approved_policy": self.access_policy}
+                   if choice == DecisionId.AUTH_ENFORCEMENT and self.access_policy else {}),
+            }
             for choice, (_, detail) in CATALOG.items()
         ]
 
@@ -61,6 +70,7 @@ def redis_decisions(assessment: dict, application_id: str) -> DecisionSnapshot:
     binding = redis_for_source(assessment, application_id)
     binding = binding if binding and binding.redis_connection_secret else None
     answers: dict[DecisionId, tuple[str, str]] = {}
+    access_policy = None
     required = [DecisionId.REDIS_CONNECTION, DecisionId.QUEUE_NAMESPACE, DecisionId.WORKER_LAYOUT]
     bootstrap = assessment.get("bootstrap", {})
     if bootstrap.get("dockerfile_required") is True:
@@ -73,8 +83,9 @@ def redis_decisions(assessment: dict, application_id: str) -> DecisionSnapshot:
             answers[DecisionId.DOCKERFILE] = ("platform_default", image)
     if bootstrap.get("workflow_required") is True:
         answers[DecisionId.WORKFLOW] = ("platform_default", GENERATED_WORKFLOW_PATH)
-    if "API_TOKEN" in assessment.get("configuration", {}).get("required_variables", []):
-        required.append(DecisionId.TOKEN_REFERENCE)
+    needs_token = "API_TOKEN" in assessment.get("configuration", {}).get("required_variables", [])
+    if needs_token:
+        required.extend([DecisionId.TOKEN_REFERENCE, DecisionId.AUTH_ENFORCEMENT])
     if binding:
         answers.update({
             DecisionId.REDIS_CONNECTION: ("provided", "kubernetes_secret_references"),
@@ -85,14 +96,30 @@ def redis_decisions(assessment: dict, application_id: str) -> DecisionSnapshot:
             answers[DecisionId.TOKEN_REFERENCE] = ("provided", "kubernetes_secret_reference")
             if binding.api_token_lifecycle:
                 answers[DecisionId.TOKEN_ROTATION] = ("provided", binding.api_token_lifecycle)
+            if needs_token:
+                try:
+                    candidate = access_policy_for_source(
+                        assessment, application_id, profile_id=LOCAL_PROFILE_ID,
+                        namespace=LOCAL_PROFILE_NAMESPACE,
+                    )
+                except AccessPolicyError:
+                    candidate = None
+                review = assessment.get("review", {})
+                readiness = review.get("health_path")
+                liveness = review.get("liveness_path") or readiness
+                if candidate and (candidate.readiness_path, candidate.liveness_path) == (readiness, liveness):
+                    access_policy = candidate
+                    answers[DecisionId.AUTH_ENFORCEMENT] = ("provided", candidate.authentication)
 
     missing = tuple(choice for choice in required if choice not in answers)
     payload = {
         "version": DECISION_CONTRACT_VERSION, "answers": answers, "missing": missing,
         "binding": binding.model_dump(mode="json") if binding else None,
     }
+    if access_policy:
+        payload["access_policy"] = access_policy.model_dump(mode="json")
     fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-    return DecisionSnapshot(answers, missing, fingerprint)
+    return DecisionSnapshot(answers, missing, fingerprint, access_policy.public_policy() if access_policy else None)
 
 
 def resolve_decisions(document: dict, snapshot: DecisionSnapshot) -> list[dict]:
@@ -102,9 +129,12 @@ def resolve_decisions(document: dict, snapshot: DecisionSnapshot) -> list[dict]:
         if question["required"] and (answer := snapshot.answers.get(decision)):
             availability, value = answer
             question["required"] = False
+            origin = "deployment_renderer"
+            if availability == "provided":
+                origin = "approved_access_policy" if decision == DecisionId.AUTH_ENFORCEMENT else "approved_redis_binding"
             resolutions.append({
                 "question_id": question["id"], "decision_id": decision, "field_path": question["field_path"],
-                "origin": "approved_redis_binding" if availability == "provided" else "deployment_renderer",
+                "origin": origin,
                 "value": value,
             })
     return resolutions

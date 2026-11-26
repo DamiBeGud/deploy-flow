@@ -135,6 +135,23 @@ The fixture operator owns database allocation, Redis access control and
 run-owned closure. Prefixes separate controlled work and results on the shared
 broker. Plan authentication and network isolation for the deployed service.
 
+### Source-pinned application access policies
+
+`DF_APPROVED_ACCESS_POLICIES` is an operator-managed JSON array. Each approval
+identifies the `application_id`, `application_name`, lowercase `repository`
+(`owner/name`), exact `source_sha`, `profile_id` and `namespace`. Set
+`exposure` to `internal`, `authentication` to `application_bearer`,
+`probe_authentication` to `none`, and specify the reviewed `readiness_path`
+and `liveness_path`. Review the source's protected routes and anonymous
+probes before approving. Keep credential values and references in the
+separate dependency or token binding.
+
+Configure the same catalog in the API and analysis worker. For enrolled
+Python/Celery/Redis studies that require `API_TOKEN`, a matching approval and
+token reference are required even if the model asks no access question. Any
+runtime with a configured access policy must render internal exposure and the
+reviewed probes. The application remains responsible for checking the token.
+
 ## Authentication and API contracts
 
 Development identity is local-only, performs no login/token verification, and

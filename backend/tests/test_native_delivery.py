@@ -616,6 +616,34 @@ def test_node_runtime_uses_its_repository_and_blocks_missing_database(tmp_path):
         render(assessment, result["intent"], PROFILE)
 
 
+def test_approved_access_policy_applies_without_redis(tmp_path, monkeypatch):
+    profile = PROFILE | {"application_id": "43cfca1e-0d9a-4c38-bf9d-8d3a2132ea9c"}
+    source = {
+        "application_id": profile["application_id"], "application_name": "demo",
+        "repository": "example/demo", "source_sha": IDENTITY["commit_sha"],
+    }
+    policy = source | {
+        "profile_id": profile["id"], "namespace": profile["namespace"],
+        "exposure": "internal", "authentication": "application_bearer", "probe_authentication": "none",
+        "readiness_path": "/live", "liveness_path": "/live",
+    }
+    monkeypatch.setenv("DF_APPROVED_TOKEN_BINDINGS", json.dumps([source | {"secret_name": "test-api-token"}]))
+    monkeypatch.setenv("DF_APPROVED_ACCESS_POLICIES", json.dumps([policy]))
+    assessment = scan(tmp_path, NODE | {
+        "src/index.ts": NODE["src/index.ts"] + '\nif (!process.env.API_TOKEN) throw Error("API_TOKEN is required");\n',
+    })
+    intent = recommend(assessment, profile, "main", 1, application_id=profile["application_id"])["intent"]
+    bundle = render(assessment, intent, profile)
+    assert "deploy/kubernetes/ingress.yaml" not in bundle.files
+    assert yaml.safe_load(bundle.files["deploy/kubernetes/service.yaml"])["spec"]["type"] == "ClusterIP"
+    for change in ({"exposure": {"kind": "external"}}, {"health_path": "/alternate"}):
+        modified = intent | {"connectivity": intent["connectivity"] | change}
+        with pytest.raises(PlanError, match="^approved_access_policy_mismatch$"):
+            render(assessment, modified, profile)
+    with pytest.raises(PlanError, match="^access_policy_target_mismatch$"):
+        render(assessment, intent, profile | {"namespace": "other-namespace"})
+
+
 @pytest.mark.parametrize("family,slug,source,migration", [
     ("nodejs", "demo", NODE | {
         "package.json": NODE["package.json"].replace('"start"', '"migrate":"node scripts/migrate.mjs","start"').replace('"scripts"', '"dependencies":{"pg":"8.16.3"},"scripts"'),

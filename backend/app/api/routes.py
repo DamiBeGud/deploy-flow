@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from starlette.concurrency import run_in_threadpool
 
 from app.analysis.jobs import finish
+from app.analysis.platform_questions import DECISION_CONTRACT_VERSION, DecisionId, redis_decisions
 from app.analysis.service import enqueue, run_document
 from app.api.identity import Identity, get_identity
 from app.api.schemas import (
@@ -514,6 +515,8 @@ def patch_assessment(run_id: UUID, body: AssessmentPatch, identity: Actor, key: 
                     if answer is None:
                         remaining.append(question)
                         continue
+                    if question.get("decision_id") in {DecisionId.TOKEN_ROTATION, DecisionId.AUTH_ENFORCEMENT}:
+                        raise HTTPException(409, "This decision requires an approved deployment policy")
                     if question["answer_type"] == "integer" and not isinstance(answer, int):
                         raise HTTPException(422, "Question answer type is invalid")
                     if question["answer_type"] == "boolean" and not isinstance(answer, bool):
@@ -783,6 +786,18 @@ def create_infrastructure_plan(
         ):
             raise HTTPException(409, "Assessment version changed; reload before generating")
         assessment = db.get(AssessmentVersion, (run.id, run.assessment_version))
+        provenance = run.reproducibility_json or {}
+        decision_contract = provenance.get("deployment_decision_contract")
+        if decision_contract is not None:
+            if decision_contract != DECISION_CONTRACT_VERSION:
+                raise HTTPException(409, "This deployment decision contract is unavailable; analyze the source again")
+            if assessment.document.get("completion") != "complete" or provenance.get("fallback_used"):
+                raise HTTPException(409, "A complete scoped assessment is required before generating a bundle")
+            decisions = redis_decisions(assessment.document, str(app_id))
+            if decisions.missing or decisions.fingerprint != provenance.get("deployment_decision_fingerprint"):
+                raise HTTPException(409, "Approved deployment settings are missing or changed; analyze the source again")
+            if any(question["required"] for question in assessment.document["questions"]):
+                raise HTTPException(409, "Resolve the required assessment questions before generating a bundle")
         if (
             run.status == "needs_input"
             and (run.reproducibility_json or {}).get("study_scope_sha256")

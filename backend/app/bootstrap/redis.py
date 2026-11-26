@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
@@ -13,6 +13,7 @@ from app.bootstrap.native_runtime import RUNTIME_SCRATCH_MOUNT
 
 REDIS_IMAGE = "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
 REDIS_PORT = 6379
+REDIS_WORKLOAD_REPLICAS = 1
 REDIS_REQUIREMENTS = {"CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", "QUEUE_NAMESPACE"}
 REDIS_SOURCE_KEY = "DEPLOYFLOW_REDIS_SOURCE_SHA"
 REDIS_RESERVED_ENVIRONMENT = REDIS_REQUIREMENTS | {REDIS_SOURCE_KEY}
@@ -30,6 +31,7 @@ class RedisBinding(BaseModel):
     source_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     worker_target: WorkerTarget
     api_token_secret: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    api_token_lifecycle: Literal["fixed_for_assignment"] | None = None
     redis_connection_secret: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
 
     def image_repository(self, registry: str) -> str:

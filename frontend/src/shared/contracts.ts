@@ -20,7 +20,7 @@ export type DeterministicAssessment = {
   detected_stack: { languages: string[]; frameworks: string[] }; configuration: { required_variables: string[]; optional_variables: string[] }
   evidence: { id: string; file_path: string; line_start: number | null; line_end: number | null; detector: string }[]; unknowns: string[]
   findings?: { id: string; category: string; value: string | number | boolean | null; status: string; confidence: number; evidence_ids: string[] }[]
-  questions?: { id: string; field_path: string; prompt: string; reason: string; required: boolean; answer_type: string; choices: string[] }[]
+  questions?: { id: string; decision_id?: string; field_path: string; prompt: string; reason: string; required: boolean; answer_type: string; choices: string[] }[]
   risks?: string[]; summary?: string | null
 }
 export type Assessment = FakeAssessment | DeterministicAssessment

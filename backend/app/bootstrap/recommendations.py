@@ -360,7 +360,9 @@ def recommend(
     return {
         "intent": intent,
         "generation_blocker": generation_blocker,
-        "approved_queue": {"worker": " ".join(redis.worker_argv())} if redis else None,
+        "approved_queue": {
+            "worker": " ".join(redis.worker_argv()), "external": bool(redis.redis_connection_secret),
+        } if redis else None,
         "approved_api_token": bool(token or (postgres and postgres.api_token) or (redis and redis.api_token_secret)),
         "approved_database": (
             {"migration": " ".join(postgres.migration(commands["start_command"] or []))}

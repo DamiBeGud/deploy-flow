@@ -28,6 +28,7 @@ class ModelUsage:
     latency_ms: int = 0
     returned_model: str | None = None
     response_id: str | None = None
+    response_shape: str | None = None
 
 
 @dataclass
@@ -187,19 +188,48 @@ class DeepSeekResponsesProvider:
             returned_model=provider_label(body.get("model")) if body.get("model") != self.api_key else None,
             response_id=provider_label(body.get("id")) if body.get("id") != self.api_key else None,
         )
-        if body.get("status") in {"failed", "incomplete"}:
-            raise ModelProviderError("model_incomplete", usage=metadata)
-        output = body.get("output") or []
+        status = body.get("status")
+        details = body.get("incomplete_details")
+        reason = details.get("reason") if isinstance(details, dict) else None
+        if status == "incomplete":
+            metadata.response_shape = reason if reason in ("content_filter", "max_output_tokens") else "incomplete"
+            code = "model_refusal" if reason == "content_filter" else "model_incomplete"
+            raise ModelProviderError(code, usage=metadata)
+        if status == "failed":
+            metadata.response_shape = "failed"
+            raise ModelProviderError("model_provider_failed", usage=metadata)
+        output = body.get("output", [])
+        if not isinstance(output, list) or any(not isinstance(item, dict) for item in output):
+            metadata.response_shape = "invalid_output_shape"
+            raise ModelProviderError("model_invalid_response", usage=metadata)
         calls = [item for item in output if item.get("type") == "function_call"]
-        text = None
+        text_parts = []
         for item in output:
-            if item.get("type") == "message":
-                text = "".join(
-                    part.get("text", "")
-                    for part in item.get("content", [])
-                    if part.get("type") == "output_text"
-                )
-        return ModelAction(calls=calls, text=text, history_items=_history_items(output), usage=metadata)
+            if item.get("type") != "message":
+                continue
+            content = item.get("content", [])
+            if not isinstance(content, list) or any(not isinstance(part, dict) for part in content):
+                metadata.response_shape = "invalid_output_shape"
+                raise ModelProviderError("model_invalid_response", usage=metadata)
+            for part in content:
+                if part.get("type") == "refusal":
+                    metadata.response_shape = "refusal"
+                    raise ModelProviderError("model_refusal", usage=metadata)
+                if part.get("type") == "output_text" and isinstance(part.get("text"), str):
+                    text_parts.append(part["text"])
+        text = "".join(text_parts)
+        if not calls and not text.strip():
+            if text_parts:
+                metadata.response_shape = "blank_text"
+            elif not output:
+                metadata.response_shape = "empty_output"
+            elif all(item.get("type") == "reasoning" for item in output):
+                metadata.response_shape = "reasoning_only"
+            else:
+                metadata.response_shape = "no_supported_output"
+            raise ModelProviderError("model_no_usable_output", usage=metadata)
+        metadata.response_shape = "tool_calls" if calls else "output_text"
+        return ModelAction(calls=calls, text=text or None, history_items=_history_items(output), usage=metadata)
 
 
 class ScriptedProvider:

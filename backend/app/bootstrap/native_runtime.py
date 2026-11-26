@@ -46,7 +46,7 @@ class NativeBuild:
     template: str
 
 
-def _python_image(constraint: str | None) -> str:
+def python_base_image(constraint: str | None) -> str:
     # Select a minor only if its full patch series satisfies the declared range.
     # Reject unsupported constraint forms instead of guessing at compatibility.
     bounds = []
@@ -134,7 +134,7 @@ def native_build(
 ):
     _native_commands(family, install, test, build, start, port, verified_gunicorn)
     if family == "python":
-        base_image = _python_image(version)
+        base_image = python_base_image(version)
         environment = {"PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"}
         if start[0] == "gunicorn":
             environment["TMPDIR"] = "/tmp"

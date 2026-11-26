@@ -240,7 +240,10 @@ def test_study_api_scopes_concurrent_starts_and_preserves_worker_retry(monkeypat
         )) == 1
 
 
-def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch):
+@pytest.mark.parametrize("scenario", [
+    "approved", "security_question", "missing_binding", "wrong_source", "unsupported_python",
+])
+def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch, scenario):
     application, pin = source()
     with Session.begin() as db:
         db.add(application)
@@ -266,6 +269,28 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
             'queue = os.environ["QUEUE_NAMESPACE"]\n'
         ),
     }
+    platform_fields = [
+        "dependencies.redis.topology", "configuration.QUEUE_NAMESPACE.value",
+        "build.image.base", "workflow.worker_restart_policy",
+    ]
+    asked_fields = [*platform_fields]
+    unresolved = set()
+    if scenario == "security_question":
+        asked_fields.append("security.auth_enforcement")
+        unresolved.add("security.auth_enforcement")
+    elif scenario in {"missing_binding", "wrong_source"}:
+        unresolved.update(platform_fields)
+    elif scenario == "unsupported_python":
+        sources["pyproject.toml"] = '[project]\nrequires-python = ">=4.0"\n'
+        unresolved.add("build.image.base")
+    if scenario != "missing_binding":
+        monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([{
+            "application_id": str(pin.application_id), "application_name": application.name,
+            "repository": pin.repository,
+            "source_sha": "b" * 40 if scenario == "wrong_source" else pin.source_sha,
+            "worker_target": "service.worker:celery", "redis_connection_secret": "test-study-redis",
+        }]))
+
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w:gz") as tar:
         for path, text in sources.items():
@@ -317,9 +342,17 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
             raise error
         assert metadata["commit_sha"] == pin.source_sha
         assert (root / "service/worker.py").read_text() == sources["service/worker.py"] and skills
+        questions = [
+            {
+                "id": f"question-agent-{index}", "field_path": field, "required": True,
+                "prompt": "Select a delivery setting.", "reason": "The source has no chosen value.",
+                "answer_type": "text", "choices": [],
+            }
+            for index, field in enumerate(asked_fields, 1)
+        ]
         return HarnessOutcome(
-            {**facts["document"], "mode": "agent"}, [], [], budget, 0,
-            None, "completed", prompt_version=COMMAND_PROMPT_VERSION, provider_kind="scripted", provenance=receipt,
+            {**facts["document"], "mode": "agent", "questions": questions}, [], [], budget, 0,
+            None, "needs_input", prompt_version=COMMAND_PROMPT_VERSION, provider_kind="scripted", provenance=receipt,
         )
 
     monkeypatch.setattr(jobs, "GitHubClient", ApprovedSource)
@@ -332,20 +365,16 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
     jobs.execute(str(run_id))
     with Session() as db:
         run = db.get(AnalysisRun, run_id)
-        assert run.status == "completed" and run.commit_sha == pin.source_sha
+        expected_status = "needs_input" if unresolved else "completed"
+        assert run.status == expected_status and run.commit_sha == pin.source_sha
         assert run.reproducibility_json["study_scope_sha256"] == pin.fingerprint()
         assert run.reproducibility_json["provider"] == "scripted"
         assert run.reproducibility_json["agent_provenance"] == second_receipt
         first, second = run.reproducibility_json["attempt_history"]
         assert (first["attempt"], first["status"], first["provenance"]) == (1, "retrying", first_receipt)
-        assert (second["attempt"], second["status"], second["provenance"]) == (2, "completed", second_receipt)
+        assert (second["attempt"], second["status"], second["provenance"]) == (2, expected_status, second_receipt)
         assert not run.reproducibility_json["provider_response_ids"]
 
-    monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([{
-        "application_id": str(pin.application_id), "application_name": application.name,
-        "repository": pin.repository, "source_sha": pin.source_sha, "worker_target": "service.worker:celery",
-        "redis_connection_secret": "test-study-redis",
-    }]))
     monkeypatch.setitem(app.dependency_overrides, get_identity, lambda: OWNER)
     endpoint = f"/api/v1/applications/{pin.application_id}"
     with TestClient(app) as client:
@@ -354,11 +383,27 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
         provenance = observed.json()["reproducibility"]
         assert provenance["study_scope_sha256"] == pin.fingerprint()
         assert [entry["provenance"] for entry in provenance["attempt_history"]] == [first_receipt, second_receipt]
+        rendered_questions = observed.json()["assessment"]["questions"]
+        assert len(rendered_questions) == len(asked_fields)
+        assert {question["field_path"] for question in rendered_questions if question["required"]} == unresolved
+        resolutions = {item["field_path"]: item for item in provenance.get("platform_question_resolutions", [])}
+        assert set(resolutions) == set(platform_fields) - unresolved
+        if resolutions:
+            assert provenance["platform_question_resolution_version"] == "redis-platform-questions-v1"
+            assert resolutions["configuration.QUEUE_NAMESPACE.value"]["value"] == f"q-{pin.application_id.hex}"
+            assert resolutions["dependencies.redis.topology"]["value"] == "provided_connection_references"
+            assert resolutions["workflow.worker_restart_policy"]["value"] == "Always"
+            if "build.image.base" in resolutions:
+                assert resolutions["build.image.base"]["value"] == "python:3.12-slim-bookworm"
+            assert "test-study-redis" not in json.dumps(resolutions)
         suggestion = client.get(f"{endpoint}/kubernetes-recommendation?analysis_run_id={run_id}")
         assert suggestion.status_code == 200, suggestion.text
         rec = suggestion.json()
-        assert rec["generation_blocker"] is None
-        assert rec["approved_queue"]["worker"].startswith("celery -A service.worker:celery worker")
+        if scenario in {"missing_binding", "wrong_source"}:
+            assert rec["generation_blocker"]
+        else:
+            assert rec["generation_blocker"] is None
+            assert rec["approved_queue"]["worker"].startswith("celery -A service.worker:celery worker")
         intent = rec["intent"]
         saved = client.put(
             f"{endpoint}/deployment-intent",
@@ -377,6 +422,10 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
                 "intent_version": saved.json()["version"], "environment_profile_id": "local-k3s",
             },
         )
+    if unresolved:
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Resolve the required assessment questions before generating a bundle"
+        return
     assert response.status_code == 201, response.text
     plan = response.json()
     files = {record["path"]: record["content"] for record in plan["files"]}

@@ -783,6 +783,12 @@ def create_infrastructure_plan(
         ):
             raise HTTPException(409, "Assessment version changed; reload before generating")
         assessment = db.get(AssessmentVersion, (run.id, run.assessment_version))
+        if (
+            run.status == "needs_input"
+            and (run.reproducibility_json or {}).get("study_scope_sha256")
+            and set(assessment.document.get("dependencies", {}).get("detected_services", [])) == {"celery", "redis"}
+        ):
+            raise HTTPException(409, "Resolve the required assessment questions before generating a bundle")
         intent = db.scalar(
             select(DeploymentIntentVersion).where(
                 DeploymentIntentVersion.application_id == app_id,

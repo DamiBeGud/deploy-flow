@@ -20,6 +20,7 @@ from app.agents.harness import (
 )
 from app.agents.provider import DeepSeekResponsesProvider
 from app.agents.repository_mcp import repository_gateway
+from app.analysis.platform_questions import RESOLUTION_VERSION, resolve_redis_questions
 from app.analysis.service import fake_assessment
 from app.bootstrap.managed_rails import ManagedRailsError, managed_profile
 from app.config import settings
@@ -349,6 +350,21 @@ def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: Har
                 latency_ms=trace.latency_ms,
             )
         )
+    platform_resolution = {}
+    if (
+        outcome.status == "needs_input"
+        and outcome.document.get("completion") == "complete"
+        and not outcome.fallback_used
+        and (run.reproducibility_json or {}).get("study_scope_sha256")
+    ):
+        resolved = resolve_redis_questions(outcome.document, str(application.id))
+        if resolved:
+            platform_resolution = {
+                "platform_question_resolution_version": RESOLUTION_VERSION,
+                "platform_question_resolutions": resolved,
+            }
+            if not any(question["required"] for question in outcome.document["questions"]):
+                outcome.status = "completed"
     run.assessment_version = 1
     run.incomplete_reason = outcome.document.get("incomplete_reason")
     run.model_provider = outcome.provider_kind
@@ -373,6 +389,7 @@ def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: Har
         "provider_response_ids": list(outcome.response_ids),
         "fallback_used": outcome.fallback_used,
         "agent_provenance": outcome.provenance,
+        **platform_resolution,
         "settings": {
             "reasoning_effort": settings().deepseek_reasoning_effort,
             "max_output_tokens": settings().agent_response_max_tokens,

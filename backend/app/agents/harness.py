@@ -245,14 +245,33 @@ def _merge(
     return InfrastructureAssessmentV2.model_validate(document).model_dump(exclude=excluded), status
 
 
-def _assessment_validation_failure(exc: Exception, stage: str, draft_model) -> dict:
+def _schema_field_path(location: tuple, schema: dict) -> str:
+    """Render only application-defined field names and array indexes."""
+    path = ""
+    node = schema
+    definitions = schema.get("$defs", {})
+    for part in location:
+        if "$ref" in node:
+            node = definitions.get(node["$ref"].removeprefix("#/$defs/"), {})
+        if isinstance(part, str) and part in node.get("properties", {}):
+            node = node["properties"][part]
+            path = f"{path}.{part}" if path else part
+        elif type(part) is int and node.get("type") == "array" and isinstance(node.get("items"), dict):
+            node = node["items"]
+            path += f"[{part}]"
+        else:
+            break
+    return path
+
+
+def _assessment_validation_failure(exc: Exception, stage: str, schema: dict) -> dict:
     if isinstance(exc, ValidationError):
         errors = exc.errors(include_input=False, include_context=False, include_url=False)
         types = {error["type"] for error in errors}
         fields = sorted({
             error["loc"][0]
             for error in errors
-            if error["loc"] and error["loc"][0] in draft_model.model_fields
+            if error["loc"] and error["loc"][0] in schema["properties"]
         })
         code = (
             "invalid_json" if "json_invalid" in types
@@ -260,7 +279,15 @@ def _assessment_validation_failure(exc: Exception, stage: str, draft_model) -> d
             else "extra_fields" if "extra_forbidden" in types
             else "invalid_field_value"
         )
-        return {"stage": stage, "code": code, "fields": fields}
+        details = sorted({
+            (path, error["type"])
+            for error in errors
+            if (path := _schema_field_path(error["loc"], schema))
+        })[:8]
+        return {
+            "stage": stage, "code": code, "fields": fields,
+            "details": [{"path": path, "type": kind} for path, kind in details],
+        }
     if isinstance(exc, AgentError) and exc.code in {
         "assessment_evidence_missing", "assessment_evidence_invalid", "assessment_secret_detected",
     }:
@@ -434,8 +461,9 @@ async def _run_agent(
                     }
                 )
             continue
-        if not action.text:
-            raise AgentError("model_refusal")
+        if not action.text or not action.text.strip():
+            record.update(status="error", error_code="model_no_usable_output")
+            raise AgentError("model_no_usable_output")
         if not content_read:
             history.append(
                 {
@@ -467,9 +495,9 @@ async def _run_agent(
                 ),
             )
         except Exception as exc:
-            failure = _assessment_validation_failure(exc, stage, draft_model)
+            failure = _assessment_validation_failure(exc, stage, output_schema)
             record["assessment_validation"] = failure
-            provenance["validation_repair_version"] = "bounded-validation-repair-v2"
+            provenance["validation_repair_version"] = "bounded-validation-repair-v3"
             if repair_used:
                 raise AgentError("invalid_model_output") from exc
             repair_used = True
@@ -479,7 +507,9 @@ async def _run_agent(
                     "content": (
                         "The prior JSON assessment failed host validation. "
                         f"Validation category: {json.dumps(failure, sort_keys=True)}. "
-                        "Return a corrected JSON assessment only. Cite only supplied evidence IDs and do not include secrets."
+                        "Use the listed paths and error types to correct the specified fields. "
+                        "Return one complete JSON assessment that conforms to the response schema. "
+                        "Cite only supplied evidence IDs and do not include secrets."
                     ),
                 }
             )

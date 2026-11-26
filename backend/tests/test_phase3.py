@@ -106,6 +106,47 @@ def test_deepseek_provider_refuses_unconfigured_credentials():
         )
 
 
+@pytest.mark.parametrize(
+    ("response_fields", "expected", "shape"),
+    [
+        ({"output": [
+            {"type": "message", "content": [{"type": "output_text", "text": '{"summary":'}]},
+            {"type": "message", "content": [{"type": "output_text", "text": '"ok"}'}]},
+            {"type": "message", "content": []},
+        ]}, '{"summary":"ok"}', "output_text"),
+        ({"output": [{"type": "reasoning", "content": []}]}, "model_no_usable_output", "reasoning_only"),
+        ({"output": [{"type": "message", "content": [{"type": "output_text", "text": "  "}]}]},
+         "model_no_usable_output", "blank_text"),
+        ({"output": [{"type": "message", "content": [{"type": "refusal", "refusal": "private body"}]}]},
+         "model_refusal", "refusal"),
+        ({"status": "incomplete", "incomplete_details": {"reason": "content_filter"}},
+         "model_refusal", "content_filter"),
+        ({"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}},
+         "model_incomplete", "max_output_tokens"),
+    ],
+)
+def test_deepseek_response_preserves_text_and_classifies_missing_output(monkeypatch, response_fields, expected, shape):
+    response = {"id": "receipt-id", "status": "completed", **response_fields}
+    create_client = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=response))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: create_client(transport=transport, **kwargs))
+    provider = DeepSeekResponsesProvider(
+        api_key="fixture-auth-only", base_url="https://api.deepseek.com", model="test-requested",
+        reasoning_effort="high", timeout_seconds=5, max_output_tokens=2000,
+    )
+    result = provider.respond(instructions="test", history=[], tools=[], tool_choice="auto", output_schema={})
+    if shape == "output_text":
+        action = asyncio.run(result)
+        assert action.text == expected
+        usage = action.usage
+    else:
+        with pytest.raises(ModelProviderError, match=expected) as raised:
+            asyncio.run(result)
+        assert not raised.value.retryable and raised.value.diagnostic is None
+        usage = raised.value.usage
+    assert usage.response_shape == shape and usage.response_id == "receipt-id"
+
+
 def test_provider_diagnostic_is_short_and_redacts_credentials():
     response = httpx.Response(
         400,
@@ -268,8 +309,8 @@ def test_harness_retains_allowlisted_provider_receipts_on_failed_attempt(tmp_pat
     assert "not-part-of-receipt" not in summary and "fixture-auth-only" not in summary and "package.json" not in summary
 
 
-@pytest.mark.parametrize("valid_repair", [True, False])
-def test_assessment_repair_records_only_bounded_validation_feedback(tmp_path, valid_repair):
+@pytest.mark.parametrize("repair_case", ["valid", "invalid_evidence", "blank"])
+def test_assessment_repair_records_only_bounded_validation_feedback(tmp_path, repair_case):
     scan, _ = fixture_scan(tmp_path)
     tool = {
         "type": "function_call",
@@ -279,8 +320,11 @@ def test_assessment_repair_records_only_bounded_validation_feedback(tmp_path, va
     }
     usage = ModelUsage(12, 10, 1, "fixture")
     draft = {"summary": "Confirmed fixture metadata.", "command_candidates": []}
-    invalid = {"summary": "Confirmed fixture metadata.", "sentinel-user-request-key": "sentinel-user-value"}
-    repair = draft if valid_repair else {
+    invalid = {**draft, "findings": [{
+        "category": "workflow.install", "value": "npm ci", "status": "explicit",
+        "confidence": "sentinel-invalid-confidence",
+    }]}
+    invalid_evidence = {
         **draft,
         "findings": [{
             "category": "workflow.install",
@@ -301,36 +345,43 @@ def test_assessment_repair_records_only_bounded_validation_feedback(tmp_path, va
                 self.repair_prompt = last["content"]
             return action
 
+    repair_text = {
+        "valid": json.dumps(draft), "invalid_evidence": json.dumps(invalid_evidence), "blank": " ",
+    }[repair_case]
     provider = CapturingProvider([
         ModelAction([tool], None, [tool], usage),
         ModelAction([], json.dumps(invalid), [], usage),
-        ModelAction([], json.dumps(repair), [], usage),
+        ModelAction([], repair_text, [], usage),
     ])
     execution = run_agent(
         provider=provider, gateway=FakeGateway(), facts=scan.facts, skills=[],
         budget=AgentBudget(8, 12, 120_000, 32_000, 180),
         infer_delivery_commands=True,
     )
-    if valid_repair:
+    if repair_case == "valid":
         outcome = asyncio.run(execution)
         assert outcome.status == "completed"
         provenance = outcome.provenance
     else:
-        with pytest.raises(AgentError, match="invalid_model_output") as raised:
+        expected = "invalid_model_output" if repair_case == "invalid_evidence" else "model_no_usable_output"
+        with pytest.raises(AgentError, match=expected) as raised:
             asyncio.run(execution)
         assert not raised.value.retryable
         provenance = raised.value.provenance
 
-    assert provenance["validation_repair_version"] == "bounded-validation-repair-v2"
+    assert provenance["validation_repair_version"] == "bounded-validation-repair-v3"
     _, first, second = provenance["provider_calls"]
     assert first["assessment_validation"] == {
-        "stage": "draft_schema", "code": "missing_field", "fields": ["command_candidates"],
+        "stage": "draft_schema", "code": "invalid_field_value", "fields": ["findings"],
+        "details": [{"path": "findings[0].confidence", "type": "float_parsing"}],
     }
-    assert "command_candidates" in provider.repair_prompt
-    if valid_repair:
+    assert "findings[0].confidence" in provider.repair_prompt
+    if repair_case == "valid":
         assert "assessment_validation" not in second
-    else:
+    elif repair_case == "invalid_evidence":
         assert second["assessment_validation"] == {
             "stage": "assessment_projection", "code": "assessment_evidence_invalid", "fields": [],
         }
+    else:
+        assert second["status"] == "error" and second["error_code"] == "model_no_usable_output"
     assert "sentinel" not in json.dumps(provenance) + provider.repair_prompt

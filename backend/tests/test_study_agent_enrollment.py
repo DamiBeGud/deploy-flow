@@ -242,6 +242,7 @@ def test_study_api_scopes_concurrent_starts_and_preserves_worker_retry(monkeypat
 
 @pytest.mark.parametrize("scenario", [
     "approved", "security_question", "missing_binding", "wrong_source", "unsupported_python",
+    "tokened_aliases", "unbound_token_reference",
 ])
 def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch, scenario):
     application, pin = source()
@@ -273,8 +274,16 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
         "dependencies.redis.topology", "configuration.QUEUE_NAMESPACE.value",
         "build.image.base", "workflow.worker_restart_policy",
     ]
+    token_field = "configuration.API_TOKEN.secret_reference"
+    token_configured = scenario == "tokened_aliases"
+    if token_configured:
+        sources["service/main.py"] += '\nimport os\ntoken = os.environ.get("API_TOKEN")\n'
+        platform_fields += ["build.dockerfile.base_image", "workflow.definition_path", "dependencies.redis.deployment", token_field]
     asked_fields = [*platform_fields]
     unresolved = set()
+    if scenario == "unbound_token_reference":
+        asked_fields.append(token_field)
+        unresolved.add(token_field)
     if scenario == "security_question":
         asked_fields.append("security.auth_enforcement")
         unresolved.add("security.auth_enforcement")
@@ -289,6 +298,7 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
             "repository": pin.repository,
             "source_sha": "b" * 40 if scenario == "wrong_source" else pin.source_sha,
             "worker_target": "service.worker:celery", "redis_connection_secret": "test-study-redis",
+            **({"api_token_secret": "test-study-api-token"} if token_configured else {}),
         }]))
 
     raw = io.BytesIO()
@@ -389,13 +399,19 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
         resolutions = {item["field_path"]: item for item in provenance.get("platform_question_resolutions", [])}
         assert set(resolutions) == set(platform_fields) - unresolved
         if resolutions:
-            assert provenance["platform_question_resolution_version"] == "redis-platform-questions-v1"
+            assert provenance["platform_question_resolution_version"] == "redis-platform-questions-v2"
             assert resolutions["configuration.QUEUE_NAMESPACE.value"]["value"] == f"q-{pin.application_id.hex}"
             assert resolutions["dependencies.redis.topology"]["value"] == "provided_connection_references"
             assert resolutions["workflow.worker_restart_policy"]["value"] == "Always"
             if "build.image.base" in resolutions:
                 assert resolutions["build.image.base"]["value"] == "python:3.12-slim-bookworm"
+            if token_configured:
+                assert resolutions["workflow.definition_path"]["value"] == ".github/workflows/deployflow.yml"
+                assert resolutions["dependencies.redis.deployment"]["value"] == resolutions["dependencies.redis.topology"]["value"]
+                assert resolutions["build.dockerfile.base_image"]["value"] == resolutions["build.image.base"]["value"]
+                assert resolutions[token_field]["value"] == "kubernetes_secret_reference"
             assert "test-study-redis" not in json.dumps(resolutions)
+            assert "test-study-api-token" not in json.dumps(resolutions)
         suggestion = client.get(f"{endpoint}/kubernetes-recommendation?analysis_run_id={run_id}")
         assert suggestion.status_code == 200, suggestion.text
         rec = suggestion.json()
@@ -439,7 +455,11 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
     assert not pod.get("initContainers")
     web, worker = pod["containers"]
     assert web["image"] == worker["image"] == release.image_reference
-    assert web["env"] == worker["env"]
+    assert [item for item in web["env"] if item["name"] != "API_TOKEN"] == worker["env"]
+    token_env = [item for item in web["env"] if item["name"] == "API_TOKEN"]
+    assert token_env == ([{
+        "name": "API_TOKEN", "valueFrom": {"secretKeyRef": {"name": "test-study-api-token", "key": "API_TOKEN"}},
+    }] if token_configured else [])
     assert {item["name"] for item in worker["env"]} == {"CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"}
     assert {item["valueFrom"]["secretKeyRef"]["name"] for item in worker["env"]} == {"test-study-redis"}
 

@@ -14,6 +14,7 @@ from app.analysis.command_inference import command_blocker, command_inference
 from app.bootstrap.contracts import (
     BUILD_SPECIFICATION_SCHEMA_VERSION,
     DEPLOYMENT_INTENT_SCHEMA_VERSION,
+    GENERATED_WORKFLOW_PATH,
     IMAGE_BINDING_NAME,
     INFRASTRUCTURE_PLAN_SCHEMA_VERSION,
 )
@@ -33,7 +34,7 @@ from app.bootstrap.tokens import token_for_source
 MANAGED_PATHS = {
     "Dockerfile",
     ".dockerignore",
-    ".github/workflows/deployflow.yml",
+    GENERATED_WORKFLOW_PATH,
     "deploy/kubernetes/deployment.yaml",
     "deploy/kubernetes/service.yaml",
     "deploy/kubernetes/configmap.yaml",
@@ -470,7 +471,7 @@ PY"""
     files = {
         "Dockerfile": dockerfile,
         ".dockerignore": NATIVE_DOCKERIGNORE if native else "node_modules\n.git\n.env\n",
-        ".github/workflows/deployflow.yml": _yaml(workflow),
+        GENERATED_WORKFLOW_PATH: _yaml(workflow),
         "deploy/kubernetes/configmap.yaml": _yaml(config),
         "deploy/kubernetes/deployment.yaml": _yaml(deployment),
         "deploy/kubernetes/service.yaml": _yaml(service),

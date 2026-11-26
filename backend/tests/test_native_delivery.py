@@ -630,7 +630,7 @@ def test_approved_access_policy_applies_without_redis(tmp_path, monkeypatch):
     monkeypatch.setenv("DF_APPROVED_TOKEN_BINDINGS", json.dumps([source | {"secret_name": "test-api-token"}]))
     monkeypatch.setenv("DF_APPROVED_ACCESS_POLICIES", json.dumps([policy]))
     assessment = scan(tmp_path, NODE | {
-        "src/index.ts": NODE["src/index.ts"] + '\nconst token = process.env.API_TOKEN;\n',
+        "src/index.ts": NODE["src/index.ts"] + '\nif (!process.env.API_TOKEN) throw Error("API_TOKEN is required");\n',
     })
     intent = recommend(assessment, profile, "main", 1, application_id=profile["application_id"])["intent"]
     bundle = render(assessment, intent, profile)

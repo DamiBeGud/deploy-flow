@@ -31,9 +31,13 @@ from app.analysis.contracts import (
     AssessmentDraftV2,
     AssessmentDraftV3,
     AssessmentQuestion,
+    DecisionAssessmentDraft,
+    DecisionCommandAssessmentDraft,
+    DraftDecisionQuestion,
     FindingV2,
     InfrastructureAssessmentV2,
 )
+from app.analysis.platform_questions import CATALOG, DECISION_CONTRACT_VERSION, DecisionSnapshot
 from app.skills.registry import SkillBundle
 
 PROMPT_VERSION = "phase3-agent-v1"
@@ -215,10 +219,14 @@ def _merge(
             continue
         findings.append(FindingV2(id=f"finding-agent-{index}", **item.model_dump()).model_dump())
         known[item.category] = item.value
-    questions = [
-        AssessmentQuestion(id=f"question-agent-{index}", **item.model_dump()).model_dump()
-        for index, item in enumerate(draft.questions, start=1)
-    ]
+    questions = []
+    for index, item in enumerate(draft.questions, start=1):
+        data = item.model_dump()
+        if isinstance(item, DraftDecisionQuestion):
+            if _contains_secret(item.prompt) or _contains_secret(item.reason):
+                raise AgentError("assessment_secret_detected")
+            data.update(field_path=CATALOG[item.decision_id][0], required=True, answer_type="text")
+        questions.append(AssessmentQuestion(id=f"question-agent-{index}", **data).model_dump(mode="json"))
     document = {
         **base,
         "mode": "agent",
@@ -242,7 +250,13 @@ def _merge(
         document["command_inference"] = infer_commands(base, draft, command_sources)
     status = "needs_input" if any(question["required"] for question in questions) else "completed"
     excluded = set() if "command_inference" in document else {"command_inference"}
-    return InfrastructureAssessmentV2.model_validate(document).model_dump(exclude=excluded), status
+    document = InfrastructureAssessmentV2.model_validate(document).model_dump(exclude=excluded)
+    for question in document["questions"]:
+        if question["decision_id"] is None:
+            del question["decision_id"]
+        else:
+            question["decision_id"] = question["decision_id"].value
+    return document, status
 
 
 def _schema_field_path(location: tuple, schema: dict) -> str:
@@ -303,6 +317,7 @@ async def run_agent(
     skills: list[SkillBundle],
     budget: AgentBudget,
     infer_delivery_commands: bool = False,
+    decisions: DecisionSnapshot | None = None,
 ) -> HarnessOutcome:
     real_provider = isinstance(provider, DeepSeekResponsesProvider)
     supplied_stub = isinstance(provider, ScriptedProvider)
@@ -319,7 +334,7 @@ async def run_agent(
     try:
         outcome = await _run_agent(
             provider=provider, gateway=gateway, facts=facts, skills=skills, budget=budget,
-            infer_delivery_commands=infer_delivery_commands, provenance=provenance,
+            infer_delivery_commands=infer_delivery_commands, provenance=provenance, decisions=decisions,
         )
     except AgentError as exc:
         exc.provenance = provenance
@@ -337,16 +352,17 @@ async def _run_agent(
     budget: AgentBudget,
     infer_delivery_commands: bool,
     provenance: dict,
+    decisions: DecisionSnapshot | None,
 ) -> HarnessOutcome:
     started = monotonic()
     base = facts["document"]
+    initial = {"task": "Inspect uncertainty beyond deterministic scanner facts.", "facts": facts}
+    if decisions is not None:
+        initial["deployment_decisions"] = decisions.model_context()
     history = [
         {
             "role": "user",
-            "content": json.dumps(
-                {"task": "Inspect uncertainty beyond deterministic scanner facts.", "facts": facts},
-                sort_keys=True,
-            ),
+            "content": json.dumps(initial, sort_keys=True),
         }
     ]
     traces: list[ToolTrace] = []
@@ -359,7 +375,23 @@ async def _run_agent(
     instructions = _instructions(skills)
     if infer_delivery_commands:
         instructions += COMMAND_PROMPT
+    if decisions is not None:
+        draft_model = DecisionCommandAssessmentDraft if infer_delivery_commands else DecisionAssessmentDraft
+        prompt_version = "phase3-agent-v3-redis-decisions"
+        if infer_delivery_commands:
+            prompt_version += "-commands"
+        instructions += (
+            " Use the deployment_decisions catalog from the initial input. Report only unresolved deployment "
+            "decisions in questions, with one allowed decision_id per question. Provided and platform_default "
+            "entries already have an answer. Separate API token wiring, lifecycle, and authorization. "
+            "Use other for an unresolved decision outside the catalog. Put informational observations in risks or unknowns."
+        )
     output_schema = draft_model.model_json_schema()
+    if decisions is not None:
+        provenance["deployment_decision_contract"] = DECISION_CONTRACT_VERSION
+        provenance["deployment_decision_schema_sha256"] = hashlib.sha256(
+            json.dumps(output_schema, sort_keys=True).encode()
+        ).hexdigest()
     repair_used = False
     content_read = False
     while True:

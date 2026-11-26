@@ -14,6 +14,12 @@ from app.agents.provider import (
     _provider_diagnostic,
 )
 from app.agents.repository_mcp import GatewayResult
+from app.analysis.platform_questions import (
+    CATALOG,
+    DECISION_CONTRACT_VERSION,
+    DecisionId,
+    DecisionSnapshot,
+)
 from app.config import settings
 from app.repository.scanner import Scanner
 from app.repository.tools import RepositoryTools
@@ -104,6 +110,46 @@ def test_deepseek_provider_refuses_unconfigured_credentials():
                 output_schema={},
             )
         )
+
+
+@pytest.mark.parametrize("infer_commands", [False, True])
+def test_scoped_question_contract_uses_the_same_ids_in_schema_and_projection(tmp_path, infer_commands):
+    scan, _ = fixture_scan(tmp_path)
+    snapshot = DecisionSnapshot({DecisionId.REDIS_CONNECTION: ("provided", "private-name")}, (), "a" * 64)
+    usage = ModelUsage(10, 10, 1, "fixture")
+    tool = {"call_id": "fixture-read", "name": "repo_read_manifest", "arguments": '{"path":"package.json"}'}
+    invalid = {"decision_id": "made.up.path", "prompt": "Choose its value.", "reason": "A setting is missing."}
+    valid = {**invalid, "decision_id": DecisionId.OTHER.value}
+
+    class CapturingProvider(ScriptedProvider):
+        async def respond(self, **kwargs):
+            schema = kwargs["output_schema"]
+            assert set(schema["$defs"]["DecisionId"]["enum"]) == set(CATALOG)
+            initial = json.loads(kwargs["history"][0]["content"])
+            assert {row["decision_id"] for row in initial["deployment_decisions"]} == set(CATALOG)
+            assert "private-name" not in json.dumps(initial)
+            assert "one allowed decision_id per question" in kwargs["instructions"]
+            return await super().respond(**kwargs)
+
+    content = {"summary": "Fixture assessment."}
+    if infer_commands:
+        content["command_candidates"] = []
+    provider = CapturingProvider([
+        ModelAction([tool], None, [], usage),
+        ModelAction([], json.dumps({**content, "questions": [invalid]}), [], usage),
+        ModelAction([], json.dumps({**content, "questions": [valid]}), [], usage),
+    ])
+    outcome = asyncio.run(run_agent(
+        provider=provider, gateway=FakeGateway(), facts=scan.facts, skills=[],
+        budget=AgentBudget(8, 12, 120_000, 32_000, 180), decisions=snapshot,
+        infer_delivery_commands=infer_commands,
+    ))
+    question, = outcome.document["questions"]
+    assert outcome.status == "needs_input" and question["required"]
+    assert question["decision_id"] == DecisionId.OTHER and question["field_path"] == CATALOG[DecisionId.OTHER][0]
+    assert outcome.provenance["deployment_decision_contract"] == DECISION_CONTRACT_VERSION
+    failure = outcome.provenance["provider_calls"][1]["assessment_validation"]
+    assert failure["details"] == [{"path": "questions[0].decision_id", "type": "enum"}]
 
 
 @pytest.mark.parametrize(

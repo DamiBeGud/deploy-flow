@@ -20,7 +20,13 @@ from app.agents.harness import (
 )
 from app.agents.provider import DeepSeekResponsesProvider
 from app.agents.repository_mcp import repository_gateway
-from app.analysis.platform_questions import RESOLUTION_VERSION, resolve_redis_questions
+from app.analysis.platform_questions import (
+    DECISION_CONTRACT_VERSION,
+    DecisionSnapshot,
+    is_redis_assessment,
+    redis_decisions,
+    resolve_decisions,
+)
 from app.analysis.service import fake_assessment
 from app.bootstrap.managed_rails import ManagedRailsError, managed_profile
 from app.config import settings
@@ -295,7 +301,8 @@ def _snapshot_skills(db, run: AnalysisRun, selected: list[SkillBundle]) -> list[
 
 
 async def _run_agent(
-    root: Path, metadata: dict, facts: dict, skills: list[SkillBundle], budget: AgentBudget
+    root: Path, metadata: dict, facts: dict, skills: list[SkillBundle], budget: AgentBudget,
+    *, decisions: DecisionSnapshot | None = None,
 ) -> HarnessOutcome:
     config = settings()
     allowed = set().union(*(set(bundle.metadata.allowed_tools) for bundle in skills))
@@ -320,6 +327,7 @@ async def _run_agent(
             return await run_agent(
                 provider=provider, gateway=gateway, facts=facts, skills=skills, budget=budget,
                 infer_delivery_commands=config.use_agent_delivery_recommendations,
+                decisions=decisions,
             )
     except BaseExceptionGroup as exc:
         # anyio wraps an error raised inside the MCP context manager in an
@@ -335,7 +343,10 @@ async def _run_agent(
         raise
 
 
-def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: HarnessOutcome):
+def _finalize_agent(
+    db, application: Application, run: AnalysisRun, outcome: HarnessOutcome,
+    decisions: DecisionSnapshot | None,
+):
     _persist_evidence(db, run, outcome.new_evidence)
     for trace in outcome.traces:
         db.add(
@@ -351,20 +362,22 @@ def _finalize_agent(db, application: Application, run: AnalysisRun, outcome: Har
             )
         )
     platform_resolution = {}
-    if (
-        outcome.status == "needs_input"
-        and outcome.document.get("completion") == "complete"
-        and not outcome.fallback_used
-        and (run.reproducibility_json or {}).get("study_scope_sha256")
-    ):
-        resolved = resolve_redis_questions(outcome.document, str(application.id))
-        if resolved:
-            platform_resolution = {
-                "platform_question_resolution_version": RESOLUTION_VERSION,
-                "platform_question_resolutions": resolved,
-            }
-            if not any(question["required"] for question in outcome.document["questions"]):
-                outcome.status = "completed"
+    if decisions is not None:
+        current = redis_decisions(outcome.document, str(application.id))
+        drifted = current.fingerprint != decisions.fingerprint
+        eligible = outcome.document.get("completion") == "complete" and not outcome.fallback_used and not drifted
+        resolved = resolve_decisions(outcome.document, current) if eligible else []
+        outcome.status = "needs_input" if (
+            not eligible or current.missing or any(q["required"] for q in outcome.document["questions"])
+        ) else "completed"
+        platform_resolution = {
+            "deployment_decision_contract": DECISION_CONTRACT_VERSION,
+            "deployment_decision_fingerprint": decisions.fingerprint,
+            "deployment_decision_missing": list(current.missing),
+            "deployment_decision_binding_changed": drifted,
+            "platform_question_resolution_version": DECISION_CONTRACT_VERSION,
+            "platform_question_resolutions": resolved,
+        }
     run.assessment_version = 1
     run.incomplete_reason = outcome.document.get("incomplete_reason")
     run.model_provider = outcome.provider_kind
@@ -537,6 +550,11 @@ def execute_repository(identifier: UUID, token: UUID):
             "commit_sha": resolved.commit_sha,
         }
         scan = Scanner(root).scan(repository=metadata, application_name=name)
+        decisions = (
+            redis_decisions(scan.document, str(application.id))
+            if (run.reproducibility_json or {}).get("study_scope_sha256") and is_redis_assessment(scan.document)
+            else None
+        )
         with Session.begin() as db:
             current = db.scalar(
                 select(AnalysisRun).where(AnalysisRun.id == identifier).with_for_update()
@@ -628,7 +646,7 @@ def execute_repository(identifier: UUID, token: UUID):
                 current.agent_latency_ms,
             )
         try:
-            outcome = asyncio.run(_run_agent(root, metadata, scan.facts, skills, budget))
+            outcome = asyncio.run(_run_agent(root, metadata, scan.facts, skills, budget, decisions=decisions))
         except AgentError as exc:
             if exc.code != "agent_budget_exhausted":
                 raise
@@ -659,7 +677,7 @@ def execute_repository(identifier: UUID, token: UUID):
             )
             if not current or current.lease_token != token or current.status != "running":
                 return
-            _finalize_agent(db, application, current, outcome)
+            _finalize_agent(db, application, current, outcome, decisions)
     finally:
         if workspace:
             shutil.rmtree(workspace, ignore_errors=True)

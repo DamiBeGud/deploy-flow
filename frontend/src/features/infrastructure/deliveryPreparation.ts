@@ -3,7 +3,7 @@ import type { DeploymentIntent, InfrastructurePlan } from './contracts'
 
 type ConfigurationRecommendation = { name: string; required: boolean; recommended_value: string | null; purpose: string; source: string; confidence: number; evidence: { file_path: string; line_start: number | null } | null }
 type RailsProvisioning = { status: 'required' | 'queued' | 'ready' | 'blocked'; code: string | null }
-export type Recommendation = { rails_provisioning?: RailsProvisioning; intent: DeploymentIntent; generation_blocker?: string | null; approved_database?: { migration: string; ephemeral?: boolean } | null; approved_queue?: { worker: string } | null; approved_api_token?: boolean; application_configuration: ConfigurationRecommendation[] }
+export type Recommendation = { rails_provisioning?: RailsProvisioning; intent: DeploymentIntent; generation_blocker?: string | null; approved_database?: { migration: string; ephemeral?: boolean } | null; approved_queue?: { worker: string; external?: boolean } | null; approved_api_token?: boolean; application_configuration: ConfigurationRecommendation[] }
 
 function writableIntent(intent: DeploymentIntent) {
   return {

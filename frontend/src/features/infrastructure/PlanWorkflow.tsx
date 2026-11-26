@@ -131,6 +131,7 @@ export function PlanWorkflow({ application, run, canWrite, stage, plan, onContin
   const blockedBindings = generationBlocker && /approved (?:database|configuration)/i.test(generationBlocker)
   const assessment = run.assessment?.mode !== 'fake' ? run.assessment : undefined
   const requiredSettings = assessment?.configuration.required_variables ?? []
+  const decisions = assessment?.questions?.filter(question => question.decision_id) ?? []
   const canReview = Boolean(plan && ['proposed', 'approved'].includes(plan.status))
   return <section className="wizard-card"><div className="wizard-step infrastructure-step">
     <div className="step-intro"><h2 id="wizard-step-title" tabIndex={-1}>{title}</h2></div>
@@ -149,13 +150,21 @@ export function PlanWorkflow({ application, run, canWrite, stage, plan, onContin
               ? 'DeployFlow provisions a private PostgreSQL sidecar on port 5432 with disposable storage.'
               : 'The approved PostgreSQL binding supplies DATABASE_URL.'} The application applies <code>{database.migration}</code> at startup.</p>
           : queue
-            ? <p className="section-note">DeployFlow provisions private Redis on port 6379 with disposable storage and runs <code>{queue.worker}</code> in a worker container.</p>
+            ? <p className="section-note">{queue.external
+                ? 'The approved binding supplies an external Redis service.'
+                : 'DeployFlow provisions private Redis on port 6379 with disposable storage.'} DeployFlow runs <code>{queue.worker}</code> in a worker container.</p>
             : blockedBindings && <p className="section-note">A required service binding is missing. Review the blocker in Bundle.</p>}
         {apiToken && <p className="section-note">An approved Secret supplies the application's API token.</p>}
       </> : <>
         <div className="section-divider"><span>Container and target</span></div><div className="form-grid"><RecommendedInput label="Base branch" fieldPath="build.branch" value={intent.build.branch} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, branch: value } })} /><RecommendedInput label="Application image" fieldPath="build.image" value={intent.build.image} intent={intent} updateIntent={updateIntent} onChange={(current, value) => ({ ...current, build: { ...current.build, image: value } })} /><CommandInput label="Install command" field="install_command" intent={intent} onChange={updateCommand} setError={setCommandError} /><CommandInput label="Test command (optional)" field="test_command" intent={intent} onChange={updateCommand} setError={setCommandError} /><CommandInput label="Build command (optional)" field="build_command" intent={intent} onChange={updateCommand} setError={setCommandError} /><CommandInput label="Start command" field="start_command" intent={intent} onChange={updateCommand} setError={setCommandError} /></div>
       </>}
     </fieldset>
+    {stage === 'workflow' && decisions.length > 0 && <section className="plan-preview">
+      <h3>Deployment decisions</h3>
+      <ul>{decisions.map(question => <li key={question.id}>
+        <b>{question.required ? 'Needs review' : 'Resolved by DeployFlow'}</b> {question.prompt}
+      </li>)}</ul>
+    </section>}
     {stage === 'workflow' && bundleBlocker && <div className="form-error" role="status"><div>
       <b>{blockedBindings ? 'Bundle blocked by missing setup' : 'Bundle needs input'}</b>
       <p>{bundleBlocker}</p>

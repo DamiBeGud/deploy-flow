@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -17,6 +18,7 @@ from test_native_delivery import PYTHON
 
 from app.agents.harness import COMMAND_PROMPT_VERSION, AgentError, HarnessOutcome
 from app.analysis import jobs, service
+from app.analysis.platform_questions import CATALOG, DECISION_CONTRACT_VERSION, DecisionId
 from app.api.identity import Identity, get_identity
 from app.bootstrap.profiles import local_k3s_profile
 from app.config import Settings, StudyAgentPin
@@ -242,7 +244,8 @@ def test_study_api_scopes_concurrent_starts_and_preserves_worker_retry(monkeypat
 
 @pytest.mark.parametrize("scenario", [
     "approved", "security_question", "missing_binding", "wrong_source", "unsupported_python",
-    "tokened_aliases", "unbound_token_reference",
+    "tokened", "unbound_token_reference", "missing_without_questions",
+    "another_decision", "rotation_open", "rotation_approved", "binding_changed",
 ])
 def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch, scenario):
     application, pin = source()
@@ -270,35 +273,47 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
             'queue = os.environ["QUEUE_NAMESPACE"]\n'
         ),
     }
-    platform_fields = [
-        "dependencies.redis.topology", "configuration.QUEUE_NAMESPACE.value",
-        "build.image.base", "workflow.worker_restart_policy",
+    known = [
+        DecisionId.REDIS_CONNECTION, DecisionId.QUEUE_NAMESPACE, DecisionId.WORKER_LAYOUT,
+        DecisionId.DOCKERFILE, DecisionId.WORKFLOW,
     ]
-    token_field = "configuration.API_TOKEN.secret_reference"
-    token_configured = scenario == "tokened_aliases"
-    if token_configured:
+    token_configured = scenario in {"tokened", "rotation_open", "rotation_approved"}
+    if token_configured or scenario == "unbound_token_reference":
         sources["service/main.py"] += '\nimport os\ntoken = os.environ.get("API_TOKEN")\n'
-        platform_fields += ["build.dockerfile.base_image", "workflow.definition_path", "dependencies.redis.deployment", token_field]
-    asked_fields = [*platform_fields]
+        known.append(DecisionId.TOKEN_REFERENCE)
+    asked = list(known)
     unresolved = set()
+    binding_missing = scenario in {
+        "missing_binding", "wrong_source", "missing_without_questions", "unbound_token_reference",
+    }
+    if binding_missing:
+        unresolved.update({DecisionId.REDIS_CONNECTION, DecisionId.QUEUE_NAMESPACE, DecisionId.WORKER_LAYOUT})
     if scenario == "unbound_token_reference":
-        asked_fields.append(token_field)
-        unresolved.add(token_field)
+        unresolved.add(DecisionId.TOKEN_REFERENCE)
+    if scenario == "missing_without_questions":
+        asked = []
+        unresolved = set()
     if scenario == "security_question":
-        asked_fields.append("security.auth_enforcement")
-        unresolved.add("security.auth_enforcement")
-    elif scenario in {"missing_binding", "wrong_source"}:
-        unresolved.update(platform_fields)
-    elif scenario == "unsupported_python":
+        asked.append(DecisionId.AUTH_ENFORCEMENT)
+        unresolved.add(DecisionId.AUTH_ENFORCEMENT)
+    if scenario == "another_decision":
+        asked.append(DecisionId.OTHER)
+        unresolved.add(DecisionId.OTHER)
+    if scenario in {"rotation_open", "rotation_approved"}:
+        asked.append(DecisionId.TOKEN_ROTATION)
+        if scenario == "rotation_open":
+            unresolved.add(DecisionId.TOKEN_ROTATION)
+    if scenario == "unsupported_python":
         sources["pyproject.toml"] = '[project]\nrequires-python = ">=4.0"\n'
-        unresolved.add("build.image.base")
-    if scenario != "missing_binding":
+        unresolved.add(DecisionId.DOCKERFILE)
+    if scenario not in {"missing_binding", "missing_without_questions"}:
         monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([{
             "application_id": str(pin.application_id), "application_name": application.name,
             "repository": pin.repository,
             "source_sha": "b" * 40 if scenario == "wrong_source" else pin.source_sha,
             "worker_target": "service.worker:celery", "redis_connection_secret": "test-study-redis",
             **({"api_token_secret": "test-study-api-token"} if token_configured else {}),
+            **({"api_token_lifecycle": "fixed_for_assignment"} if scenario == "rotation_approved" else {}),
         }]))
 
     raw = io.BytesIO()
@@ -344,7 +359,7 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
     }
     receipts = iter([first_receipt, second_receipt])
 
-    async def simulated_agent(root, metadata, facts, skills, budget):
+    async def simulated_agent(root, metadata, facts, skills, budget, *, decisions):
         receipt = next(receipts)
         if receipt is first_receipt:
             error = AgentError("model_timeout", retryable=True)
@@ -352,13 +367,19 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
             raise error
         assert metadata["commit_sha"] == pin.source_sha
         assert (root / "service/worker.py").read_text() == sources["service/worker.py"] and skills
+        context = decisions.model_context()
+        assert {item["decision_id"] for item in context} == set(DecisionId)
+        assert "test-study-redis" not in json.dumps(context)
+        assert "test-study-api-token" not in json.dumps(context)
+        assert f"q-{pin.application_id.hex}" not in json.dumps(context)
         questions = [
             {
-                "id": f"question-agent-{index}", "field_path": field, "required": True,
-                "prompt": "Select a delivery setting.", "reason": "The source has no chosen value.",
+                "id": f"question-agent-{index}", "decision_id": choice, "field_path": CATALOG[choice][0],
+                "required": True, "prompt": "Explain the setting in different words.",
+                "reason": "Retain the question and check its decision ID.",
                 "answer_type": "text", "choices": [],
             }
-            for index, field in enumerate(asked_fields, 1)
+            for index, choice in enumerate(asked, 1)
         ]
         return HarnessOutcome(
             {**facts["document"], "mode": "agent", "questions": questions}, [], [], budget, 0,
@@ -375,7 +396,7 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
     jobs.execute(str(run_id))
     with Session() as db:
         run = db.get(AnalysisRun, run_id)
-        expected_status = "needs_input" if unresolved else "completed"
+        expected_status = "needs_input" if unresolved or binding_missing else "completed"
         assert run.status == expected_status and run.commit_sha == pin.source_sha
         assert run.reproducibility_json["study_scope_sha256"] == pin.fingerprint()
         assert run.reproducibility_json["provider"] == "scripted"
@@ -394,31 +415,32 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
         assert provenance["study_scope_sha256"] == pin.fingerprint()
         assert [entry["provenance"] for entry in provenance["attempt_history"]] == [first_receipt, second_receipt]
         rendered_questions = observed.json()["assessment"]["questions"]
-        assert len(rendered_questions) == len(asked_fields)
-        assert {question["field_path"] for question in rendered_questions if question["required"]} == unresolved
-        resolutions = {item["field_path"]: item for item in provenance.get("platform_question_resolutions", [])}
-        assert set(resolutions) == set(platform_fields) - unresolved
-        if resolutions:
-            assert provenance["platform_question_resolution_version"] == "redis-platform-questions-v2"
-            assert resolutions["configuration.QUEUE_NAMESPACE.value"]["value"] == f"q-{pin.application_id.hex}"
-            assert resolutions["dependencies.redis.topology"]["value"] == "provided_connection_references"
-            assert resolutions["workflow.worker_restart_policy"]["value"] == "Always"
-            if "build.image.base" in resolutions:
-                assert resolutions["build.image.base"]["value"] == "python:3.12-slim-bookworm"
-            if token_configured:
-                assert resolutions["workflow.definition_path"]["value"] == ".github/workflows/deployflow.yml"
-                assert resolutions["dependencies.redis.deployment"]["value"] == resolutions["dependencies.redis.topology"]["value"]
-                assert resolutions["build.dockerfile.base_image"]["value"] == resolutions["build.image.base"]["value"]
-                assert resolutions[token_field]["value"] == "kubernetes_secret_reference"
-            assert "test-study-redis" not in json.dumps(resolutions)
-            assert "test-study-api-token" not in json.dumps(resolutions)
+        assert len(rendered_questions) == len(asked)
+        assert {question["decision_id"] for question in rendered_questions if question["required"]} == unresolved
+        resolutions = {item["decision_id"]: item for item in provenance["platform_question_resolutions"]}
+        assert set(resolutions) == set(asked) - unresolved
+        assert provenance["platform_question_resolution_version"] == DECISION_CONTRACT_VERSION
+        assert len(provenance["deployment_decision_fingerprint"]) == 64
+        if DecisionId.QUEUE_NAMESPACE in resolutions:
+            assert resolutions[DecisionId.QUEUE_NAMESPACE]["value"] == f"q-{pin.application_id.hex}"
+        assert "test-study-redis" not in json.dumps(resolutions)
+        assert "test-study-api-token" not in json.dumps(resolutions)
+        if scenario in {"rotation_open", "security_question"}:
+            question, = (q for q in rendered_questions if q["required"])
+            answered = client.patch(
+                f"/api/v1/analyses/{run_id}/assessment",
+                headers={"Idempotency-Key": "study-redis-free-text-policy"},
+                json={"expected_version": 1, "question_answers": {question["id"]: "operator says yes"}},
+            )
+            assert answered.status_code == 409
         suggestion = client.get(f"{endpoint}/kubernetes-recommendation?analysis_run_id={run_id}")
         assert suggestion.status_code == 200, suggestion.text
         rec = suggestion.json()
-        if scenario in {"missing_binding", "wrong_source"}:
+        if binding_missing:
             assert rec["generation_blocker"]
         else:
             assert rec["generation_blocker"] is None
+            assert rec["approved_queue"]["external"] is True
             assert rec["approved_queue"]["worker"].startswith("celery -A service.worker:celery worker")
         intent = rec["intent"]
         saved = client.put(
@@ -430,6 +452,10 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
             },
         )
         assert saved.status_code == 201, saved.text
+        if scenario == "binding_changed":
+            binding, = json.loads(os.environ["DF_APPROVED_REDIS_BINDINGS"])
+            binding["redis_connection_secret"] = "test-replacement-redis"
+            monkeypatch.setenv("DF_APPROVED_REDIS_BINDINGS", json.dumps([binding]))
         response = client.post(
             f"{endpoint}/infrastructure-plans",
             headers={"Idempotency-Key": "study-redis-bundle"},
@@ -438,6 +464,10 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
                 "intent_version": saved.json()["version"], "environment_profile_id": "local-k3s",
             },
         )
+    if binding_missing or scenario in {"binding_changed", "unsupported_python"}:
+        assert response.status_code == 409
+        assert "missing or changed" in response.json()["detail"]
+        return
     if unresolved:
         assert response.status_code == 409
         assert response.json()["detail"] == "Resolve the required assessment questions before generating a bundle"

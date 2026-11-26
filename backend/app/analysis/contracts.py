@@ -4,6 +4,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.analysis.platform_questions import DecisionId
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -49,6 +51,7 @@ class DraftFinding(StrictModel):
 
 class AssessmentQuestion(StrictModel):
     id: str = Field(pattern=r"^question-[A-Za-z0-9_-]+$")
+    decision_id: DecisionId | None = None
     field_path: str = Field(min_length=1, max_length=128)
     prompt: str = Field(min_length=1, max_length=1000)
     reason: str = Field(min_length=1, max_length=1000)
@@ -64,6 +67,12 @@ class DraftQuestion(StrictModel):
     required: bool
     answer_type: Literal["text", "integer", "boolean", "single_choice"]
     choices: list[str] = Field(default_factory=list, max_length=12)
+
+
+class DraftDecisionQuestion(StrictModel):
+    decision_id: DecisionId
+    prompt: str = Field(min_length=1, max_length=1000)
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class AssessmentDraftV2(StrictModel):
@@ -93,6 +102,14 @@ class CommandCandidate(StrictModel):
 
 class AssessmentDraftV3(AssessmentDraftV2):
     command_candidates: list[CommandCandidate] = Field(max_length=16)
+
+
+class DecisionAssessmentDraft(AssessmentDraftV2):
+    questions: list[DraftDecisionQuestion] = Field(default_factory=list, max_length=30)
+
+
+class DecisionCommandAssessmentDraft(AssessmentDraftV3):
+    questions: list[DraftDecisionQuestion] = Field(default_factory=list, max_length=30)
 
 
 class SourceLocation(StrictModel):

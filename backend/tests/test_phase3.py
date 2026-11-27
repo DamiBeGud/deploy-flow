@@ -440,7 +440,7 @@ def test_assessment_repair_records_only_bounded_validation_feedback(tmp_path, re
         assert not raised.value.retryable
         provenance = raised.value.provenance
 
-    assert provenance["validation_repair_version"] == "bounded-validation-repair-v3"
+    assert provenance["validation_repair_version"] == "bounded-validation-repair-v4"
     _, first, second = provenance["provider_calls"]
     assert first["assessment_validation"] == {
         "stage": "draft_schema", "code": "invalid_field_value", "fields": ["findings"],
@@ -456,3 +456,69 @@ def test_assessment_repair_records_only_bounded_validation_feedback(tmp_path, re
     else:
         assert second["status"] == "error" and second["error_code"] == "model_no_usable_output"
     assert "sentinel" not in json.dumps(provenance) + provider.repair_prompt
+
+
+@pytest.mark.parametrize("repair_case", ["valid", "malformed", "tool_call"])
+def test_malformed_assessment_regenerates_once_without_replaying_the_bad_turn(tmp_path, monkeypatch, repair_case):
+    scan, _ = fixture_scan(tmp_path)
+    requests = []
+    read = {
+        "type": "function_call", "call_id": "fixture-read", "name": "repo_read_manifest",
+        "arguments": '{"path":"package.json"}',
+    }
+    malformed = '{"summary":"discarded-draft-sentinel"'
+
+    def message(text):
+        return {"type": "message", "content": [{"type": "output_text", "text": text}]}
+
+    def response(request):
+        requests.append(json.loads(request.content))
+        repair = {
+            "valid": message(json.dumps({"summary": "Confirmed fixture.", "command_candidates": []})),
+            "malformed": message(malformed),
+            "tool_call": read,
+        }[repair_case]
+        turn = len(requests)
+        output = {1: [read], 2: [message(malformed)], 3: [repair]}[turn]
+        return httpx.Response(200, json={"id": f"fixture-{turn}", "status": "completed", "output": output})
+
+    create_client = httpx.AsyncClient
+    transport = httpx.MockTransport(response)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: create_client(transport=transport, **kwargs))
+    provider = DeepSeekResponsesProvider(
+        api_key="fixture-auth-only", base_url="https://api.deepseek.com", model="test-requested",
+        reasoning_effort="high", timeout_seconds=5, max_output_tokens=2000,
+    )
+    budget = AgentBudget(8, 12, 120_000, 32_000, 180)
+    execution = run_agent(
+        provider=provider, gateway=FakeGateway(), facts=scan.facts, skills=[],
+        budget=budget, infer_delivery_commands=True,
+    )
+    if repair_case == "valid":
+        outcome = asyncio.run(execution)
+        assert outcome.status == "completed"
+        provenance = outcome.provenance
+    else:
+        with pytest.raises(AgentError, match="invalid_model_output") as raised:
+            asyncio.run(execution)
+        assert not raised.value.retryable
+        provenance = raised.value.provenance
+
+    assert [req["tool_choice"] for req in requests] == ["auto", "auto", "none"]
+    first, repair = requests[1:]
+    assert repair["text"] == first["text"]
+    assert repair["input"][:-1] == first["input"]
+    assert repair["input"][-2]["type"] == "function_call_output"
+    assert "ev-agent-1" in repair["input"][-2]["output"]
+    assert "complete JSON object" in repair["input"][-1]["content"]
+    assert "discarded-draft-sentinel" not in json.dumps(repair)
+    assert budget.used_tool_calls == 1
+    assert provenance["validation_repair_version"] == "bounded-validation-repair-v4"
+    _, invalid, final = provenance["provider_calls"]
+    assert invalid["response_id"] == "fixture-2"
+    assert invalid["assessment_validation"]["code"] == "invalid_json"
+    assert final["response_id"] == "fixture-3"
+    if repair_case == "malformed":
+        assert final["assessment_validation"]["code"] == "invalid_json"
+    elif repair_case == "tool_call":
+        assert final["error_code"] == "invalid_model_output"

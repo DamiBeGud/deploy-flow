@@ -377,15 +377,18 @@ async def _run_agent(
         instructions += COMMAND_PROMPT
     if decisions is not None:
         draft_model = DecisionCommandAssessmentDraft if infer_delivery_commands else DecisionAssessmentDraft
-        prompt_version = "phase3-agent-v4-redis-decisions"
+        prompt_version = "phase3-agent-v5-redis-decisions"
         if infer_delivery_commands:
             prompt_version += "-commands"
         instructions += (
             " Use the deployment_decisions catalog from the initial input. Report only unresolved deployment "
             "decisions in questions, with one allowed decision_id per question. Provided and platform_default "
             "entries already have an answer. Separate API token wiring, lifecycle, and authorization. "
-            "An approved access policy sets the allowed exposure and probe behavior. If repository evidence "
-            "conflicts with it, report the conflict as a required other decision. "
+            "The approved policy's selected_kubernetes_probes specify the endpoints Kubernetes will call. "
+            "The application defines its HTTP routes separately. Treat an alias verified from source to use "
+            "the same health handler and authentication behavior as informational. Keep the selected probe "
+            "paths. Report genuine policy conflicts, such as a missing or authenticated selected probe "
+            "when unauthenticated probes are required, or a change to public exposure, as required other decisions. "
             "Use other for an unresolved decision outside the catalog. Put informational observations in risks or unknowns."
         )
     output_schema = draft_model.model_json_schema()

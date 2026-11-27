@@ -26,10 +26,16 @@ class AccessPolicyBinding(BaseModel):
     readiness_path: str = Field(pattern=r"^/[A-Za-z0-9/_-]*$", max_length=255)
     liveness_path: str = Field(pattern=r"^/[A-Za-z0-9/_-]*$", max_length=255)
 
-    def public_policy(self) -> dict[str, str]:
-        return self.model_dump(include={
-            "exposure", "authentication", "probe_authentication", "readiness_path", "liveness_path",
-        })
+    def model_context(self) -> dict[str, str | dict[str, str]]:
+        return {
+            "exposure": self.exposure,
+            "authentication": self.authentication,
+            "selected_kubernetes_probes": {
+                "readiness_path": self.readiness_path,
+                "liveness_path": self.liveness_path,
+                "authentication": self.probe_authentication,
+            },
+        }
 
 
 _CATALOG = TypeAdapter(list[AccessPolicyBinding])

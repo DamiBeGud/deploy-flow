@@ -397,15 +397,14 @@ async def _run_agent(
         provenance["deployment_decision_schema_sha256"] = hashlib.sha256(
             json.dumps(output_schema, sort_keys=True).encode()
         ).hexdigest()
-    repair_used = False
+    repair_category = None
     content_read = False
     while True:
         if monotonic() - started > budget.wall_seconds:
             raise AgentError("agent_budget_exhausted")
-        # DeepSeek thinking mode rejects forced tool calls. The host still
-        # rejects a final assessment until a content-bearing repository tool
-        # has supplied evidence, then prompts the model to use one.
-        choice = "auto"
+        # Keep discovery open until syntax repair. At that point the agent
+        # already has repository evidence and gets one tool-free regeneration.
+        choice = "none" if repair_category == "invalid_json" else "auto"
         records = provenance["provider_calls"]
         record = {"sequence": len(records) + 1, "started_at": datetime.now(UTC).isoformat()}
         records.append(record)
@@ -436,8 +435,11 @@ async def _run_agent(
         returned_model = action.usage.returned_model or returned_model
         if action.usage.response_id:
             response_ids.append(action.usage.response_id)
-        history.extend(action.history_items)
         if action.calls:
+            if choice == "none":
+                record.update(status="error", error_code="invalid_model_output")
+                raise AgentError("invalid_model_output")
+            history.extend(action.history_items)
             for call in action.calls:
                 budget.used_tool_calls += 1
                 if budget.used_tool_calls > budget.max_tool_calls:
@@ -502,6 +504,7 @@ async def _run_agent(
             record.update(status="error", error_code="model_no_usable_output")
             raise AgentError("model_no_usable_output")
         if not content_read:
+            history.extend(action.history_items)
             history.append(
                 {
                     "role": "user",
@@ -534,19 +537,23 @@ async def _run_agent(
         except Exception as exc:
             failure = _assessment_validation_failure(exc, stage, output_schema)
             record["assessment_validation"] = failure
-            provenance["validation_repair_version"] = "bounded-validation-repair-v3"
-            if repair_used:
+            provenance["validation_repair_version"] = "bounded-validation-repair-v4"
+            if repair_category is not None:
                 raise AgentError("invalid_model_output") from exc
-            repair_used = True
-            history.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "The prior JSON assessment failed host validation. "
-                        f"Validation category: {json.dumps(failure, sort_keys=True)}. "
-                        "Use the listed paths and error types to correct the specified fields. "
-                        "Return one complete JSON assessment that conforms to the response schema. "
-                        "Cite only supplied evidence IDs and do not include secrets."
-                    ),
-                }
-            )
+            repair_category = failure["code"]
+            if repair_category == "invalid_json":
+                feedback = (
+                    "Generate a fresh final assessment from the repository evidence already provided. "
+                    "Return exactly one complete JSON object that conforms to the response schema. "
+                    "Cite only supplied evidence IDs and omit Markdown, surrounding text, and secrets."
+                )
+            else:
+                history.extend(action.history_items)
+                feedback = (
+                    "The prior JSON assessment failed host validation. "
+                    f"Validation category: {json.dumps(failure, sort_keys=True)}. "
+                    "Use the listed paths and error types to correct the specified fields. "
+                    "Return one complete JSON assessment that conforms to the response schema. "
+                    "Cite only supplied evidence IDs and do not include secrets."
+                )
+            history.append({"role": "user", "content": feedback})

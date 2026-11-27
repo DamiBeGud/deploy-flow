@@ -393,9 +393,11 @@ def test_study_worker_and_shared_redis_binding_roundtrip_through_api(monkeypatch
         if token_configured and not missing_access:
             assert auth["availability"] == "provided"
             assert auth["approved_policy"] == {
-                key: policy[key] for key in (
-                    "exposure", "authentication", "probe_authentication", "readiness_path", "liveness_path",
-                )
+                "exposure": "internal",
+                "authentication": "application_bearer",
+                "selected_kubernetes_probes": {
+                    "readiness_path": "/status", "liveness_path": "/health/live", "authentication": "none",
+                },
             }
         else:
             assert auth["availability"] == "unresolved" and "approved_policy" not in auth

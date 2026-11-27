@@ -20,6 +20,7 @@ from app.analysis.platform_questions import (
     DecisionId,
     DecisionSnapshot,
 )
+from app.bootstrap.access_policy import AccessPolicyBinding
 from app.config import settings
 from app.repository.scanner import Scanner
 from app.repository.tools import RepositoryTools
@@ -115,20 +116,43 @@ def test_deepseek_provider_refuses_unconfigured_credentials():
 @pytest.mark.parametrize("infer_commands", [False, True])
 def test_scoped_question_contract_uses_the_same_ids_in_schema_and_projection(tmp_path, infer_commands):
     scan, _ = fixture_scan(tmp_path)
-    snapshot = DecisionSnapshot({DecisionId.REDIS_CONNECTION: ("provided", "private-name")}, (), "a" * 64)
+    policy = AccessPolicyBinding(
+        application_id="43cfca1e-0d9a-4c38-bf9d-8d3a2132ea9c", application_name="fixture",
+        repository="example/fixture", source_sha="a" * 40, profile_id="local-k3s",
+        namespace="deployflow-test", exposure="internal", authentication="application_bearer",
+        probe_authentication="none", readiness_path="/ready", liveness_path="/health/live",
+    )
+    snapshot = DecisionSnapshot({
+        DecisionId.REDIS_CONNECTION: ("provided", "private-name"),
+        DecisionId.AUTH_ENFORCEMENT: ("provided", "application_bearer"),
+    }, (), "a" * 64, policy)
     usage = ModelUsage(10, 10, 1, "fixture")
     tool = {"call_id": "fixture-read", "name": "repo_read_manifest", "arguments": '{"path":"package.json"}'}
     invalid = {"decision_id": "made.up.path", "prompt": "Choose its value.", "reason": "A setting is missing."}
-    valid = {**invalid, "decision_id": DecisionId.OTHER.value}
+    valid = {
+        "decision_id": DecisionId.OTHER.value, "prompt": "May Kubernetes call /ready without authentication?",
+        "reason": "The selected readiness route requires an authorization header.",
+    }
 
     class CapturingProvider(ScriptedProvider):
         async def respond(self, **kwargs):
             schema = kwargs["output_schema"]
             assert set(schema["$defs"]["DecisionId"]["enum"]) == set(CATALOG)
             initial = json.loads(kwargs["history"][0]["content"])
-            assert {row["decision_id"] for row in initial["deployment_decisions"]} == set(CATALOG)
+            decisions = {row["decision_id"]: row for row in initial["deployment_decisions"]}
+            assert set(decisions) == set(CATALOG)
+            assert decisions[DecisionId.AUTH_ENFORCEMENT]["approved_policy"] == {
+                "exposure": "internal", "authentication": "application_bearer",
+                "selected_kubernetes_probes": {
+                    "readiness_path": "/ready", "liveness_path": "/health/live", "authentication": "none",
+                },
+            }
             assert "private-name" not in json.dumps(initial)
-            assert "one allowed decision_id per question" in kwargs["instructions"]
+            instructions = kwargs["instructions"]
+            assert "one allowed decision_id per question" in instructions
+            assert "The application defines its HTTP routes separately." in instructions
+            assert "the same health handler and authentication behavior as informational." in instructions
+            assert "a missing or authenticated selected probe" in instructions
             return await super().respond(**kwargs)
 
     content = {"summary": "Fixture assessment."}
@@ -146,6 +170,7 @@ def test_scoped_question_contract_uses_the_same_ids_in_schema_and_projection(tmp
     ))
     question, = outcome.document["questions"]
     assert outcome.status == "needs_input" and question["required"]
+    assert question["prompt"] == valid["prompt"]
     assert question["decision_id"] == DecisionId.OTHER and question["field_path"] == CATALOG[DecisionId.OTHER][0]
     assert outcome.provenance["deployment_decision_contract"] == DECISION_CONTRACT_VERSION
     failure = outcome.provenance["provider_calls"][1]["assessment_validation"]

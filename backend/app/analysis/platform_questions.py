@@ -5,7 +5,11 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 
-from app.bootstrap.access_policy import AccessPolicyError, access_policy_for_source
+from app.bootstrap.access_policy import (
+    AccessPolicyBinding,
+    AccessPolicyError,
+    access_policy_for_source,
+)
 from app.bootstrap.contracts import GENERATED_WORKFLOW_PATH
 from app.bootstrap.native_runtime import python_base_image
 from app.bootstrap.profiles import LOCAL_PROFILE_ID, LOCAL_PROFILE_NAMESPACE
@@ -44,7 +48,7 @@ class DecisionSnapshot:
     answers: dict[DecisionId, tuple[str, str]]
     missing: tuple[DecisionId, ...]
     fingerprint: str
-    access_policy: dict[str, str] | None = None
+    access_policy: AccessPolicyBinding | None = None
 
     def model_context(self) -> list[dict]:
         return [
@@ -52,7 +56,7 @@ class DecisionSnapshot:
                 "decision_id": choice,
                 "description": detail,
                 "availability": self.answers.get(choice, ("unresolved", ""))[0],
-                **({"approved_policy": self.access_policy}
+                **({"approved_policy": self.access_policy.model_context()}
                    if choice == DecisionId.AUTH_ENFORCEMENT and self.access_policy else {}),
             }
             for choice, (_, detail) in CATALOG.items()
@@ -119,7 +123,7 @@ def redis_decisions(assessment: dict, application_id: str) -> DecisionSnapshot:
     if access_policy:
         payload["access_policy"] = access_policy.model_dump(mode="json")
     fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-    return DecisionSnapshot(answers, missing, fingerprint, access_policy.public_policy() if access_policy else None)
+    return DecisionSnapshot(answers, missing, fingerprint, access_policy)
 
 
 def resolve_decisions(document: dict, snapshot: DecisionSnapshot) -> list[dict]:
